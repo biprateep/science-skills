@@ -21,6 +21,11 @@ A comprehensive scientific research agent skill that acts as a collaborative par
 - **Literature Grounding**: Conducts factual verification and literature reviews.
 - **LaTeX Reporting**: Automatically aggregates ideas into `.tex` files and compiles them to PDFs.
 
-## Acknowledgments
+## Acknowledgments and Sources
 
-Special thanks to the [K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills) repository. Our `co-scientist` skill heavily builds upon their `scientific-brainstorming` workflow template and advanced ideation methodologies (SCAMPER, Six Thinking Hats, etc.).
+This project was built by drawing inspiration and structural methodologies from several excellent open-source projects and documentation guidelines:
+
+- **[K-Dense-AI/scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills)**: Our `co-scientist` skill builds upon their `scientific-brainstorming` workflow template and advanced ideation methodologies (SCAMPER, Six Thinking Hats, etc.).
+- **[obra/superpowers](https://github.com/obra/superpowers)**: The strict checklist structures, state-machine process flow (DOT graphs), and `<HARD-GATE>` mechanisms were heavily inspired by their `brainstorming` skill.
+- **[Gemini CLI Skill Best Practices](https://geminicli.com/docs/cli/skills-best-practices/)**: Used to audit and structure the skill prompts for maximum LLM adherence.
+- **[Claude Agent Skills Best Practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)**: Provided guidance on using XML tags for constraints and defining explicit anti-patterns.
