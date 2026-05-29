@@ -38,7 +38,7 @@ This skill should be used when:
 
 ### Phase 1: Context and Exploration
 - Deeply understand what the user is working on.
-- Use advanced brainstorming frameworks (SCAMPER, Six Thinking Hats, Morphological Analysis) referenced in `references/brainstorming_methods.md`.
+- Consult `references/strategy_index.md` to select an appropriate advanced brainstorming framework (SCAMPER, TRIZ, Morphological Analysis, etc.) adapted for physics, math, and AI.
 
 ### Phase 2: Literature & Fact Verification
 - Invoke literature subagents to survey the landscape.
