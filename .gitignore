@@ -1,0 +1,18 @@
+# OS generated files
+.DS_Store
+
+# LaTeX compilation artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.bbl
+*.blg
+*.pdf
+
+# Temporary agent checkpoints (can be modified if you want to push checkpoints)
+idea_*.md
+checkpoint_*.md
