@@ -9,10 +9,15 @@
 
 % Standard Graphics and Formatting Packages
 \usepackage{graphicx}
+\usepackage{subcaption}
 \usepackage{hyperref}
 \usepackage{geometry}
 \usepackage{booktabs}
 \usepackage{cite}
+\usepackage{float}
+
+% Figures are stored in the figures/ directory
+\graphicspath{{figures/}}
 
 \geometry{margin=1in}
 
@@ -30,18 +35,47 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 
 \section{Introduction}
 % Introduce the problem domain and the core hypothesis.
+% If a conceptual diagram helps motivate the problem, include it here:
+% \begin{figure}[H]
+%   \centering
+%   \includegraphics[width=0.7\textwidth]{fig_001_concept.png}
+%   \caption{Conceptual overview of the problem domain.}
+%   \label{fig:concept}
+% \end{figure}
 
 \section{Literature Review}
 % Summarize the findings from the literature search.
+% Include comparative figures inline where they support the narrative:
+% \begin{figure}[H]
+%   \centering
+%   \includegraphics[width=0.7\textwidth]{fig_002_comparison.png}
+%   \caption{Comparison of existing approaches.}
+%   \label{fig:lit-comparison}
+% \end{figure}
 
 \section{Methods and Brainstorming}
 % Detail the ideation frameworks used (SCAMPER, Morphological Analysis, etc.)
 
 \section{Mathematical Derivations}
-% Include step-by-step rigorous derivations without skipping lines. Explicitly state assumptions.
+% Include step-by-step rigorous derivations without skipping lines.
+% Explicitly state assumptions.
+% Embed visualizations inline where they illustrate a derivation step:
+% \begin{figure}[H]
+%   \centering
+%   \includegraphics[width=0.7\textwidth]{fig_003_derivation_plot.png}
+%   \caption{Visualization of [specific step or function] from the derivation.}
+%   \label{fig:derivation-viz}
+% \end{figure}
 
 \section{Results and Future Directions}
 % Discuss findings from coding/experiments and proposed next steps.
+% Include result figures inline:
+% \begin{figure}[H]
+%   \centering
+%   \includegraphics[width=0.7\textwidth]{fig_004_results.png}
+%   \caption{Numerical verification of theoretical predictions.}
+%   \label{fig:results}
+% \end{figure}
 
 \bibliographystyle{plain}
 % \bibliography{references}
