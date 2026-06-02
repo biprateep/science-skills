@@ -21,6 +21,13 @@ A comprehensive scientific research agent skill that acts as a collaborative par
 - **Literature Grounding**: Conducts factual verification and literature reviews.
 - **LaTeX Reporting**: Automatically aggregates ideas into `.tex` files and compiles them to PDFs.
 
+### Jupytext (`skills/jupytext`)
+An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:
+- **Dual-Purpose Files**: Scripts are valid `.py` files AND openable as Jupyter notebooks in VS Code, JupyterLab, and PyCharm.
+- **Clean Version Control**: Produces human-readable diffs unlike JSON-based `.ipynb` files.
+- **Mandatory Structure**: Enforces YAML headers, cell delimiters, narrative markdown, and meaningful chunking.
+- **Anti-Pattern Guards**: Prevents common LLM mistakes like missing headers, monolithic cells, and mixed markdown styles.
+
 ## Acknowledgments and Sources
 
 This project was built by drawing inspiration and structural methodologies from several excellent open-source projects and documentation guidelines:
