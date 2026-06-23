@@ -1,0 +1,8 @@
+# Co-Scientist mini-experiment / verification / visualization environment.
+# Copy into the working directory and pin exact versions per run for reproducibility:
+#   pip install -r requirements.txt && pip freeze > requirements.lock.txt
+numpy
+scipy
+sympy
+matplotlib
+pandas
