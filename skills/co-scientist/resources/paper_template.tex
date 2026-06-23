@@ -5,7 +5,10 @@
 \usepackage{amssymb}
 \usepackage{amsfonts}
 \usepackage{bm}
-\usepackage{physics}
+% The `physics` package (\dv, \pdv, \bra, \ket, ...) is NOT in minimal TeX
+% installs and will fail with "physics.sty not found". Enable it only if you
+% have it (e.g. texlive-science) and your derivation uses its macros:
+% \usepackage{physics}
 
 % Standard Graphics and Formatting Packages
 \usepackage{graphicx}
@@ -16,7 +19,9 @@
 \usepackage{cite}
 \usepackage{float}
 
-% Figures are stored in the figures/ directory
+% Figures are stored in the figures/ directory, relative to THIS file.
+% IMPORTANT: copy this template to your working directory as report.tex and
+% compile it there (where figures/ lives) — do not edit/compile it in resources/.
 \graphicspath{{figures/}}
 
 \geometry{margin=1in}
@@ -69,6 +74,8 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 
 \section{Results and Future Directions}
 % Discuss findings from coding/experiments and proposed next steps.
+% State the outcome honestly, including negative or inconclusive results.
+% Carry the meta-review's single best next experiment here.
 % Include result figures inline:
 % \begin{figure}[H]
 %   \centering
@@ -77,7 +84,17 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 %   \label{fig:results}
 % \end{figure}
 
+\section{Assumptions and Limitations}
+% Populate from the assumptions & limitations ledger
+% (checkpoints/checkpoint_assumptions.md). List every load-bearing assumption,
+% how it could fail, whether it was validated, and the threats to validity.
+% Do not omit this section, especially for negative results.
+
+% --- Bibliography (optional) ---
+% To enable: write your verified citations to report.bib and UNCOMMENT the
+% \bibliography line below. compile_report.sh runs bibtex only when both
+% report.bib exists AND an active \bibliography{...} is present.
 \bibliographystyle{plain}
-% \bibliography{references}
+% \bibliography{report}
 
 \end{document}
