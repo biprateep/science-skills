@@ -27,10 +27,12 @@ import numpy as np
 # %% [markdown]
 # ## Generate Data
 #
-# Create a simple array and compute summary statistics.
+# Create a simple array and compute summary statistics. The seeded generator
+# keeps the output reproducible across runs.
 
 # %% Generate and summarize
-data = np.random.randn(1000)
+rng = np.random.default_rng(42)
+data = rng.standard_normal(1000)
 print(f"Mean: {data.mean():.4f}")
 print(f"Std:  {data.std():.4f}")
 print(f"Min:  {data.min():.4f}")
