@@ -51,20 +51,24 @@ Before claiming a result, run the checks that catch most errors in seconds:
 Record the checks and their outcomes in the derivation checkpoint. A failed
 sanity check means **stop and find the error**, not "note and continue".
 
-## 3. Independent Verification Gate (mandatory for non-trivial results)
+## 3. Independent CAS Verification Gate (mandatory for non-trivial results)
 
-A derivation result is not `complete` until verified by machine, not by prose:
+A derivation is not `complete` until machine-verified with a computer algebra
+system — not by prose re-reading. The CAS of record is **SymPy** (free, open
+source, in `resources/requirements.txt`). The full mechanism — step-chain
+script, checkability taxonomy, tactic ladder, domain-specific checks — is in
+`cas_verification.md`; **read it when this gate begins**. In brief:
 
-- **Symbolic:** write a short script (saved to
-  `scripts/check_NNN_<name>.py`, e.g. using `sympy`) that re-derives or simplifies
-  `LHS - RHS` to 0, or substitutes the result back into the originating equation
-  and asserts it holds.
-- **Numeric:** evaluate both sides at several random parameter values (with a
-  logged seed) and assert agreement to a stated tolerance.
-
-Run via `<run-shell>`. Record **PASS/FAIL** (and the script path) in the
-checkpoint and set `"verified": true` in the manifest only on PASS. If symbolic
-verification is genuinely infeasible, do the numeric check and say so explicitly.
+- **Every load-bearing step**, not just the final result, is encoded in one
+  step-chain script (`scripts/check_NNN_<name>.py`) that asserts each
+  transition and prints a per-step `STEP <k> [<class>] PASS|FAIL` line.
+- Steps a CAS cannot decide are **classified, never skipped**: symbolic (S) /
+  assumption-dependent (A) / numeric-only (N — logged seed + stated tolerance)
+  / machine-unverifiable (U — explicitly listed and routed to the Red-Team).
+- Run via `<run-shell>`. Record the per-step table + script path in the
+  checkpoint; set `"verified": true` in the manifest only if the script exits 0.
+- A FAIL means **find the error** — in the math or, demonstrably, in the check's
+  encoding. Never weaken a check (tolerance, domain, deleting a step) to pass.
 
 ## 4. Independent Review
 
@@ -77,6 +81,7 @@ does not satisfy this gate.
 
 1. Is every load-bearing step shown and every non-obvious operation justified?
 2. Did the sanity checks (dimensions, limits, symmetry) pass?
-3. Did symbolic/numeric verification PASS, with the script saved?
+3. Did the step-chain CAS script PASS on every step, with the script saved and
+   every unverifiable (U) step explicitly listed?
 4. Are all assumptions in the ledger?
 5. Is the result tagged with a confidence level?

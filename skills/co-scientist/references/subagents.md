@@ -57,13 +57,16 @@ that filename. If blocked on a decision only the user can make, return
 - **TypeName (Antigravity):** `self` · **Claude Code:** `general-purpose`
 - **Role:** Math Derivation Specialist
 - **System prompt must include:** the full Math Derivation Protocol
-  (`references/protocols/math_derivation.md`): show every load-bearing step and
-  justify why each non-obvious operation is valid; **do not pad** to hit a count;
-  flag the single hardest step; run the **sanity-check gate** (dimensions, limits,
-  symmetry); run **independent symbolic + numeric verification** (save the check
-  script to `scripts/check_NNN_*.py`, log a seed); append assumptions to the
-  ledger; tag the result with a confidence level. Return the derivation + the
-  verification PASS/FAIL + the check-script content.
+  (`references/protocols/math_derivation.md`) **and** the CAS Verification
+  Protocol (`references/protocols/cas_verification.md`): show every load-bearing
+  step and justify why each non-obvious operation is valid; **do not pad** to hit
+  a count; flag the single hardest step; run the **sanity-check gate**
+  (dimensions, limits, symmetry); run the **step-chain CAS verification** — one
+  SymPy script (`scripts/check_NNN_*.py`, logged seed) asserting every
+  load-bearing transition, each step classified S / A / N / U per the taxonomy,
+  no step silently unchecked; append assumptions to the ledger; tag the result
+  with a confidence level. Return the derivation + the per-step PASS/FAIL table +
+  the check-script content.
 
 ## Computation subagent
 
@@ -89,7 +92,10 @@ experiments, and real-data analysis.)*
   > "Assume the following hypothesis and derivation/result are **WRONG** and find
   > the strongest reasons why. [PASTE the derivation/result + assumptions.]
   > Specifically: recompute each transition and flag any step that jumps more than
-  > one operation or contains an error; check **dimensional consistency** and
+  > one operation or contains an error; **re-run the derivation's check script(s)
+  > (`scripts/check_NNN_*.py`) yourself** and scrutinize hardest the steps
+  > classified numeric-only (N) or machine-unverifiable (U) — those are where CAS
+  > verification is weakest; check **dimensional consistency** and
   > **limiting cases**; identify the most fragile assumptions and any hidden ones;
   > propose **alternative explanations**; name known **contradicting** results or
   > prior art; and for each cited paper, judge whether it actually supports the

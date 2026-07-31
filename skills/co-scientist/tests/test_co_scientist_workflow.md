@@ -37,6 +37,9 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
   `.claude/skills/co-scientist/` (project), or ship it in a plugin.
 - **Google Antigravity:** its skill/agent discovery path (e.g. `.agents/` or the
   configured plugin location).
+- **Any other harness (OpenAI Codex, Cursor, …):** place the skill folder where
+  the agent discovers instructions (e.g. reference it from `AGENTS.md`), or
+  paste `SKILL.md` as context — the Harness Adapter maps the capabilities.
 
 **Launch an autonomous run with the test prompt:**
 
@@ -45,6 +48,8 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
   `claude -p "<test prompt>"`.
 - **Google Antigravity:** start an autonomous run (e.g. `/goal`) with the test
   prompt.
+- **Any other harness:** start a session in a clean working directory with the
+  skill loaded and paste the test prompt.
 
 After completion, from the **clean working directory** run:
 `bash <skill-dir>/tests/verify_co_scientist.sh`
@@ -69,7 +74,7 @@ After completion, from the **clean working directory** run:
 - [ ] Sanity checks performed (dimensions / limiting cases / symmetry)
 - [ ] Assumptions stated and appended to the ledger (i.i.d., finite mean/variance, characteristic function exists)
 - [ ] No "it can be shown that" / "after simplification" without expansion
-- [ ] Independent verification: a `scripts/check_*.py` (sympy and/or numeric) PASSes
+- [ ] Independent verification: a `scripts/check_*.py` step-chain script (sympy, per-step `STEP <k> [<class>] PASS` lines, seed logged) PASSes on every step
 - [ ] Covers: definition of φ_X(t), c.f. of the standardized sum, Taylor expansion of log φ, limit → Gaussian c.f., Lévy continuity theorem
 
 ### Literature, novelty & honesty
