@@ -4,5 +4,6 @@
 numpy
 scipy
 sympy
+mpmath
 matplotlib
 pandas

@@ -102,10 +102,20 @@ else
     warn "No derivation checkpoint files found to check equation count"
 fi
 
-# Independent verification scripts (sympy / numeric checks).
+# Independent verification scripts (step-chain CAS checks).
 VERIF=$(find "${WORKDIR}/scripts" -name "check_*.py" 2>/dev/null | wc -l | tr -d ' ')
 if [ "${VERIF:-0}" -ge 1 ]; then
     pass "Found ${VERIF} derivation-verification script(s) (check_*.py)"
+    NO_CAS=0; NO_STEPS=0
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        grep -qE 'import sympy|from sympy' "$f" 2>/dev/null || NO_CAS=$((NO_CAS + 1))
+        grep -qE 'STEP' "$f" 2>/dev/null || NO_STEPS=$((NO_STEPS + 1))
+    done <<< "$(find "${WORKDIR}/scripts" -name "check_*.py" 2>/dev/null)"
+    [ "$NO_CAS" -eq 0 ] && pass "All check scripts use a CAS (sympy)" \
+        || warn "${NO_CAS} check script(s) do not import sympy — CAS verification may be missing"
+    [ "$NO_STEPS" -eq 0 ] && pass "All check scripts report per-step results (step-chain)" \
+        || warn "${NO_STEPS} check script(s) lack per-step STEP markers — may verify only the endpoint"
 else
     warn "No verification scripts (check_*.py) — derivations may be unverified"
 fi

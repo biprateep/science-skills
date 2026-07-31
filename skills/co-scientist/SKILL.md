@@ -12,9 +12,8 @@ description: >-
   questions, quick lookups, homework-style single-answer derivations, or code
   debugging — answer those directly without this workflow.
 license: MIT
-allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, Agent, Skill
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
 ---
 
 # Co-Scientist: Scientific Research Partner
@@ -30,9 +29,9 @@ do not just perform process.** A well-formatted but wrong derivation, a fabricat
 citation, or an unchallenged hypothesis is a failure even if every step was
 "followed."
 
-This skill is **harness-agnostic**: it runs on Claude Code, Google Antigravity,
-or any agent harness, by mapping its capabilities through the Harness Adapter
-below.
+This skill is **harness-agnostic**: it runs on Claude Code, OpenAI Codex,
+Google Antigravity, or any other agent harness, by mapping its capabilities
+through the Harness Adapter below.
 
 ---
 
@@ -41,21 +40,32 @@ below.
 **FIRST, before anything else**, determine which harness you are running in by
 checking which tools you actually have available. Then, for every
 `<capability>` token used in this skill and its reference files, use the
-matching column. If a row's tool does not exist for you, use the Fallback.
+matching column. The named columns are **worked examples, not a whitelist** —
+on any other harness (Cursor, Aider, Windsurf, a bare API tool loop, …), map by
+capability, not by product name: pick the closest native tool, else the
+Fallback.
 
-| Capability            | Claude Code                                    | Google Antigravity                      | Fallback (any harness)                 |
-|-----------------------|------------------------------------------------|-----------------------------------------|----------------------------------------|
-| `<web-search>`        | `WebSearch` tool                               | `search_web`                            | —                                      |
-| `<web-fetch>`         | `WebFetch` tool                                | `search_web` on a URL / browser tool    | —                                      |
-| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `literature-search-arxiv` / `-openalex` | `<web-search>` + `<web-fetch>`         |
-| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | spawn with `TypeName: self` / `research` | do the work inline (no subagent)      |
-| `<image-gen>`         | *(none — use Fallback)*                         | `generate_image`                        | matplotlib / TikZ / Mermaid            |
-| `<run-shell>`         | `Bash` tool                                    | shell/terminal tool                     | —                                      |
-| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | file read/write tools                   | —                                      |
+| Capability            | Claude Code                                    | OpenAI Codex CLI                   | Google Antigravity                      | Fallback (any harness)                 |
+|-----------------------|------------------------------------------------|------------------------------------|-----------------------------------------|----------------------------------------|
+| `<web-search>`        | `WebSearch` tool                               | `web_search` (when enabled)        | `search_web`                            | `<web-fetch>` on a search endpoint     |
+| `<web-fetch>`         | `WebFetch` tool                                | `<run-shell>` + `curl`             | `search_web` on a URL / browser tool    | `<run-shell>` + `curl` (needs network) |
+| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `<run-shell>` + `curl` on the APIs† | `literature-search-arxiv` / `-openalex` | `<web-search>` + `<web-fetch>`         |
+| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | *(none — use Fallback)*            | spawn with `TypeName: self` / `research` | do the work inline (no subagent)      |
+| `<image-gen>`         | *(none — use Fallback)*                         | *(none — use Fallback)*            | `generate_image`                        | matplotlib / TikZ / Mermaid            |
+| `<run-shell>`         | `Bash` tool                                    | `shell`                            | shell/terminal tool                     | — (required)                           |
+| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | `apply_patch` / shell              | file read/write tools                   | — (required)                           |
 
 † arXiv API: `http://export.arxiv.org/api/query?search_query=...`
   OpenAlex API: `https://api.openalex.org/works?search=...`
   Crossref (DOI resolve): `https://api.crossref.org/works/<doi>`
+
+**Minimum viable harness:** `<run-shell>` (with Python) and file read/write —
+these power CAS verification, data analysis, and report compilation, and have
+no fallback. Everything else degrades gracefully: without `<spawn-subagent>`,
+run each role prompt inline, sequentially, keeping the Red-Team pass a fresh
+read of the written artifacts; without any network access (`<web-search>` and
+`<web-fetch>` both unavailable), say so, mark every literature claim
+**UNVERIFIED**, and never fabricate citations to fill the gap.
 
 State your detected harness once, at the start of the run, and record it in the
 run manifest (see `references/protocols/checkpointing.md`).
@@ -174,9 +184,9 @@ pivot / abort**. Do not silently proceed.
 
 **Phase 6 — Derivation and/or data analysis.** Delegate derivation to the
 Derivation subagent and/or data work to the Computation subagent. Both produce
-**verified** results (symbolic + numeric for math; reproducible runs with effect
-sizes for data).
-→ `references/protocols/math_derivation.md`, `references/protocols/data_analysis.md`
+**verified** results (per-step CAS verification for math; reproducible runs with
+effect sizes for data).
+→ `references/protocols/math_derivation.md`, `references/protocols/cas_verification.md`, `references/protocols/data_analysis.md`
 
 **Phase 7 — Red-team.** Delegate to the Red-Team / Reviewer subagent: an
 *independent* agent (not the one that produced the work) that tries to **break**
@@ -213,7 +223,7 @@ guessed line count. Roster (full definitions and prompt templates in
 `references/subagents.md`):
 
 - **Literature** — survey + verify citations + novelty verdict
-- **Derivation** — rigorous, sanity-checked, symbolically + numerically verified math
+- **Derivation** — rigorous, sanity-checked math, step-chain-verified with a CAS (SymPy)
 - **Computation** — coding, numerical experiments, and real-data analysis
 - **Red-Team / Reviewer** — adversarial verification of a *different* agent's work
 - **Visualization** — publication-quality figures
@@ -254,8 +264,11 @@ user has **explicitly approved** it (Phase 3). In **Derivation** mode, the light
 
 <HARD-GATE>
 A derivation result may NOT enter the report with status `complete` until it has
-passed (a) the sanity checks (dimensions / limits / symmetry) and (b) independent
-symbolic-or-numeric verification, per the Math Derivation Protocol. A citation may
+passed (a) the sanity checks (dimensions / limits / symmetry) and (b) the
+step-chain CAS verification gate — every load-bearing step checked symbolically
+where decidable, numerically (logged seed) otherwise, unverifiable steps
+explicitly flagged — per the Math Derivation and CAS Verification Protocols.
+A citation may
 NOT enter the report until its identifier has been resolved via `<web-fetch>`.
 </HARD-GATE>
 
@@ -296,7 +309,8 @@ Load on demand — read each file when its phase begins, not all up front:
 
 - `references/protocols/checkpointing.md` — checkpoint template, run manifest schema, assumptions & limitations ledger, reproducibility
 - `references/protocols/tournament.md` — *optional* Elo hypothesis tournament (pairwise scientific debate, ranking, evolution)
-- `references/protocols/math_derivation.md` — derivation format, sanity gate, symbolic + numeric verification
+- `references/protocols/math_derivation.md` — derivation format, sanity gate, verification gates
+- `references/protocols/cas_verification.md` — step-chain CAS verification: SymPy step checks, checkability taxonomy, tactic ladder, calculus & probability/statistics checks
 - `references/protocols/data_analysis.md` — real & synthetic data, EDA, statistical tests, effect sizes
 - `references/protocols/visualization.md` — matplotlib-first figures, `<image-gen>` fallback, seeds, inline placement
 - `references/protocols/reporting.md` — assemble & compile the LaTeX report safely
