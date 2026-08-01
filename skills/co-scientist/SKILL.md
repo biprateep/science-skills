@@ -211,7 +211,9 @@ Visualization subagent.
 **Phase 10 — Assemble & compile report.** Delegate sections to Section Writer
 subagents. The orchestrator copies the template to `report.tex` in the working
 directory (never edits the bundled template) and passes each writer the **exact**
-figure paths from the manifest. Compile.
+figure paths from the manifest. The report is **pedagogical, not condensed**:
+full problem setup, every derivation step, all experimental details, algorithm
+floats and conceptual figures — length is not a constraint. Compile.
 → `references/protocols/reporting.md`
 
 ---

@@ -26,6 +26,24 @@ a figure when it makes a concept, comparison, or result easier to grasp.
 | Distribution / fit | histogram + fitted curve |
 | Algorithm / flow | Mermaid or Graphviz diagram |
 
+## Pedagogical figures (for the report)
+
+When assembling a report (Phase 10), result plots alone are not enough — the
+reader also needs figures that build **conceptual** understanding, not just
+evidence. For each major section ask: *could a schematic make this easier to
+grasp than prose alone?* If yes, make one. Typical pedagogical figures:
+
+- **Setup schematic** — the physical/mathematical objects, geometry, coordinate
+  conventions, and where each key symbol lives (annotated matplotlib or TikZ).
+- **Method flow diagram** — the pipeline from inputs to conclusion (TikZ,
+  Graphviz, or Mermaid; it must render into the LaTeX report, so prefer TikZ).
+- **Mechanism cartoon** — an annotated sketch of *why* the effect happens, e.g.
+  regimes of a parameter space with each region labeled by its behavior.
+
+These follow the same manifest/figure-path rules as any other figure. A caption
+on a pedagogical figure states what the reader should take away, not just what
+is drawn.
+
 ## Implementation Steps
 
 1. Write a self-contained script; **set and log an RNG seed** if anything is

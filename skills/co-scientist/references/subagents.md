@@ -123,8 +123,15 @@ experiments, and real-data analysis.)*
   > "Using checkpoints [LIST] and the **exact** figure paths [PATHS], draft the
   > [SECTION] of the report in LaTeX following `paper_template.tex`. Embed the
   > given figures inline with `\includegraphics` where each concept is discussed —
-  > use only the figure paths provided; do not invent figure ids. Return the
-  > LaTeX for this section (the orchestrator will splice it into `report.tex`)."
+  > use only the figure paths provided; do not invent figure ids. **Write
+  > pedagogically, for a reader who has not followed this project** (rules in
+  > `protocols/reporting.md` §3): explain the problem setup in full and define
+  > every symbol; reproduce derivations step by step with justifications — never
+  > 'it can be shown'; state all experimental/computational details (parameters,
+  > seeds, tolerances, pass/fail criteria); add algorithm floats for nontrivial
+  > procedures; open subsections with plain-language intuition. Length is not a
+  > constraint. Return the LaTeX for this section (the orchestrator will splice
+  > it into `report.tex`)."
 
 ## Debate / Judge subagent (optional — tournament only)
 
