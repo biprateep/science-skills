@@ -1,0 +1,4 @@
+# co-scientist MCP toolbox — installed into mcp/.venv by setup_mcp.sh
+mcp>=1.2
+sympy>=1.12
+mpmath>=1.3

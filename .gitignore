@@ -1,6 +1,11 @@
 # OS generated files
 .DS_Store
 
+# Python virtualenvs and bytecode (mcp/.venv is machine-local, created by setup_mcp.sh)
+.venv/
+__pycache__/
+*.pyc
+
 # LaTeX compilation artifacts
 *.aux
 *.fdb_latexmk

@@ -44,9 +44,13 @@ that filename. If blocked on a decision only the user can make, return
   > authors, year, a **resolvable identifier** (arXiv id / DOI / OpenAlex id) that
   > you obtained from an actual search/fetch — never composed from memory — and a
   > short verbatim passage supporting the specific claim it is cited for.
-  > **Verify** each identifier by fetching it (`<web-fetch>` the arXiv abs page /
-  > `doi.org` / Crossref) and confirming the title and authors match; mark any
-  > citation you cannot resolve as UNVERIFIED and exclude it from claims.
+  > **Verify** each identifier with the `resolve_citation` tool (MCP Toolbox, or
+  > CLI: `mcp/.venv/bin/python mcp/server.py call resolve_citation
+  > '{"identifier": "..."}'`) and confirm the returned title and authors match
+  > what you are citing; if the toolbox is unavailable, fetch the arXiv abs page
+  > / `doi.org` / Crossref via `<web-fetch>` instead. Mark any citation that
+  > returns `resolved: false` (or that you cannot resolve) as UNVERIFIED and
+  > exclude it from claims.
   > Then give a **novelty verdict**: has this hypothesis already been done,
   > refuted, or partially addressed? Search explicitly for **refuting** prior art
   > and priority, not only support. Return a synthesis + the verified citation
@@ -61,12 +65,14 @@ that filename. If blocked on a decision only the user can make, return
   Protocol (`references/protocols/cas_verification.md`): show every load-bearing
   step and justify why each non-obvious operation is valid; **do not pad** to hit
   a count; flag the single hardest step; run the **sanity-check gate**
-  (dimensions, limits, symmetry); run the **step-chain CAS verification** — one
-  SymPy script (`scripts/check_NNN_*.py`, logged seed) asserting every
-  load-bearing transition, each step classified S / A / N / U per the taxonomy,
-  no step silently unchecked; append assumptions to the ledger; tag the result
-  with a confidence level. Return the derivation + the per-step PASS/FAIL table +
-  the check-script content.
+  (dimensions, limits, symmetry); run the **step-chain CAS verification** — via
+  the `verify_derivation` tool for expression-chain steps (each classified
+  S / A / N / U per the taxonomy, no step silently unchecked), plus a custom
+  SymPy script (`scripts/check_NNN_*.py`, logged seed) for structures the tool
+  cannot express (`cas_verification.md` §0); append assumptions to the ledger;
+  tag the result with a confidence level. Return the derivation + the per-step
+  PASS/FAIL table (the tool's output, not a hand-written table) + any
+  check-script content.
 
 ## Computation subagent
 
@@ -92,8 +98,9 @@ experiments, and real-data analysis.)*
   > "Assume the following hypothesis and derivation/result are **WRONG** and find
   > the strongest reasons why. [PASTE the derivation/result + assumptions.]
   > Specifically: recompute each transition and flag any step that jumps more than
-  > one operation or contains an error; **re-run the derivation's check script(s)
-  > (`scripts/check_NNN_*.py`) yourself** and scrutinize hardest the steps
+  > one operation or contains an error; **re-run the verification yourself** —
+  > the `verify_derivation` call with the recorded step JSON and any check
+  > scripts (`scripts/check_NNN_*.py`) — and scrutinize hardest the steps
   > classified numeric-only (N) or machine-unverifiable (U) — those are where CAS
   > verification is weakest; check **dimensional consistency** and
   > **limiting cases**; identify the most fragile assumptions and any hidden ones;

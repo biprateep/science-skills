@@ -39,6 +39,19 @@ perform process** — and features:
   effect sizes — for synthetic data and the user's real datasets.
 - **Single-writer subagent orchestration**: a resumable run manifest, an
   assumptions/limitations ledger, and LaTeX reporting that compiles to PDF.
+- **MCP Toolbox** (`skills/co-scientist/mcp/`): the enforcement-critical core —
+  step-chain CAS verification, citation resolution, file-locked manifest
+  state, figure validation, and a gate-enforcing report compiler — implemented
+  as an MCP server, so verdicts come from code the agent cannot narrate around.
+  One idempotent script registers it in every harness found on the machine:
+
+  ```sh
+  bash skills/co-scientist/mcp/setup_mcp.sh
+  ```
+
+  The skill self-bootstraps: if the tools are absent at run time it runs this
+  script itself and falls back to the identical CLI interface
+  (`mcp/server.py call <tool> '<json>'`) for the current session.
 
 ### Jupytext (`skills/jupytext`)
 An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:

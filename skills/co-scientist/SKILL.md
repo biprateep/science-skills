@@ -13,7 +13,7 @@ description: >-
   debugging — answer those directly without this workflow.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Co-Scientist: Scientific Research Partner
@@ -69,6 +69,44 @@ read of the written artifacts; without any network access (`<web-search>` and
 
 State your detected harness once, at the start of the run, and record it in the
 run manifest (see `references/protocols/checkpointing.md`).
+
+---
+
+## MCP Toolbox — deterministic verification & state
+
+The enforcement-critical operations of this skill are implemented as an MCP
+server at `<skill-dir>/mcp/server.py` — verification comes back as a **tool
+result computed by code**, not as something you narrate. Prefer these tools over
+hand-rolled equivalents wherever they apply:
+
+| Tool | Replaces | Details in |
+|------|----------|-----------|
+| `verify_derivation` | writing + running a per-derivation sympy check script (for expression-chain steps) | `protocols/cas_verification.md` §0 |
+| `resolve_citation` | hand-fetching arXiv/DOI/OpenAlex pages to confirm a citation | `subagents.md` (Literature) |
+| `manifest_init` / `manifest_read` / `manifest_append` / `manifest_set` / `manifest_update_checkpoint` | hand-editing `checkpoints/manifest.json` (file-locked; ids allocated atomically; `verified: true` requires evidence) | `protocols/checkpointing.md` |
+| `validate_figures` | eyeballing `\includegraphics` targets | `protocols/reporting.md` |
+| `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: refuses while unverified derivation/data checkpoints or missing figures exist | `protocols/reporting.md` §4 |
+
+**Bootstrap check (do this once, when entering Derivation or Full Project
+mode):**
+
+1. **Detect.** Look for the tools in your own tool list (Claude Code:
+   `mcp__co-scientist__*`; other harnesses list them under server
+   `co-scientist`). If present → use them directly; done.
+2. **If absent, register.** Run
+   `bash <skill-dir>/mcp/setup_mcp.sh` via `<run-shell>`. It is idempotent:
+   creates `mcp/.venv`, installs deps, smoke-tests, and registers the server in
+   every harness found (Claude Code / Codex / Antigravity). Tell the user the
+   toolbox is now registered and will load as native tools in their **next**
+   session.
+3. **For the current session, use CLI mode** — the identical code paths through
+   `<run-shell>`:
+   `<skill-dir>/mcp/.venv/bin/python <skill-dir>/mcp/server.py call <tool> '<json-args>'`
+   (exit 0 = pass; non-zero = fail/blocked; JSON verdict on stdout).
+
+If both registration and CLI mode fail (e.g. no Python), fall back to the prose
+protocols in `references/` — they remain the full specification of what the
+tools enforce. Never edit anything under `mcp/` during a run.
 
 ---
 
@@ -145,10 +183,12 @@ Index). Read each one when its phase begins — do not load them all up front.
 Run phases in order. Gates (⛔) require user input before proceeding. Each phase
 names the reference file to read when you reach it.
 
-**Phase 0 — Initialize.** Detect harness (above). Create `checkpoints/`,
-`figures/`, `scripts/` in the working directory. Create the **run manifest**
-(`checkpoints/manifest.json`) and `checkpoint_000_project_init.md` with the
-user's goal and detected harness.
+**Phase 0 — Initialize.** Detect harness (above) and run the **MCP Toolbox
+bootstrap check**. Create the workspace and **run manifest** with
+`manifest_init` (it creates `checkpoints/`, `figures/`, `scripts/` and
+`checkpoints/manifest.json` atomically; on an existing manifest it resumes
+instead of overwriting). Write `checkpoint_000_project_init.md` with the user's
+goal and detected harness.
 → `references/protocols/checkpointing.md`
 
 **Phase 1 — Explore & clarify.** Read any provided notes/data. Ask clarifying
@@ -184,8 +224,10 @@ pivot / abort**. Do not silently proceed.
 
 **Phase 6 — Derivation and/or data analysis.** Delegate derivation to the
 Derivation subagent and/or data work to the Computation subagent. Both produce
-**verified** results (per-step CAS verification for math; reproducible runs with
-effect sizes for data).
+**verified** results (per-step CAS verification for math — via the
+`verify_derivation` tool for expression chains, custom check scripts for
+structures it cannot express; reproducible runs with effect sizes for data).
+Record verification with `manifest_update_checkpoint` (+ evidence).
 → `references/protocols/math_derivation.md`, `references/protocols/cas_verification.md`, `references/protocols/data_analysis.md`
 
 **Phase 7 — Red-team.** Delegate to the Red-Team / Reviewer subagent: an
@@ -213,7 +255,9 @@ subagents. The orchestrator copies the template to `report.tex` in the working
 directory (never edits the bundled template) and passes each writer the **exact**
 figure paths from the manifest. The report is **pedagogical, not condensed**:
 full problem setup, every derivation step, all experimental details, algorithm
-floats and conceptual figures — length is not a constraint. Compile.
+floats and conceptual figures — length is not a constraint. Compile with the
+`compile_report` tool — it mechanically enforces the verification and figure
+gates before running LaTeX.
 → `references/protocols/reporting.md`
 
 ---
@@ -271,7 +315,12 @@ step-chain CAS verification gate — every load-bearing step checked symbolicall
 where decidable, numerically (logged seed) otherwise, unverifiable steps
 explicitly flagged — per the Math Derivation and CAS Verification Protocols.
 A citation may
-NOT enter the report until its identifier has been resolved via `<web-fetch>`.
+NOT enter the report until its identifier has been resolved (the
+`resolve_citation` tool, else `<web-fetch>`). Where the MCP Toolbox is
+available, this gate is **mechanically enforced**: `verified: true` can only be
+recorded through `manifest_update_checkpoint` with evidence, and
+`compile_report` refuses to build while unverified derivation/data checkpoints
+exist.
 </HARD-GATE>
 
 <HARD-GATE>
@@ -318,6 +367,7 @@ Load on demand — read each file when its phase begins, not all up front:
 - `references/protocols/reporting.md` — assemble & compile the LaTeX report safely
 - `references/subagents.md` — subagent definitions, prompt templates, the contract
 - `references/strategy_index.md` — brainstorming frameworks (open-ended ideation only)
+- `mcp/server.py` — the MCP Toolbox implementation (tools listed above); `mcp/setup_mcp.sh` — idempotent per-harness registration; `tests/verify_mcp.sh` — toolbox smoke tests
 
 ## Process Flow
 

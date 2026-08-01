@@ -22,6 +22,25 @@ sole authority for `NNN` ids. Subagents return content; the orchestrator assigns
 the id, writes the file, and updates the manifest. This works on every harness
 (including ones where subagents are isolated) and removes id-collision races.
 
+**Where the MCP Toolbox is available, this rule is mechanically enforced** —
+never hand-edit `manifest.json`; go through the tools (all file-locked):
+
+| Operation | Tool |
+|-----------|------|
+| Create workspace + manifest (Phase 0; idempotent, resumes if present) | `manifest_init(workdir, run_id, goal, harness, mode)` |
+| Read state (first thing on resume) | `manifest_read(workdir)` |
+| Add checkpoint (pass `descriptor` + `phase`; the **tool** allocates the id and filename) | `manifest_append(workdir, "checkpoints", entry)` |
+| Add hypothesis / citation / figure | `manifest_append(workdir, section, entry)` |
+| Update run scalars (`phase`, `next_action`, …) | `manifest_set(workdir, fields)` |
+| Set status / verified | `manifest_update_checkpoint(workdir, id, status, verified, evidence)` |
+
+Two invariants the tools enforce that prose could only request: new checkpoints
+always start `verified: false` (a `verified: true` passed to `manifest_append`
+is stripped), and flipping to `verified: true` **requires an evidence string**
+(which check ran, where, with what result). The checkpoint **markdown files**
+are still written by the orchestrator with `<write-file>` as before — the tools
+own only the manifest.
+
 ## Naming Convention
 
 `checkpoint_NNN_<short_descriptor>.md`, `NNN` zero-padded, allocated from the

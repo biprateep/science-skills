@@ -7,6 +7,39 @@ load-bearing step**, not just the final result. An endpoint check can pass by
 luck (compensating errors) or fail without locating the bug; a step chain does
 neither.
 
+## 0. Preferred Path — the `verify_derivation` MCP tool
+
+For derivations whose load-bearing steps are **expression transitions**
+(`lhs → rhs` pairs), do not write a check script — call the `verify_derivation`
+tool (MCP Toolbox; CLI fallback
+`mcp/.venv/bin/python mcp/server.py call verify_derivation '<json>'`). It
+implements this protocol in code: the checkability taxonomy, the full tactic
+ladder of §4, and the seeded numeric fallback, returning a per-step PASS/FAIL
+table you did not author. Map your derivation onto its inputs:
+
+```json
+{
+  "symbols": {"x": "real", "k": "positive"},
+  "steps": [
+    {"label": "2->3", "cls": "A",
+     "lhs": "integrate(x*exp(-k*x), (x, 0, oo))", "rhs": "1/k**2"},
+    {"label": "4", "cls": "U", "note": "dominated convergence — Red-Team"}
+  ]
+}
+```
+
+Class-A assumptions go in `symbols` (that is where they live in code too).
+Class-U steps are recorded and routed to the Red-Team, exactly as in §2.
+Record the result via `manifest_update_checkpoint` with the returned summary as
+evidence.
+
+**Still write a custom check script (§3)** for structures the tool cannot
+express as an expression pair: ODE solutions (`checkodesol`), `sympy.stats`
+characteristic-function comparisons, Monte Carlo checks with SE-scaled
+tolerance, `sympy.physics.units` dimensional analysis, matrix identities at
+several shapes, or anything needing the §5 domain-specific machinery. Those
+scripts follow §§3–5 unchanged, and their output is the evidence string.
+
 ## 1. CAS of Record
 
 - **SymPy** is the CAS of record: free, open source, pip-installable, already in

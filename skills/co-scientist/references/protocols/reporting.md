@@ -75,16 +75,25 @@ these rules (the orchestrator includes them in each writer's prompt):
 
 ## 4. Validate figure references, then compile
 
-Before compiling, confirm every `\includegraphics{...}` target exists in
-`figures/`; fail fast (and fix) if not. Then:
+**Preferred:** call the `compile_report` MCP tool (CLI fallback:
+`mcp/.venv/bin/python mcp/server.py call compile_report '{"workdir": "..."}'`).
+It runs the whole sequence with the hard gates built in:
 
-```
-bash <skill-dir>/scripts/compile_report.sh report     # note: name WITHOUT .tex extension
-```
+1. **Verification gate** — refuses while the manifest contains
+   derivation/data/computation checkpoints with `verified: false`. For an
+   explicit negative-result report pass `allow_unverified: true`; the bypass is
+   recorded in the result, never silent.
+2. **Figure gate** — runs `validate_figures` and refuses on any missing
+   `\includegraphics` target (you can also call `validate_figures` directly
+   while drafting).
+3. Compiles: stale-PDF removal, `pdflatex` nonstop mode, conditional `bibtex`
+   (below), real errors surfaced from the `.log`.
 
-The script removes any stale PDF, runs `pdflatex` in nonstop mode, surfaces real
-LaTeX errors from the `.log`, and runs `bibtex` **only** when a bibliography is
-actually present (see below).
+**Fallback** (no toolbox): check figure targets by hand, then
+`bash <skill-dir>/scripts/compile_report.sh report` (name WITHOUT the `.tex`
+extension) — same compile behavior, but the verification gate is then on your
+honor: re-read the manifest and confirm every derivation checkpoint is verified
+before compiling.
 
 ## 5. Bibliography (optional)
 
