@@ -13,7 +13,7 @@ description: >-
   debugging — answer those directly without this workflow.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Co-Scientist: Scientific Research Partner

@@ -21,7 +21,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ---------------------------------------------------------------------------
 # ping
