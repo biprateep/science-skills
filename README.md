@@ -18,6 +18,41 @@ mapping and `tests/test_co_scientist_workflow.md` for install paths and launch
 commands for each harness. The methodologies are conceptual and adapt to further
 frameworks by adding a column to that map.
 
+## Installation
+
+Clone the repo anywhere, then run the installer:
+
+```sh
+git clone https://github.com/biprateep/science-skills.git
+bash science-skills/scripts/install.sh
+```
+
+It registers every skill in `skills/` with each harness it finds on the machine,
+and skips the ones that aren't installed:
+
+| Harness | Mechanism | Picks up new skills |
+| :--- | :--- | :--- |
+| **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
+| **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
+
+Nothing is copied — both harnesses read this working tree, so a `git pull`
+publishes skill edits immediately, with no reinstall. The script is idempotent,
+never touches unrelated skills or config entries, and understands
+`--dry-run`, `--uninstall`, and `--help`. Set `CLAUDE_CONFIG_DIR` or
+`GEMINI_CONFIG_DIR` to target a non-default install location.
+
+A directory under `skills/` is installed only if it contains a `SKILL.md`;
+work-in-progress folders are reported and skipped.
+
+For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
+folder wherever that agent discovers instructions — the Harness Adapter maps the
+capabilities. Then set up the co-scientist MCP toolbox, which is registered
+separately and per-machine:
+
+```sh
+bash science-skills/skills/co-scientist/mcp/setup_mcp.sh
+```
+
 ## Featured Skills
 
 ### Co-Scientist (`skills/co-scientist`)
