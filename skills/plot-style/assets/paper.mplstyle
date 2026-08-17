@@ -1,0 +1,39 @@
+# Publication figure defaults — AASTeX (AJ / ApJ) house style.
+#
+# Apply with:   plt.style.use("<path>/paper.mplstyle")
+# or via:       from plotstyle import use_style; use_style()
+#
+# Figure WIDTHS are not settable here — they are per-figure geometry.
+# Use COLUMN_WIDTH / TEXT_WIDTH from plotstyle.py.
+
+# --- Type ---------------------------------------------------------------
+# "Nimbus Roman No9 L" is the URW Times clone that matches AASTeX body text.
+# Newer urw-base35 packages renamed it to plain "Nimbus Roman"; the rest of
+# the list are progressively weaker Times-metric fallbacks so the sheet never
+# hard-fails on a machine that lacks the exact face.
+font.family:  serif
+font.serif:   Nimbus Roman No9 L, Nimbus Roman, Times New Roman, Liberation Serif, DejaVu Serif
+font.size:    10
+axes.titlesize:  10
+axes.labelsize:  10
+legend.fontsize: 10
+xtick.labelsize: 9
+ytick.labelsize: 9
+
+# Computer Modern math, so inline $math$ matches the LaTeX manuscript.
+mathtext.fontset: cm
+
+# --- Ticks: inward, on all four sides -----------------------------------
+xtick.top:       True
+ytick.right:     True
+xtick.direction: in
+ytick.direction: in
+
+# --- Legend: never boxed ------------------------------------------------
+legend.frameon: False
+
+# --- Output -------------------------------------------------------------
+figure.facecolor: w
+figure.dpi:       300
+savefig.dpi:      300
+savefig.bbox:     tight

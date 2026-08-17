@@ -95,6 +95,21 @@ An agent skill that enforces the Jupytext percent format (`py:percent`) for all 
 - **Mandatory Structure**: Enforces YAML headers, cell delimiters, narrative markdown, and meaningful chunking.
 - **Anti-Pattern Guards**: Prevents common LLM mistakes like missing headers, monolithic cells, and mixed markdown styles.
 
+### Plot Style (`skills/plot-style`)
+Enforces a single publication matplotlib aesthetic on every figure, derived from
+the figure code in real AASTeX (AJ/ApJ) manuscripts. Key features:
+- **Journal geometry**: figure widths are always the measured `\columnwidth` or
+  `\textwidth`, so figures drop into the manuscript unscaled and print with the
+  same type size as the surrounding text.
+- **One preamble**: serif type matched to the body font with Computer Modern
+  math, inward ticks on all four sides, frameless legends — set once, never
+  patched per-axis.
+- **Idiom library** (`assets/plotstyle.py`): stacked histograms, shared
+  colorbars, one-to-one comparisons, and equal-count running-median bands, each
+  as a helper plus a copy-paste template in `references/recipes.md`.
+- **Press-ready output**: rasterized dense scatter inside vector PDFs, saved
+  tight at 300 dpi — figures stay small enough for a journal's compiler.
+
 ## Acknowledgments and Sources
 
 This project was built by drawing inspiration and structural methodologies from several excellent open-source projects and documentation guidelines:
