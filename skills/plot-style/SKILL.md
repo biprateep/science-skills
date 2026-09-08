@@ -4,8 +4,9 @@ description: >-
   Enforce the publication matplotlib aesthetic on every figure: journal
   column/text-width sizing (AASTeX by default, per-journal registry), Nimbus
   Roman serif with Computer Modern math at 9/10/12 pt on every piece of text,
-  inward ticks on all four sides, frameless legends, the default C0/C1/C2
-  color cycle, and tight 300 dpi PNG output. This is the DEFAULT for all
+  inward ticks on all four sides, frameless legends, matplotlib's own
+  default palettes (the tab10 cycle as C0/C1/C2, viridis) unless the user
+  names one, and tight 300 dpi PNG output. This is the DEFAULT for all
   matplotlib figures — apply it unless the user explicitly asks for something
   else. Use whenever creating, editing, restyling, or reviewing a plot, and
   when the user mentions: plot, figure, chart, histogram, scatter, contour,
@@ -13,7 +14,7 @@ description: >-
   figure, publication quality, or journal column width.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Publication Plot Style
@@ -104,9 +105,11 @@ plt.rcParams.update(params)
 The inline block does **not** set `legend.frameon`, `savefig.bbox`,
 `savefig.dpi` or `savefig.format`, so with it every legend call carries
 `frameon=False` and every save carries `bbox_inches="tight", dpi=300` and a
-`.png` name. The style sheet sets all four, plus `legend.title_fontsize`
-(10 pt) and `figure.titlesize` (12 pt) so legend titles and suptitles also
-land on the type scale.
+`.png` name. Nor does it touch colour, so it inherits whatever the local
+`matplotlibrc` says. The style sheet sets all of these, pins matplotlib's
+default palettes, and adds `legend.title_fontsize` (10 pt) and
+`figure.titlesize` (12 pt) so legend titles and suptitles also land on the
+type scale.
 
 > **Font availability.** `Nimbus Roman No9 L` is the URW Times clone
 > matching the manuscript body text; newer `urw-base35` packages ship the
@@ -212,14 +215,41 @@ overridden per-axis. No grid.
 **Legends** — always `frameon=False`. Move with an explicit `loc` tuple when
 the default collides with the data: `ax.legend(frameon=False, loc=(0.41, 0.78))`.
 
-**Color** — the default matplotlib cycle, by index: `"C0"`, `"C1"`, `"C2"`.
+**Palette** —
 <HARD-RULE>
-Never hand-pick hex colors or named colors for data series. `C`-indices keep
-every figure in a paper mutually consistent and re-orderable.
+Unless the user explicitly names a palette, use the palettes matplotlib
+ships by default: the default property cycle (`tab10`, addressed as `C0`,
+`C1`, …) for categorical series and the default colormap (`viridis`) for
+continuous data. No seaborn, cmocean, colorcet, or hand-assembled colour
+lists on your own initiative.
+</HARD-RULE>
+The style sheet pins both defaults so a personal `matplotlibrc` cannot
+quietly change them. When the user *does* state a palette, install it once
+in the preamble and nowhere else:
+
+```python
+use_style(palette="Dark2")                  # property cycle from a qualitative map
+use_style(cmap="cividis")                   # default colormap for c=, imshow, pcolormesh
+set_palette(["#0072B2", "#E69F00", "#009E73"])   # or an explicit list, after use_style()
+```
+
+Series keep addressing the cycle by `C`-index either way, so changing the
+palette later is one line. A signed quantity that genuinely needs a
+diverging map takes a matplotlib built-in (`RdBu_r`, `coolwarm`) with
+limits symmetric about zero — that is a judgment about the data, not a
+palette preference, and a user-stated palette still wins.
+
+**Color** — data series by index into the palette in effect: `"C0"`,
+`"C1"`, `"C2"`.
+<HARD-RULE>
+Never hand-pick hex colors or named colors for data series at the call
+site. `C`-indices keep every figure in a paper mutually consistent and
+re-orderable, and keep the palette a single preamble decision.
 </HARD-RULE>
 Black (`"k"`) is reserved for reference lines and annotation, never for a
-data series. Continuous quantities use `cmap="viridis"` with **explicit**
-`vmin`/`vmax` so panels sharing a colorbar share a scale.
+data series. Continuous quantities take the default colormap (leave `cmap`
+unset, or `cmap="viridis"` explicitly) with **explicit** `vmin`/`vmax` so
+panels sharing a colorbar share a scale.
 
 **Markers** — `marker="."` with a small `s`: `s=0.5` for dense clouds
 (thousands of points), `s=4`–`5` for sparse ones. Background scatter under
@@ -263,8 +293,8 @@ Two checks, both cheap, both enforced by code rather than by re-reading:
 2. **On the script** — `python scripts/check_plot_style.py <script.py>`
    parses the file and reports invented figure sizes, vector output,
    `savefig` without the tight-bbox/dpi arguments, boxed legends,
-   hand-picked colours, numeric font sizes, pyplot-state calls and
-   `tight_layout`. Nonzero exit means a rule was broken; `--strict` also
+   hand-picked colours, third-party palettes, numeric font sizes,
+   pyplot-state calls and `tight_layout`. Nonzero exit means a rule was broken; `--strict` also
    fails on warnings. Run it on every plotting script before presenting it.
 
 ---
@@ -303,6 +333,9 @@ Stop and fix if you catch any of these:
 - **Numeric font sizes** — `fontsize=14`, `title_fontsize=20`. Only
   `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE`, and only where the rules allow.
 - **Hand-picked colors** — `color="#1f77b4"`, `color="steelblue"`. Use `C0`.
+- **An unrequested palette** — `import seaborn as sns; sns.set_palette(...)`,
+  `cmap=cmocean.cm.thermal`, a "nicer" custom list. Matplotlib's defaults
+  unless the user named a palette; then `use_style(palette=..., cmap=...)`.
 - **Saving PDF/SVG by default** — the house output is a tight 300 dpi PNG;
   vector only on request.
 - **`savefig` without `bbox_inches="tight", dpi=300`** when the inline
@@ -329,6 +362,7 @@ Stop and fix if you catch any of these:
 - [ ] `verify_style()` passed (or `findfont` confirmed a Nimbus / Times face).
 - [ ] Every `figsize` derives from `COLUMN_WIDTH` / `TEXT_WIDTH` or `figsize()` / `grid_figsize()`; height is a fraction of width.
 - [ ] No numeric `fontsize`; only `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE` where allowed.
+- [ ] Palette is matplotlib's default unless the user named one, and a named one is set once via `use_style(palette=…)` / `set_palette`.
 - [ ] Data series colored by `C`-index; `k` only for reference lines.
 - [ ] Legends are `frameon=False`.
 - [ ] Axis labels carry units in square brackets; math in raw strings.
@@ -356,7 +390,7 @@ Stop and fix if you catch any of these:
 | Path | Contents |
 |---|---|
 | `assets/paper.mplstyle` | the rcParams as a matplotlib style sheet |
-| `assets/plotstyle.py` | journal registry, widths, sizes, `use_style` / `verify_style`, `figsize` / `grid_figsize`, and every idiom as a helper |
+| `assets/plotstyle.py` | journal registry, widths, sizes, `use_style` / `verify_style` / `set_palette`, `figsize` / `grid_figsize`, and every idiom as a helper |
 | `scripts/check_plot_style.py` | static checker for plotting scripts (stdlib only) |
 | `references/recipes.md` | aspect guide and a copy-paste template per figure type, long and short form |
 | `examples/example_figures.py` | four runnable figures on synthetic data, with a size report |

@@ -32,6 +32,14 @@ ytick.right:     True
 xtick.direction: in
 ytick.direction: in
 
+# --- Colour: matplotlib's own defaults unless the user names a palette ----
+# The default property cycle (tab10 — C0, C1, ...) for categorical series and
+# the default colormap (viridis) for continuous data, pinned here so a personal
+# matplotlibrc cannot quietly change them. A stated palette is installed
+# afterwards with plotstyle.set_palette() / use_style(palette=..., cmap=...).
+axes.prop_cycle: cycler('color', ['1f77b4', 'ff7f0e', '2ca02c', 'd62728', '9467bd', '8c564b', 'e377c2', '7f7f7f', 'bcbd22', '17becf'])
+image.cmap: viridis
+
 # --- Legend: never boxed ------------------------------------------------
 legend.frameon: False
 

@@ -110,11 +110,15 @@ the figure code in real AASTeX (AJ/ApJ) manuscripts. Key features:
 - **Idiom library** (`assets/plotstyle.py`): stacked histograms, shared
   colorbars, one-to-one comparisons, and equal-count running-median bands, each
   as a helper plus a copy-paste template in `references/recipes.md`.
+- **Matplotlib's own palettes** unless the user names one: the default cycle
+  for series, `viridis` for continuous data, pinned by the style sheet; a
+  stated palette is installed once in the preamble and series still address
+  it by `C`-index.
 - **Press-ready output**: tight 300 dpi PNG, every time.
 - **Enforced, not narrated**: `verify_style()` fails at run time if the serif
   face silently fell back to DejaVu, and `scripts/check_plot_style.py` lints a
   plotting script for invented figure sizes, vector output, boxed legends,
-  hand-picked colours and numeric font sizes.
+  hand-picked colours, unrequested third-party palettes and numeric font sizes.
 
 ## Acknowledgments and Sources
 

@@ -39,6 +39,31 @@ into the figure height: `nrows * panel_aspect * width / ncols`.
 
 ---
 
+## 0b. Palette
+
+Unless the user names one, colour is whatever matplotlib ships by default:
+the `tab10` property cycle for series (`C0`, `C1`, …) and `viridis` for
+continuous data. `use_style()` pins both, overriding any personal
+`matplotlibrc`. Nothing else needs writing.
+
+When the user *has* stated a palette, it goes in the preamble, once:
+
+```python
+use_style(palette="Dark2")                        # qualitative colormap -> property cycle
+use_style(palette="tab20", cmap="cividis")        # both at once
+use_style(palette=["#0072B2", "#E69F00", "#009E73", "#CC79A7"])   # explicit list
+set_palette(cmap="magma")                         # change one after the fact
+set_palette()                                     # back to matplotlib defaults
+```
+
+Series code does not change — it still says `color="C1"` — and a
+continuous map passed by name is sampled at 10 evenly spaced points
+(`n=` to choose). A diverging quantity takes a matplotlib built-in with
+limits symmetric about zero, `cmap="RdBu_r", vmin=-a, vmax=a`; that is a
+property of the data, not a palette choice.
+
+---
+
 ## 1. Panel grid with one shared colorbar
 
 Full text width, two panels, one slim colorbar to the right of the *figure*

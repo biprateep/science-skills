@@ -17,6 +17,7 @@ from pathlib import Path
 
 import matplotlib as mpl
 import matplotlib.font_manager as fm
+from cycler import cycler
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -35,6 +36,8 @@ __all__ = [
     "FONT_FAMILY",
     "SERIF_FALLBACKS",
     "RC_PARAMS",
+    "DEFAULT_PALETTE",
+    "set_palette",
     "GOLDEN",
     "ASPECTS",
     "use_style",
@@ -174,13 +177,68 @@ RC_PARAMS = {
     "savefig.format": "png",
 }
 
+# Colour is deliberately NOT in RC_PARAMS. Unless the user names a palette,
+# figures use exactly what matplotlib ships: the default property cycle
+# (tab10, addressed as C0, C1, ...) for categorical series and the default
+# colormap (viridis) for continuous data. These are taken from matplotlib's
+# own defaults rather than retyped, so they track the installed version and
+# override anything a personal matplotlibrc may have changed.
+DEFAULT_PALETTE = {
+    "axes.prop_cycle": mpl.rcParamsDefault["axes.prop_cycle"],
+    "image.cmap": mpl.rcParamsDefault["image.cmap"],
+}
 
-def use_style(style_file=None, journal: str | Journal = DEFAULT_JOURNAL) -> Journal:
+
+def set_palette(colors=None, cmap=None, n=None):
+    """Install a user-stated palette once, in the preamble.
+
+    ``colors`` becomes the property cycle, so series keep addressing it by
+    ``C0``, ``C1``, ...: a list of colours, or the name of a matplotlib
+    colormap — a qualitative one (``"Dark2"``, ``"Set2"``, ``"tab20"``)
+    contributes its colours as-is, a continuous one is sampled at ``n``
+    (default 10) evenly spaced points. ``cmap`` becomes the default colormap
+    for ``scatter(c=...)``, ``imshow``, ``pcolormesh`` and friends. Either
+    may be omitted; ``None`` for both restores matplotlib's defaults.
+
+    Only call this when the user has explicitly asked for a palette. Returns
+    the ``(colors, cmap)`` now in effect.
+    """
+    if colors is None and cmap is None:
+        mpl.rcParams.update(DEFAULT_PALETTE)
+    if colors is not None:
+        if isinstance(colors, str):
+            cm = mpl.colormaps[colors]  # KeyError for an unknown name
+            # Qualitative maps are ListedColormaps with a handful of entries
+            # (tab20 is the largest at 20); viridis & co. are Listed too but
+            # carry 256 samples, so they are sampled rather than copied.
+            if hasattr(cm, "colors") and len(cm.colors) <= 20:
+                colors = list(cm.colors)[: n or len(cm.colors)]
+            else:
+                colors = [cm(v) for v in np.linspace(0, 1, n or 10)]
+        mpl.rcParams["axes.prop_cycle"] = cycler(color=list(colors))
+    if cmap is not None:
+        mpl.colormaps[cmap]  # validate early
+        mpl.rcParams["image.cmap"] = cmap
+    return (
+        mpl.rcParams["axes.prop_cycle"].by_key()["color"],
+        mpl.rcParams["image.cmap"],
+    )
+
+
+def use_style(
+    style_file=None,
+    journal: str | Journal = DEFAULT_JOURNAL,
+    palette=None,
+    cmap=None,
+) -> Journal:
     """Apply the publication rcParams globally and select the journal geometry.
 
     Prefers the ``paper.mplstyle`` sheet shipped alongside this module and
-    falls back to the equivalent ``RC_PARAMS`` dict if it is missing. The
-    returned :class:`Journal` is what :func:`figsize` and
+    falls back to the equivalent ``RC_PARAMS`` dict if it is missing. Colour
+    is reset to matplotlib's default palettes unless ``palette`` (property
+    cycle) and/or ``cmap`` (default colormap) are given — pass them only
+    when the user has explicitly stated a palette; see :func:`set_palette`.
+    The returned :class:`Journal` is what :func:`figsize` and
     :func:`grid_figsize` use from now on.
     """
     global _active_journal
@@ -189,6 +247,7 @@ def use_style(style_file=None, journal: str | Journal = DEFAULT_JOURNAL) -> Jour
         plt.style.use(str(path))
     else:
         mpl.rcParams.update(RC_PARAMS)
+    set_palette(palette, cmap)
     _active_journal = globals()["journal"](journal)
     return _active_journal
 
@@ -196,7 +255,9 @@ def use_style(style_file=None, journal: str | Journal = DEFAULT_JOURNAL) -> Jour
 def verify_style(strict: bool = True) -> dict:
     """Check that the house rcParams are active and the serif face resolved.
 
-    Returns ``{"font": <path matplotlib will use>, "problems": [...]}``.
+    Returns ``{"font": <path matplotlib will use>, "palette": [...],
+    "cmap": <name>, "default_palette": bool, "problems": [...]}``. The
+    palette is reported, not enforced — a user-stated one is legitimate.
     With ``strict=True`` (default) raises ``RuntimeError`` if any rcParam
     differs from :data:`RC_PARAMS` or if the font chain fell through to a
     DejaVu face — which is what happens on a machine without Nimbus Roman,
@@ -217,7 +278,15 @@ def verify_style(strict: bool = True) -> dict:
         )
     if strict and problems:
         raise RuntimeError("plot style not in effect:\n  - " + "\n  - ".join(problems))
-    return {"font": str(font_path), "problems": problems}
+    colors = mpl.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    return {
+        "font": str(font_path),
+        "palette": colors,
+        "cmap": mpl.rcParams["image.cmap"],
+        "default_palette": colors == DEFAULT_PALETTE["axes.prop_cycle"].by_key()["color"]
+        and mpl.rcParams["image.cmap"] == DEFAULT_PALETTE["image.cmap"],
+        "problems": problems,
+    }
 
 
 # --------------------------------------------------------------------------

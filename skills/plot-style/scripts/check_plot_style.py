@@ -13,6 +13,8 @@ Parses each script's AST and reports, per line:
   ERROR  legend-frame    legend(frameon=True), or legend() without frameon=False when
                          only the inline rcParams block (which lacks legend.frameon) is used
   WARN   color           hand-picked hex / named colour on a data series (use C0, C1, ...)
+  WARN   palette         third-party palette (seaborn, cmocean, colorcet, palettable, cmasher)
+                         — only when the user explicitly asked for one
   WARN   fontsize        numeric fontsize literal (use SMALL_SIZE / NORMAL_SIZE / BIG_SIZE)
   WARN   pyplot-state    plt.title() / plt.xlabel() / ... on the implicit current axes
   WARN   tight-layout    plt.tight_layout() (breaks figure-level colorbars; bbox is tight anyway)
@@ -38,6 +40,9 @@ COLOR_KWARGS = {"color", "c", "facecolor", "edgecolor", "colors", "fc", "ec"}
 SERIES_FUNCS = {"plot", "scatter", "hist", "bar", "barh", "fill_between", "fill_betweenx",
                 "step", "errorbar", "contour", "contourf", "hexbin", "stairs"}
 PYPLOT_STATE = {"title", "xlabel", "ylabel", "legend", "xlim", "ylim", "xticks", "yticks"}
+PALETTE_MODULES = {"seaborn", "cmocean", "colorcet", "palettable", "cmasher"}
+PALETTE_CALLS = {"set_palette", "color_palette", "set_theme", "husl_palette", "cubehelix_palette",
+                 "light_palette", "dark_palette", "diverging_palette", "blend_palette"}
 
 
 def _name(node: ast.AST) -> str:
@@ -85,9 +90,27 @@ class Checker(ast.NodeVisitor):
         self.findings.append((node.lineno, "WARN", code, msg))
 
     # -- visitors ------------------------------------------------------------
+    def visit_Import(self, node: ast.Import):
+        for alias in node.names:
+            root = alias.name.split(".")[0]
+            if root in PALETTE_MODULES:
+                self.warn(node, "palette", f"imports {alias.name}: third-party palette, only when the user asked for one")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        root = (node.module or "").split(".")[0]
+        if root in PALETTE_MODULES:
+            self.warn(node, "palette", f"imports from {node.module}: third-party palette, only when the user asked for one")
+        self.generic_visit(node)
+
     def visit_Call(self, call: ast.Call):
         name = _name(call.func)
         tail = name.rsplit(".", 1)[-1]
+
+        # seaborn-style palette setters; plotstyle's own set_palette is the sanctioned route
+        # for a user-stated palette and is not flagged.
+        if tail in PALETTE_CALLS and not (tail == "set_palette" and name in ("set_palette", "plotstyle.set_palette", "ps.set_palette")):
+            self.warn(call, "palette", f"{name}(): third-party palette, only when the user asked for one")
 
         if tail == "use_style" or name.endswith("style.use") or name.endswith("rcParams.update"):
             self.style_calls.add("use_style" if tail == "use_style"
@@ -170,7 +193,7 @@ class Checker(ast.NodeVisitor):
                 if s in ALLOWED_COLORS or CYCLE_COLOR.match(s):
                     continue
                 if HEX_COLOR.match(s) or s.isalpha() or s.startswith(("tab:", "xkcd:")):
-                    self.warn(call, "color", f"{kw.arg}={s!r}: hand-picked colour; data series use C0, C1, ...")
+                    self.warn(call, "color", f"{kw.arg}={s!r}: hand-picked colour; series take C0, C1, ... from the palette in effect (set_palette for a stated one)")
 
     # -- module-level ---------------------------------------------------------
     def finish(self):

@@ -50,13 +50,17 @@ from plotstyle import (  # noqa: E402
 #
 # One call, before any figure is created. Everything downstream — serif type
 # at 9/10/12 pt on every piece of text, CM math, inward ticks on four sides,
-# frameless legends, tight 300 dpi PNG output — follows from this. The second
-# call fails loudly if the serif face is missing, instead of letting
-# matplotlib substitute DejaVu Sans in silence.
+# frameless legends, matplotlib's default palettes, tight 300 dpi PNG output
+# — follows from this. Nobody asked for a palette here, so none is set; a
+# stated one would go in this same call as `use_style(palette=..., cmap=...)`.
+# The verify call fails loudly if the serif face is missing, instead of
+# letting matplotlib substitute DejaVu Sans in silence.
 
 # %% Set and verify the style
 use_style()
-print("serif font in use:", verify_style()["font"])
+style = verify_style()
+print("serif font in use:", style["font"])
+print("palette:", "matplotlib default" if style["default_palette"] else style["palette"], "/", style["cmap"])
 
 OUT = Path(__file__).resolve().parent / "figs"
 rng = np.random.default_rng(42)
