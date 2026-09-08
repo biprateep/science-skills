@@ -8,8 +8,34 @@ import matplotlib.pyplot as plt
 import numpy as np
 from plotstyle import *   # or: from plotstyle import use_style, figsize, ...
 
-use_style()
+use_style()      # AASTeX geometry; use_style(journal="...") for another class
+verify_style()   # raises if the serif face did not resolve
 ```
+
+Every recipe saves with `save(fig, "./figs/<name>")`, which writes a tight
+300 dpi PNG. Written out, that is
+`fig.savefig("./figs/<name>.png", bbox_inches="tight", dpi=300)`.
+
+---
+
+## 0. Choosing the height
+
+Width is fixed by the journal; only the aspect (height / width) is a choice.
+These are the ratios the source manuscripts actually used, by figure type:
+
+| Figure | `figsize` | Aspect | Seen |
+|---|---|---|---|
+| Single column, one panel | `figsize("column")` | golden, 0.618 | 0.56–0.75, most often 0.7 |
+| Single column, short (histogram, flat trend) | `figsize("column", "wide")` | 0.5625 | 5 figures |
+| Single column, room for a band or inside legend | `figsize("column", "tall")` | 0.75 | 3 figures |
+| Single column, square (1:1, sky map, `aspect="equal"`) | `figsize("column", "square")` | 1.0 | 5 figures |
+| Full width, one panel | `figsize("text", 0.6)` | 0.5–0.65 | 12 figures |
+| Full width, two panels | `grid_figsize(1, 2, "text", panel_aspect=0.7)` → `0.35 * TEXT_WIDTH` | 0.35–0.4 | 4 figures |
+| Full width, two histograms | `(TEXT_WIDTH, 0.35 * TEXT_WIDTH)` | 0.35 | 2 figures |
+| Full width, square grid | `(TEXT_WIDTH, TEXT_WIDTH)` | 1.0 | 1 figure |
+
+`grid_figsize(nrows, ncols, width, panel_aspect)` turns a *per-panel* aspect
+into the figure height: `nrows * panel_aspect * width / ncols`.
 
 ---
 
@@ -33,7 +59,7 @@ for i, field in enumerate(field_names):
     ax[i].set_ylabel("DEC. [deg]")
 
 side_colorbar(fig, s, "Exposure Time [min]")
-save(fig, "./figs/points_on_sky.pdf")
+save(fig, "./figs/points_on_sky")
 ```
 
 `side_colorbar` is the long form written out:
@@ -58,7 +84,7 @@ over the full-width stacked envelope; pass two lays the semi-transparent bars
 on top, narrowed by `rwidth=0.8` so neighbouring bins stay separable.
 
 ```python
-fig, ax = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 0.35 * TEXT_WIDTH))
+fig, ax = plt.subplots(1, 2, figsize=grid_figsize(1, 2, "text", panel_aspect=0.7))
 
 i_mag = [cat[cat["FIELD_NAME"] == f]["mag_i"] for f in field_names]
 labels = [f"DESI-{f}" for f in field_names]
@@ -83,6 +109,11 @@ Variants seen in practice:
 - **Explicit edges** for a controlled range: `bins = np.linspace(22, 24.5, 10)`.
 - **Nudged legend** when the default placement collides with the tallest bar:
   `ax.legend(frameon=False, loc=(0.41, 0.78))`.
+- **Crowded legend** drops one step to the tick size, never lower:
+  `ax.legend(frameon=False, fontsize=SMALL_SIZE, handlelength=1.5)`.
+- **Titled legend** for a family of curves: `ax.legend(frameon=False,
+  title=r"$i$-mag limit", loc="lower right")` — the title inherits
+  `legend.title_fontsize` (10 pt); never pass a numeric `title_fontsize`.
 - **Manual ticks** after a hard `set_xlim`: `ax.set_xticks(np.linspace(0, 3, 7))`.
 
 ---
@@ -121,7 +152,7 @@ band; the global median dashed in the same colour; `k--` at the null value
 (0 for a difference, 1 for a ratio).
 
 ```python
-fig, ax = plt.subplots(1, 1, figsize=(COLUMN_WIDTH, COLUMN_WIDTH))
+fig, ax = plt.subplots(1, 1, figsize=figsize("column", "tall"))
 
 offset = cat["mag_r_fiber"] - cat["rfibermag"]
 

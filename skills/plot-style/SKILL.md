@@ -1,35 +1,37 @@
 ---
 name: plot-style
 description: >-
-  Enforce the publication matplotlib aesthetic on every figure: AASTeX
-  column/text-width sizing, Nimbus Roman serif with Computer Modern math,
+  Enforce the publication matplotlib aesthetic on every figure: journal
+  column/text-width sizing (AASTeX by default, per-journal registry), Nimbus
+  Roman serif with Computer Modern math at 9/10/12 pt on every piece of text,
   inward ticks on all four sides, frameless legends, the default C0/C1/C2
-  color cycle, rasterized scatter, and vector PDF output at 300 dpi. This is
-  the DEFAULT for all matplotlib figures — apply it unless the user explicitly
-  asks for something else. Use whenever creating, editing, restyling, or
-  reviewing a plot, and when the user mentions: plot, figure, chart, histogram,
-  scatter, contour, colorbar, subplot, matplotlib, rcParams, plot style, figure
-  size, paper figure, publication quality, or journal column width.
+  color cycle, and tight 300 dpi PNG output. This is the DEFAULT for all
+  matplotlib figures — apply it unless the user explicitly asks for something
+  else. Use whenever creating, editing, restyling, or reviewing a plot, and
+  when the user mentions: plot, figure, chart, histogram, scatter, contour,
+  colorbar, subplot, matplotlib, rcParams, plot style, figure size, paper
+  figure, publication quality, or journal column width.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Publication Plot Style
 
 ## Overview
 
-Every figure is built to drop into an AASTeX (AJ / ApJ) manuscript **at its
-natural size, with no scaling**. That single constraint drives the whole
-style: fix the figure width to the journal's column or text width, set the
-type to the manuscript's own face and sizes, and the printed figure then
-carries the same 9/10/12 pt type as the surrounding paragraph. A figure that
+Every figure is built to drop into the manuscript **at its natural size, with
+no scaling**. That single constraint drives the whole style: fix the figure
+width to the journal's column or text width, express the height as a
+fraction of that width, set the type to the manuscript's own face and sizes,
+and the printed figure then carries the same 9/10/12 pt type as the
+surrounding paragraph, in the same proportions matplotlib drew. A figure that
 gets scaled in LaTeX arrives with the wrong type size no matter how carefully
 it was made.
 
 This skill is **harness-agnostic**: it constrains matplotlib code you write.
 It needs nothing beyond file-writing and, optionally, a shell to run the
-result.
+result and the checker.
 
 ---
 
@@ -63,9 +65,10 @@ Preferred — copy `assets/plotstyle.py` and `assets/paper.mplstyle` next to
 the analysis script (they are self-contained, numpy + matplotlib only):
 
 ```python
-from plotstyle import use_style, figsize, COLUMN_WIDTH, TEXT_WIDTH, BIG_SIZE
+from plotstyle import use_style, verify_style, figsize, COLUMN_WIDTH, TEXT_WIDTH, BIG_SIZE
 
-use_style()
+use_style()      # rcParams + AASTeX geometry; use_style(journal="...") for another class
+verify_style()   # raises if the serif face did not resolve or an rcParam was overridden
 ```
 
 When a helper module is unwanted, inline the equivalent — this exact block:
@@ -98,46 +101,110 @@ params = {
 plt.rcParams.update(params)
 ```
 
-> **Font availability.** `Nimbus Roman No9 L` is the URW Times clone matching
-> AASTeX body text; newer `urw-base35` packages renamed the same face to
-> plain `Nimbus Roman`. `assets/paper.mplstyle` sets `font.family: serif`
-> with a fallback chain (`Nimbus Roman No9 L` → `Nimbus Roman` →
-> `Times New Roman` → `Liberation Serif` → `DejaVu Serif`) so it degrades
-> quietly instead of emitting findfont warnings and silently rendering
-> DejaVu. The inline form above pins the exact name — use it only where that
-> font is known to exist.
+The inline block does **not** set `legend.frameon`, `savefig.bbox`,
+`savefig.dpi` or `savefig.format`, so with it every legend call carries
+`frameon=False` and every save carries `bbox_inches="tight", dpi=300` and a
+`.png` name. The style sheet sets all four, plus `legend.title_fontsize`
+(10 pt) and `figure.titlesize` (12 pt) so legend titles and suptitles also
+land on the type scale.
 
-The style sheet additionally sets `legend.frameon: False`,
-`savefig.bbox: tight`, and `savefig.dpi: 300`, which the inline form leaves
-to be repeated at each call site.
+> **Font availability.** `Nimbus Roman No9 L` is the URW Times clone
+> matching the manuscript body text; newer `urw-base35` packages ship the
+> same face as plain `Nimbus Roman`. On such a machine (this one included)
+> asking for the exact classic name makes matplotlib fall back to **DejaVu
+> Sans**, and it says so only in a debug-level log line — the figure comes
+> out in the wrong face with no warning. The style sheet therefore requests
+> the generic `serif` family with the chain `Nimbus Roman No9 L` →
+> `Nimbus Roman` → `Times New Roman` → `Liberation Serif` → `DejaVu Serif`,
+> and `verify_style()` raises if the chain fell through to DejaVu. Use the
+> inline form only where the exact face is known to exist, and still call
+> `verify_style()` (or check `matplotlib.font_manager.findfont`) once.
 
 ---
 
 ## Figure Geometry
 
 <HARD-RULE>
-Figure width is ALWAYS `COLUMN_WIDTH` or `TEXT_WIDTH` (or a deliberate
-multiple). Never `figsize=(8, 6)` or any other invented number.
+Figure width is ALWAYS the journal's column width or text width (or a
+deliberate multiple). Never `figsize=(8, 6)` or any other invented number.
+Height is a fraction of the width, never an absolute.
 </HARD-RULE>
 
-Height is expressed as a fraction of the width, so the aspect ratio is
-explicit and the width stays exact:
+### Widths come from a journal registry
 
-| Figure | `figsize` | Use |
+Widths are measured from the manuscript itself with `\showthe\columnwidth` /
+`\showthe\textwidth`; the divisor is **72.27**, the LaTeX point, not 72.
+
+| Journal | `\columnwidth` | `\textwidth` | Status |
+|---|---|---|---|
+| `aastex` (AJ / ApJ) — **default** | 242.26653 pt = 3.352 in | 513.11743 pt = 7.100 in | measured |
+
+`COLUMN_WIDTH` and `TEXT_WIDTH` are the default journal's widths in inches,
+for the inline `figsize=(COLUMN_WIDTH, 0.62 * COLUMN_WIDTH)` form. For
+another class, measure it and register it — never guess a width, a wrong
+one silently rescales every figure in the paper:
+
+```python
+from plotstyle import register_journal, use_style, figsize
+
+register_journal("mnras", column_pt=<measured>, text_pt=<measured>)
+use_style(journal="mnras")
+fig, ax = plt.subplots(figsize=figsize("column"))   # now MNRAS widths
+```
+
+`figsize()` and `grid_figsize()` follow the journal passed to `use_style()`;
+the module constants do not, so a non-default journal uses the helpers.
+
+### Heights are a named aspect of the width
+
+These are the ratios the source manuscripts actually used, by figure type:
+
+| Figure | `figsize` | Aspect |
 |---|---|---|
-| Single column, 16:9 | `(COLUMN_WIDTH, 0.5625 * COLUMN_WIDTH)` | one-panel histogram, trend |
-| Single column, square | `(COLUMN_WIDTH, COLUMN_WIDTH)` | 1:1 comparisons, sky maps, anything `aspect="equal"` |
-| Full width, 2 panels | `(TEXT_WIDTH, 0.4 * TEXT_WIDTH)` | side-by-side maps / scatter |
-| Full width, 2 histograms | `(TEXT_WIDTH, 0.35 * TEXT_WIDTH)` | shorter, since histograms need less height |
+| Single column, one panel (default) | `figsize("column")` | golden, 0.618 |
+| Single column, short — histogram, flat trend | `figsize("column", "wide")` | 16:9, 0.5625 |
+| Single column, room for a band or an inside legend | `figsize("column", "tall")` | 4:3, 0.75 |
+| Single column, square — 1:1 plots, sky maps, `aspect="equal"` | `figsize("column", "square")` | 1.0 |
+| Full width, one panel | `figsize("text", 0.6)` | 0.5–0.65 |
+| Full width, two panels side by side | `grid_figsize(1, 2, "text", panel_aspect=0.7)` | 0.35 of the width |
+| Full width, two histograms | `(TEXT_WIDTH, 0.35 * TEXT_WIDTH)` | 0.35 |
 
-`figsize("column", 0.5625)` from `plotstyle` returns the tuple, if you prefer
-it named. Widths are measured from the manuscript itself with
-`\showthe\columnwidth` / `\showthe\textwidth`; the divisor is **72.27**, the
-LaTeX point, not 72.
+`grid_figsize(nrows, ncols, width, panel_aspect)` turns a *per-panel* aspect
+into the figure height, `nrows * panel_aspect * width / ncols`, so a grid's
+panels keep a pleasing shape regardless of how many there are. Anything
+drawn with `aspect="equal"` gets a square figure, or matplotlib pads the
+canvas with blank margins.
+
+> **Tight cropping and the nominal width.** `bbox_inches="tight"` crops the
+> saved image to its artists, so the file is not exactly the nominal width
+> and LaTeX rescales it by that ratio at `width=\columnwidth`. Proportions
+> survive; type size drifts by the same factor. Measured on the examples:
+> with matplotlib's default layout the saved image is 5–16 % *narrower*
+> than nominal (the unused subplot margins are cropped away, most for a
+> two-panel row), so the type prints 5–16 % larger; with
+> `plt.subplots(..., layout="constrained")` the axes fill the canvas and
+> the drift falls to about 3 % the other way. Use `layout="constrained"`
+> when a figure has no manually placed axes — it is not compatible with
+> `side_colorbar`'s `fig.add_axes` — and accept the residual either way.
+> `examples/example_figures.py` prints the ratio per figure. Do not "fix"
+> the drift by dropping the tight bounding box, which clips labels instead.
 
 ---
 
 ## The Rules
+
+**Type** —
+<HARD-RULE>
+Every piece of text in the figure — tick labels, axis labels, titles,
+suptitles, legend entries and titles, colorbar labels, `ax.text` /
+`annotate` — is in the serif face at one of the three sizes: `SMALL_SIZE`
+(9) for ticks and crowded legends, `NORMAL_SIZE` (10) for everything else,
+`BIG_SIZE` (12) for panel titles. Math is Computer Modern via mathtext.
+</HARD-RULE>
+The preamble sets all of this; the only per-call size ever written is
+`fontsize=BIG_SIZE` on a panel title or `fontsize=SMALL_SIZE` on a legend
+that would otherwise overflow. Never a numeric literal, never a `fontdict`,
+never a `family=` override.
 
 **Ticks** — inward, on all four sides. Set once in the preamble; never
 overridden per-axis. No grid.
@@ -158,13 +225,6 @@ data series. Continuous quantities use `cmap="viridis"` with **explicit**
 (thousands of points), `s=4`–`5` for sparse ones. Background scatter under
 contours drops to `alpha=0.2`.
 
-**Rasterization** —
-<HARD-RULE>
-Any scatter with more than ~1000 points gets `rasterized=True`. The axes,
-text, and lines stay vector; only the point cloud becomes a bitmap. Without
-it a PDF can reach tens of MB and will choke the journal's compiler.
-</HARD-RULE>
-
 **Reference lines** — dashed black, thin: `ax.axhline(1, c="k", ls="--")`,
 `ax.plot(x, x, "k--")`. A fitted or median level uses the same dashes in the
 series color at `lw=1`.
@@ -175,16 +235,37 @@ titles at `fontsize=BIG_SIZE`; everything else inherits from the preamble.
 
 **Output** —
 <HARD-RULE>
-Save as **PDF** (vector) with `bbox_inches="tight"` and `dpi=300`, into a
-`figs/` directory beside the script.
+Save as a **PNG** with `bbox_inches="tight"` and `dpi=300`, into a `figs/`
+directory beside the script. Every figure, every time.
 </HARD-RULE>
 
 ```python
-plt.savefig("./figs/points_on_sky.pdf", bbox_inches="tight", dpi=300)
+save(fig, "./figs/points_on_sky")                                      # helper: adds .png
+plt.savefig("./figs/points_on_sky.png", bbox_inches="tight", dpi=300)  # written out
 ```
 
-PNG only when a raster is specifically requested. `dpi=300` still matters for
-a PDF — it sets the resolution of the rasterized scatter inside it.
+300 dpi at column width is roughly 1000 px across, at text width roughly
+2100 px — print resolution, and small enough that a paper's worth of
+figures stays well under a journal's upload cap. Vector PDF/SVG only when
+the user specifically asks for a vector figure. Keep `rasterized=True` on
+dense scatters anyway: it costs nothing in a PNG and keeps the script sane
+if someone later asks for the PDF.
+
+---
+
+## Verification
+
+Two checks, both cheap, both enforced by code rather than by re-reading:
+
+1. **At run time** — `verify_style()` right after `use_style()`. It compares
+   every rcParam against the house values and resolves the serif font,
+   raising if any param was overridden or the font fell through to DejaVu.
+2. **On the script** — `python scripts/check_plot_style.py <script.py>`
+   parses the file and reports invented figure sizes, vector output,
+   `savefig` without the tight-bbox/dpi arguments, boxed legends,
+   hand-picked colours, numeric font sizes, pyplot-state calls and
+   `tight_layout`. Nonzero exit means a rule was broken; `--strict` also
+   fails on warnings. Run it on every plotting script before presenting it.
 
 ---
 
@@ -203,7 +284,8 @@ these. `assets/plotstyle.py` implements each as a helper.
 | Density over scatter | — | KDE `contour` in `C`-color over the same-color scatter at `alpha=0.2` |
 
 `examples/example_figures.py` builds four of these end-to-end on synthetic
-data and runs standalone.
+data, runs standalone, and prints the resolved font and the saved size of
+each figure.
 
 ---
 
@@ -212,12 +294,19 @@ data and runs standalone.
 Stop and fix if you catch any of these:
 
 - **Invented figure size** — `figsize=(10, 6)`, `figsize=(8, 8)`. Use the
-  journal widths.
+  journal widths and a named aspect.
 - **Bare matplotlib defaults** — DejaVu Sans, outward ticks on two sides, a
   boxed legend. The preamble is not optional.
+- **The right font name, the wrong font** — `font.family = "Nimbus Roman
+  No9 L"` on a machine that calls it `Nimbus Roman`, rendering DejaVu Sans
+  in silence. Use the fallback chain and `verify_style()`.
+- **Numeric font sizes** — `fontsize=14`, `title_fontsize=20`. Only
+  `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE`, and only where the rules allow.
 - **Hand-picked colors** — `color="#1f77b4"`, `color="steelblue"`. Use `C0`.
-- **Un-rasterized dense scatter** — a 50 MB PDF that the journal rejects.
-- **Saving PNG for a paper figure** — vector PDF, unless asked otherwise.
+- **Saving PDF/SVG by default** — the house output is a tight 300 dpi PNG;
+  vector only on request.
+- **`savefig` without `bbox_inches="tight", dpi=300`** when the inline
+  params block is in use — the block sets neither.
 - **`plt.tight_layout()` as a substitute for `bbox_inches="tight"`** — a
   figure-level colorbar added with `fig.add_axes` is not a layout-managed
   axes, so matplotlib warns (*"includes Axes that are not compatible with
@@ -229,19 +318,23 @@ Stop and fix if you catch any of these:
 - **Units in parentheses** — `"Exposure Time (min)"`. Square brackets.
 - **Autoscaled color limits across shared-colorbar panels** — set `vmin` and
   `vmax` explicitly or the panels lie.
+- **Guessed journal widths** — a registry entry that was not measured with
+  `\showthe`.
 
 ---
 
 ## Self-Check Before Finishing
 
 - [ ] Style applied via `use_style()` or the inline `params` block, before any figure.
-- [ ] Every `figsize` derives from `COLUMN_WIDTH` or `TEXT_WIDTH`.
+- [ ] `verify_style()` passed (or `findfont` confirmed a Nimbus / Times face).
+- [ ] Every `figsize` derives from `COLUMN_WIDTH` / `TEXT_WIDTH` or `figsize()` / `grid_figsize()`; height is a fraction of width.
+- [ ] No numeric `fontsize`; only `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE` where allowed.
 - [ ] Data series colored by `C`-index; `k` only for reference lines.
-- [ ] Dense scatters carry `rasterized=True`.
 - [ ] Legends are `frameon=False`.
 - [ ] Axis labels carry units in square brackets; math in raw strings.
-- [ ] Saved as PDF into `figs/` with `bbox_inches="tight", dpi=300`.
-- [ ] Script actually ran and produced the file — no findfont warnings.
+- [ ] Saved as PNG into `figs/` with `bbox_inches="tight", dpi=300`.
+- [ ] `scripts/check_plot_style.py` exits 0 on the script.
+- [ ] Script actually ran and produced the file.
 
 ---
 
@@ -250,9 +343,9 @@ Stop and fix if you catch any of these:
 - **jupytext** — plotting scripts are `.py` files, so they get the percent
   format by default: one figure per `# %%` cell, with a markdown cell above
   saying what it shows.
-- **co-scientist** — its visualization protocol decides *whether and what* to
-  plot; this skill decides *how it looks*. Figures produced under that
-  protocol still follow these rules.
+- **co-scientist** — its visualization protocol decides *whether and what*
+  to plot and already saves to `figures/*.png`; this skill decides *how it
+  looks*. Figures produced under that protocol follow these rules.
 - **dataviz** — that skill governs web/interactive charts with their own
   palette system. For matplotlib manuscript figures, this skill wins.
 
@@ -263,11 +356,11 @@ Stop and fix if you catch any of these:
 | Path | Contents |
 |---|---|
 | `assets/paper.mplstyle` | the rcParams as a matplotlib style sheet |
-| `assets/plotstyle.py` | widths, sizes, `use_style`, and every idiom as a helper |
-| `references/recipes.md` | copy-paste template per figure type, long and short form |
-| `examples/example_figures.py` | four runnable figures on synthetic data |
+| `assets/plotstyle.py` | journal registry, widths, sizes, `use_style` / `verify_style`, `figsize` / `grid_figsize`, and every idiom as a helper |
+| `scripts/check_plot_style.py` | static checker for plotting scripts (stdlib only) |
+| `references/recipes.md` | aspect guide and a copy-paste template per figure type, long and short form |
+| `examples/example_figures.py` | four runnable figures on synthetic data, with a size report |
 
-Derived from the figure code in `biprateep/desi-deep-pilot`, notebook
-`notebooks/paper_general_stat.ipynb` (the `better_step` helper comes from that
-repo's `notebooks/utils.py`). The sibling `paper_*.ipynb` notebooks there hold
-further idioms not yet folded in.
+Derived from the figure code in `biprateep/desi-deep-pilot`, notebooks
+`notebooks/paper_*.ipynb` (the `better_step` helper comes from that repo's
+`notebooks/utils.py`); the aspect table tallies every `figsize` in them.
