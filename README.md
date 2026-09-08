@@ -95,6 +95,31 @@ An agent skill that enforces the Jupytext percent format (`py:percent`) for all 
 - **Mandatory Structure**: Enforces YAML headers, cell delimiters, narrative markdown, and meaningful chunking.
 - **Anti-Pattern Guards**: Prevents common LLM mistakes like missing headers, monolithic cells, and mixed markdown styles.
 
+### Plot Style (`skills/plot-style`)
+Enforces a single publication matplotlib aesthetic on every figure, derived from
+the figure code in real AASTeX (AJ/ApJ) manuscripts. Key features:
+- **Journal geometry**: figure widths are always the measured `\columnwidth` or
+  `\textwidth` of a registered journal class (AASTeX by default; add another
+  with one `register_journal()` call), heights a named aspect of that width — so
+  figures drop into the manuscript unscaled and print with the same type size
+  as the surrounding text.
+- **One preamble, every glyph**: Nimbus Roman serif at the manuscript's
+  9/10/12 pt with Computer Modern math, on ticks, labels, titles, legends,
+  colorbars and annotations alike; inward ticks on all four sides; frameless
+  legends — set once, never patched per-axis.
+- **Idiom library** (`assets/plotstyle.py`): stacked histograms, shared
+  colorbars, one-to-one comparisons, and equal-count running-median bands, each
+  as a helper plus a copy-paste template in `references/recipes.md`.
+- **Matplotlib's own palettes** unless the user names one: the default cycle
+  for series, `viridis` for continuous data, pinned by the style sheet; a
+  stated palette is installed once in the preamble and series still address
+  it by `C`-index.
+- **Press-ready output**: tight 300 dpi PNG, every time.
+- **Enforced, not narrated**: `verify_style()` fails at run time if the serif
+  face silently fell back to DejaVu, and `scripts/check_plot_style.py` lints a
+  plotting script for invented figure sizes, vector output, boxed legends,
+  hand-picked colours, unrequested third-party palettes and numeric font sizes.
+
 ## Acknowledgments and Sources
 
 This project was built by drawing inspiration and structural methodologies from several excellent open-source projects and documentation guidelines:

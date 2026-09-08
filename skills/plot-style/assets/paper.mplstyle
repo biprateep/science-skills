@@ -1,0 +1,51 @@
+# Publication figure defaults — house style for manuscript figures.
+#
+# Apply with:   plt.style.use("<path>/paper.mplstyle")
+# or via:       from plotstyle import use_style; use_style()
+#
+# Figure WIDTHS are not settable here — they are per-figure geometry.
+# Use COLUMN_WIDTH / TEXT_WIDTH or figsize() from plotstyle.py.
+
+# --- Type: every piece of text in the figure inherits from these -----------
+# "Nimbus Roman No9 L" is the URW Times clone that matches the manuscript body
+# text. Newer urw-base35 packages ship the same face as plain "Nimbus Roman";
+# the rest of the list are progressively weaker Times-metric fallbacks so the
+# sheet never hard-fails on a machine that lacks the exact face. Run
+# plotstyle.verify_style() to confirm which one actually resolved.
+font.family:  serif
+font.serif:   Nimbus Roman No9 L, Nimbus Roman, Times New Roman, Liberation Serif, DejaVu Serif
+font.size:    10
+axes.titlesize:  10
+axes.labelsize:  10
+legend.fontsize: 10
+legend.title_fontsize: 10
+figure.titlesize: 12
+xtick.labelsize: 9
+ytick.labelsize: 9
+
+# Computer Modern math, so inline $math$ matches the LaTeX manuscript.
+mathtext.fontset: cm
+
+# --- Ticks: inward, on all four sides -----------------------------------
+xtick.top:       True
+ytick.right:     True
+xtick.direction: in
+ytick.direction: in
+
+# --- Colour: matplotlib's own defaults unless the user names a palette ----
+# The default property cycle (tab10 — C0, C1, ...) for categorical series and
+# the default colormap (viridis) for continuous data, pinned here so a personal
+# matplotlibrc cannot quietly change them. A stated palette is installed
+# afterwards with plotstyle.set_palette() / use_style(palette=..., cmap=...).
+axes.prop_cycle: cycler('color', ['1f77b4', 'ff7f0e', '2ca02c', 'd62728', '9467bd', '8c564b', 'e377c2', '7f7f7f', 'bcbd22', '17becf'])
+image.cmap: viridis
+
+# --- Legend: never boxed ------------------------------------------------
+legend.frameon: False
+
+# --- Output: tight 300 dpi PNG -------------------------------------------
+figure.facecolor: w
+figure.dpi:       300
+savefig.dpi:      300
+savefig.bbox:     tight
+savefig.format:   png
