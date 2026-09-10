@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# science-skills installer — make this repo's skills global, on any machine.
+# science-skills installer — the one script. Clone the repo, run this, done.
 #
-#   bash scripts/install.sh              # install / refresh
+#   bash scripts/install.sh              # install / refresh everything
 #   bash scripts/install.sh --uninstall  # remove what this script created
 #   bash scripts/install.sh --dry-run    # show what would change, touch nothing
+#   bash scripts/install.sh --skip-mcp   # skills only, no MCP toolbox
 #
-# Registers every skill in skills/ with each harness found on this machine:
+# Step 1 registers every skill in skills/ with each harness found on this
+# machine:
 #
 #   Claude Code  -> per-skill symlinks in  ~/.claude/skills/<name>
 #                   (no directory-registry exists; rerun to pick up new skills)
 #   Antigravity  -> one directory entry in ~/.gemini/config/skills.json
 #                   (scans skills/ — new skills appear with no rerun)
 #
-# Nothing is copied: both harnesses read the repo working tree, so `git pull`
-# publishes skill edits immediately. Unrelated links and config entries are
-# left untouched.
+# Step 2 runs every skills/*/mcp/setup_mcp.sh, which builds that skill's Python
+# venv and registers its MCP server with each harness. This needs the network
+# and takes a minute; --skip-mcp leaves it out.
+#
+# No skill file is copied: both harnesses read the repo working tree, so a
+# `git pull` publishes skill edits immediately. Unrelated links and config
+# entries are left untouched.
 #
 # Overrides: CLAUDE_CONFIG_DIR (default ~/.claude), GEMINI_CONFIG_DIR
 # (default ~/.gemini/config). Set either to a path to target a custom install.
@@ -30,11 +36,13 @@ AG_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}"
 
 MODE=install
 DRY_RUN=0
+SKIP_MCP=0
 for arg in ${@+"$@"}; do   # ${@+...} keeps `set -u` quiet on bash 3.2 (macOS)
     case "$arg" in
         --uninstall) MODE=uninstall ;;
         --dry-run)   DRY_RUN=1 ;;
-        -h|--help)   sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --skip-mcp)  SKIP_MCP=1 ;;
+        -h|--help)   sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
@@ -215,6 +223,40 @@ else
 fi
 
 # ==============================================================================
+# MCP toolboxes — each skill that ships one sets it up itself
+# ==============================================================================
+# A skill's tools are part of the skill: installing one without the other leaves
+# it half-working, so this runs by default. The sub-scripts take the same flags
+# and are just as idempotent, so a rerun is cheap.
+MCP_SCRIPTS=()
+for name in "${SKILLS[@]}"; do
+    setup="$SKILLS_DIR/$name/mcp/setup_mcp.sh"
+    [ -f "$setup" ] && MCP_SCRIPTS+=("$setup")
+done
+
+MCP_FAILED=()
+if [ "${#MCP_SCRIPTS[@]}" -gt 0 ] && [ "$SKIP_MCP" = 1 ]; then
+    echo ""
+    echo "-- MCP toolboxes"
+    echo "    skipped (--skip-mcp); run them later with:"
+    for setup in "${MCP_SCRIPTS[@]}"; do echo "      bash ${setup#$REPO_ROOT/}"; done
+elif [ "${#MCP_SCRIPTS[@]}" -gt 0 ]; then
+    MCP_ARGS=()
+    [ "$MODE" = uninstall ] && MCP_ARGS+=(--uninstall)
+    [ "$DRY_RUN" = 1 ] && MCP_ARGS+=(--dry-run)
+    echo ""
+    echo "-- MCP toolboxes"
+    for setup in "${MCP_SCRIPTS[@]}"; do
+        # A toolbox that fails to build (no network, no python) must not take the
+        # skill links down with it — report it at the end and keep going.
+        if ! bash "$setup" ${MCP_ARGS+"${MCP_ARGS[@]}"}; then
+            MCP_FAILED+=("${setup#$REPO_ROOT/}")
+            echo "    ^ FAILED — skills are still installed; see above" >&2
+        fi
+    done
+fi
+
+# ==============================================================================
 echo ""
 if [ "$MODE" = uninstall ]; then
     echo "Uninstalled. Restart each harness to drop the skills from its menu."
@@ -222,10 +264,11 @@ else
     echo "Done. Skills load at the NEXT session start of each harness."
     echo "New skills added to skills/ later: Antigravity picks them up automatically;"
     echo "rerun this script to link them into Claude Code."
-    if [ -d "$SKILLS_DIR/co-scientist/mcp" ] &&
-       [ ! -x "$SKILLS_DIR/co-scientist/mcp/.venv/bin/python" ]; then
-        echo ""
-        echo "Next: co-scientist needs its MCP toolbox on this machine —"
-        echo "  bash skills/co-scientist/mcp/setup_mcp.sh"
-    fi
+fi
+if [ "${#MCP_FAILED[@]}" -gt 0 ]; then
+    echo ""
+    echo "But these MCP toolboxes did not finish:" >&2
+    for f in "${MCP_FAILED[@]}"; do echo "  bash $f" >&2; done
+    echo "Fix the error above and rerun that script (or this one)." >&2
+    exit 1
 fi
