@@ -14,44 +14,68 @@ The `co-scientist` skill is **harness-agnostic**: a single `SKILL.md` runs on bo
 **Claude Code** and **Google Antigravity** (and other harnesses) via a *Harness
 Adapter* — a capability map at the top of the skill that the agent resolves to its
 own tools at runtime. See `skills/co-scientist/SKILL.md` for the per-harness
-mapping and `tests/test_co_scientist_workflow.md` for install paths and launch
-commands for each harness. The methodologies are conceptual and adapt to further
-frameworks by adding a column to that map.
+mapping. The methodologies are conceptual and adapt to further frameworks by
+adding a column to that map.
 
 ## Installation
 
-Clone the repo anywhere, then run the installer:
+Clone the repo anywhere, then run the one script:
 
 ```sh
 git clone https://github.com/biprateep/science-skills.git
 bash science-skills/scripts/install.sh
 ```
 
-It registers every skill in `skills/` with each harness it finds on the machine,
-and skips the ones that aren't installed:
+That is the whole installation. The script does two things, and skips whatever
+this machine does not have:
 
-| Harness | Mechanism | Picks up new skills |
-| :--- | :--- | :--- |
-| **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
-| **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
+1. **Registers every skill** in `skills/` with each harness it finds:
 
-Nothing is copied — both harnesses read this working tree, so a `git pull`
+   | Harness | Mechanism | Picks up new skills |
+   | :--- | :--- | :--- |
+   | **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
+   | **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
+
+2. **Builds and registers the MCP toolboxes** that skills ship (currently
+   co-scientist's): one `.venv` per toolbox, then an entry in Claude Code
+   (`--scope user`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
+   (`mcp_config.json`). This step needs the network and takes a minute — pass
+   `--skip-mcp` to leave it out, or run
+   `bash skills/co-scientist/mcp/setup_mcp.sh` on its own later.
+
+No skill file is copied — both harnesses read this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
-never touches unrelated skills or config entries, and understands
-`--dry-run`, `--uninstall`, and `--help`. Set `CLAUDE_CONFIG_DIR` or
+never touches unrelated skills, MCP servers or config entries, and understands
+`--dry-run`, `--skip-mcp` and `--help`. Set `CLAUDE_CONFIG_DIR` or
 `GEMINI_CONFIG_DIR` to target a non-default install location.
+
+To undo all of it — symlinks, config entries, MCP registrations and the
+toolbox venvs — run the matching uninstaller, which takes the same flags:
+
+```sh
+bash science-skills/scripts/uninstall.sh --dry-run   # see what would go
+bash science-skills/scripts/uninstall.sh             # do it
+```
+
+It leaves the clone itself in place; delete that by hand if you want it gone.
 
 A directory under `skills/` is installed only if it contains a `SKILL.md`;
 work-in-progress folders are reported and skipped.
 
-For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
-folder wherever that agent discovers instructions — the Harness Adapter maps the
-capabilities. Then set up the co-scientist MCP toolbox, which is registered
-separately and per-machine:
+**Skills and MCP servers load at the next session start**, so restart the
+harness before looking for them. To confirm the install took:
 
 ```sh
-bash science-skills/skills/co-scientist/mcp/setup_mcp.sh
+ls -l ~/.claude/skills                     # three symlinks into this repo
+claude mcp list | grep co-scientist        # ✔ Connected
 ```
+
+In a fresh Claude Code session, `/co-scientist`, `/jupytext` and `/plot-style`
+should appear; in Antigravity the skills show up in the skills menu.
+
+For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
+folder wherever that agent discovers instructions — the Harness Adapter maps the
+capabilities.
 
 ## Featured Skills
 
@@ -78,12 +102,8 @@ perform process** — and features:
   step-chain CAS verification, citation resolution, file-locked manifest
   state, figure validation, and a gate-enforcing report compiler — implemented
   as an MCP server, so verdicts come from code the agent cannot narrate around.
-  One idempotent script registers it in every harness found on the machine:
-
-  ```sh
-  bash skills/co-scientist/mcp/setup_mcp.sh
-  ```
-
+  `scripts/install.sh` builds and registers it in every harness found on the
+  machine; `bash skills/co-scientist/mcp/setup_mcp.sh` does the same step alone.
   The skill self-bootstraps: if the tools are absent at run time it runs this
   script itself and falls back to the identical CLI interface
   (`mcp/server.py call <tool> '<json>'`) for the current session.
