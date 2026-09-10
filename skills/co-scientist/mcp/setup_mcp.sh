@@ -220,7 +220,9 @@ if [ "$MODE" = uninstall ]; then
 fi
 
 echo ""
-if [ "$MODE" = uninstall ]; then
+if [ "$DRY_RUN" = 1 ]; then
+    echo "Dry run — nothing was changed."
+elif [ "$MODE" = uninstall ]; then
     echo "MCP toolbox removed. Restart each harness to drop the tools."
 else
     echo "Done. Newly registered servers appear at the NEXT session start."

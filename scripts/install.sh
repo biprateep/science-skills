@@ -238,8 +238,9 @@ MCP_FAILED=()
 if [ "${#MCP_SCRIPTS[@]}" -gt 0 ] && [ "$SKIP_MCP" = 1 ]; then
     echo ""
     echo "-- MCP toolboxes"
+    if [ "$MODE" = uninstall ]; then hint=" --uninstall"; else hint=""; fi
     echo "    skipped (--skip-mcp); run them later with:"
-    for setup in "${MCP_SCRIPTS[@]}"; do echo "      bash ${setup#$REPO_ROOT/}"; done
+    for setup in "${MCP_SCRIPTS[@]}"; do echo "      bash ${setup#$REPO_ROOT/}$hint"; done
 elif [ "${#MCP_SCRIPTS[@]}" -gt 0 ]; then
     MCP_ARGS=()
     [ "$MODE" = uninstall ] && MCP_ARGS+=(--uninstall)
@@ -258,8 +259,11 @@ fi
 
 # ==============================================================================
 echo ""
-if [ "$MODE" = uninstall ]; then
+if [ "$DRY_RUN" = 1 ]; then
+    echo "Dry run — nothing was changed. Rerun without --dry-run to $MODE."
+elif [ "$MODE" = uninstall ]; then
     echo "Uninstalled. Restart each harness to drop the skills from its menu."
+    echo "The repo itself is untouched — delete this clone by hand if you want it gone."
 else
     echo "Done. Skills load at the NEXT session start of each harness."
     echo "New skills added to skills/ later: Antigravity picks them up automatically;"

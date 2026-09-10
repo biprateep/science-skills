@@ -46,8 +46,18 @@ this machine does not have:
 No skill file is copied — both harnesses read this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
 never touches unrelated skills, MCP servers or config entries, and understands
-`--dry-run`, `--skip-mcp`, `--uninstall`, and `--help`. Set `CLAUDE_CONFIG_DIR`
-or `GEMINI_CONFIG_DIR` to target a non-default install location.
+`--dry-run`, `--skip-mcp` and `--help`. Set `CLAUDE_CONFIG_DIR` or
+`GEMINI_CONFIG_DIR` to target a non-default install location.
+
+To undo all of it — symlinks, config entries, MCP registrations and the
+toolbox venvs — run the matching uninstaller, which takes the same flags:
+
+```sh
+bash science-skills/scripts/uninstall.sh --dry-run   # see what would go
+bash science-skills/scripts/uninstall.sh             # do it
+```
+
+It leaves the clone itself in place; delete that by hand if you want it gone.
 
 A directory under `skills/` is installed only if it contains a `SKILL.md`;
 work-in-progress folders are reported and skipped.
