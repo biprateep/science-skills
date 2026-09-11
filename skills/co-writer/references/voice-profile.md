@@ -1,16 +1,18 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.1.0 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** pending.
+**Version:** 0.1.2 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder in progress.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
 Every rule carries a grade and a tag. **Grades:** `HARD` (never violate),
 `STRONG` (roughly four times in five; breaking it occasionally is fine),
 `LIGHT` (nice when it fits; context decides — also the default when
-unlabelled). **Tags:** `measured` (from the corpus; the code points to
-[extraction-report.md](extraction-report.md)), `attested` (from the
-interview), `pending` (awaiting the interview). Size cap on this file: 400
-lines. When it grows past that, compress — do not append.
+unlabelled). **Tags:** `measured` (from the corpus, with a code into
+[extraction-report.md](extraction-report.md); every `measured` rule below
+was ratified by the author on 2026-09-11 at the grade shown), `attested`
+(from the interview, with the date), `pending` (awaiting the interview).
+Size cap on this file: 400 lines. When it grows past that, compress — do
+not append.
 
 ---
 
@@ -52,7 +54,11 @@ sparing with dashes, and unafraid of "very".
 - A triad built for rhythm; lists have however many items the content has, often four or five. `STRONG · L`
 - Contractions; first-person singular. `HARD · L`
 - delve, tapestry, underscore, pivotal, landscape, paradigm, holistic, nuanced, intricate, multifaceted, harness, seamless, showcase. `HARD · G.4`
-- Pending the interview (present only in the 2026 papers): "novel", "uniquely", "for the first time", "to our knowledge", sentence-initial "Crucially," / "Notably," / "Importantly,", "This proves that", "highlight the … potential". `pending · D.1, D.5`
+- A priority or novelty claim the input does not make. Co-writer may keep one the input asserts; it may never add one. `HARD · attested 2026-09-11`
+- Sentence-initial "Crucially," / "Notably," / "Importantly,"; "This proves that". `HARD · attested 2026-09-11 · D.4, D.5`
+- The reveal construction "It is not X, it is Y" / "not X but Y" used for effect. (The causal form with content on both sides — "not just because its stellar population is intrinsically red but because it is a dusty edge-on spiral" — occurs once in the 2021 corpus and is not the same thing.) `HARD · attested 2026-09-11`
+- Mannered prose of any kind: fragments for effect, aphoristic one-liners, a dramatic colon ("The result: …"), a paragraph built to land a punchline. `HARD · attested 2026-09-11`
+- "revolutionary", "will change how science is done", or any claim about the method's impact on the field or the discipline. `HARD · attested 2026-09-11`
 
 ### Words that are his and stay
 A de-AI pass must not remove these; the corpus uses them across every era.
@@ -70,7 +76,12 @@ significantly · similar · roughly / approximately / about / around**. `measure
 - "for our purposes" `G.2`
 - "(e.g., X, Y, Z, etc.)" `C.2`
 
-### Voice calibration (pending interview — three extracted lines stand in)
+### Voice calibration
+Attested, 2026-09-11 — how a disagreement with a well-cited paper is stated:
+- "We find that our method performs better than XYZ et al. on the XXX metrics."
+- "We find the dependence of SFR on carbon monoxide is less strong than that of XYZ et al."
+
+From the corpus:
 - "It is therefore not surprising that DESI should be more efficient than prior surveys, but it was not expected that the difference in redshift measurement efficiency would be so high."
 - "Though we focus on an example from astrophysics, our method can produce PDFs which are calibrated at all locations in feature space for any use case."
 - "However, our investigation of the dimension 10 outliers in the smaller sequence has yet to yield a clear interpretation."
@@ -86,7 +97,8 @@ significantly · similar · roughly / approximately / about / around**. `measure
 - **Pedagogy at first use.** What the thing is → what it does → why it is used here, in one to four sentences, whether or not the venue's readers would know it. `STRONG · measured A.5`
 - **Scope limits** are stated as concessions, not as a Limitations section: "While a full X is beyond the scope of this work, we Y." `STRONG · measured A.7`
 - **Future work** is concrete and uses "in a future work" / "will be performed in a future work". `STRONG · measured A.8`
-- **Journal summary** recaps each result with "(see Fig. N)" pointers. `LIGHT · measured A.9`
+- **The final section is "Summary and Discussion."** It recaps each result and may point at the evidence with "(see Fig. N)". `STRONG · attested 2026-09-11 · A.9`
+- **Drafting order for a whole paper:** methods and results first, then the discussion, then the introduction, and the abstract last. When co-writer is asked for an abstract or introduction before the body exists, say so and ask for the body. `STRONG · attested 2026-09-11`
 - **Last sentence** is forward-looking and concrete — a plan, not a slogan. `STRONG · measured A.10`
 
 ## 2. Paragraphs and sentences
@@ -103,13 +115,16 @@ significantly · similar · roughly / approximately / about / around**. `measure
 
 ## 3. Claims and hedging
 
-- Result verbs, in order of use: **find, observe, see, show, indicate**. "demonstrate" sparingly. "prove", "highlight", "for the first time" — pending. `STRONG · measured D.1`
+- **The claim ladder**, strongest to weakest: *proves > demonstrates > shows > indicates > is consistent with > suggests*. **find, observe, see** are not on the ladder: they report what the data show and make no claim about the world. A rewrite may move a claim down the ladder or leave it; it may never move it up. `HARD · attested 2026-09-11`
+- **The abstract may sit one rung higher** than the results section for the same claim — "remarkably efficient" in the abstract, "we see that … can match" in the results — to make the paper attractive to read. One rung, never two, and never a claim the results do not support. `STRONG · attested 2026-09-11 · D.4`
+- **Contradicting a known result** is done with "We find" and a comparative, the metric named, no framing: "We find that our method performs better than [Author et al.] on the [named] metrics." / "We find the dependence of SFR on carbon monoxide is less strong than that of [Author et al.]." `STRONG · attested 2026-09-11`
+- **Claims are about performance on named metrics and data**, never about the method's effect on the field. `HARD · attested 2026-09-11`
 - Every causal interpretation gets a mechanism and a hedge from this set: "This might be because", "This can be attributed to", "We suspect this is because", "Most likely, … arise because", "We hypothesise that", "may partly explain", "likely contribute". `STRONG · measured D.2`
 - When the cause is unknown, say so and then say which way the candidates point: "It is uncertain which if any of these factors is the dominant explanation. However, all of them work in the same direction." `STRONG · measured D.2`
 - Negative results are integrated: same paragraph, "However,", a cause. `STRONG · measured D.3`
 - Surprise is marked once, with "remarkably" / "Unsurprisingly," / "As expected,"; never "Interestingly". `STRONG · measured D.4`
 - "significantly" is used as "a lot" as well as statistically; keep at roughly one per 700 words, never more. `LIGHT · measured D.6 · pending interview`
-- No priority claims until the interview settles them. `pending · D.5`
+- **Priority and novelty claims** — "novel", "for the first time", "to our knowledge the first", "uniquely" — are allowed only when (a) the input asserts the claim and (b) the claim names *what* is new: "the first framework in this domain to incorporate observational uncertainties into the training objective", never "a novel framework". At most one per paper, in the abstract or the contribution paragraph, never in the results. "This proves that" is not used for an empirical result; "shows" is. "highlight the transformative potential" is a closer, at most once, and only where the input claims it. The test is a referee who knows the field: would they wince? `STRONG · attested 2026-09-11` — in the author's words, use them "only when we think the case is indeed novel"; the balance to strike is "between being too flashy and being grounded in reality".
 
 ## 4. Prior work
 
@@ -125,8 +140,9 @@ significantly · similar · roughly / approximately / about / around**. `measure
 - "our data set / our method / our algorithm / our model". `LIGHT · measured F.3`
 - Asides are "We note that …" / "We also note that …". `HARD · measured F.4`
 - Approximate numbers use roughly / approximately / about / around / $\sim$ interchangeably. `LIGHT · measured G.1`
-- Spelling follows the venue: British for MNRAS, American for AAS and NeurIPS. `HARD · measured G.3`
-- "data set" (two words) in journal papers; "dataset" acceptable in workshop papers. `LIGHT · measured G.3 · pending interview`
+- **American English, always**, whatever the venue. (The 2021 MNRAS paper is British because the journal copy-edited it; that is not the author's choice.) `HARD · attested 2026-09-11`
+- "data set", two words, always. `HARD · attested 2026-09-11`
+- "use" is the default; "utilize" when a resource or capability is being put to work ("utilize the data to develop a model", "utilized a local sky subtraction"). `LIGHT · attested 2026-09-11 · G.1`
 - Dashes: at most one per page, for an "i.e."-style gloss or an appositive list; zero is the norm. `HARD · measured H.1`
 - Semicolons: journal papers only, joining a clause to its qualification, often carrying "however" or "therefore". `LIGHT · measured H.2`
 - Double quotes around a coined or borrowed term at first use: “spectro-perfectionism”, “cocoon”. `STRONG · measured H.4`
@@ -152,12 +168,12 @@ significantly · similar · roughly / approximately / about / around**. `measure
 | Semicolons | yes | rare |
 | Paragraph length | 100–300 words | 60–120 words |
 | Section headings | \section / \subsection | run-in `\paragraph{Data Sets Used.}` |
-| Summary section | yes, with pointers | none; Results and Discussion ends the paper |
+| Final section | "Summary and Discussion", with "(see Fig. N)" pointers | "Results and Discussion" ends the paper |
 | Pedagogy at first use | full | compressed to a clause |
 
 ## 8. Genre baseline — do not fight these
 
-Funnel introduction; "However," gap → contribution; passive for instrument actions; "In this work, we"; equation sandwich; "(ACRONYM; citation)"; venue spelling; "For example,"; figure-as-subject. The profile's job is what is *added* to the register, never to remove it.
+Funnel introduction; "However," gap → contribution; passive for instrument actions; "In this work, we"; equation sandwich; "(ACRONYM; citation)"; "For example,"; figure-as-subject. (Spelling is not venue-driven: American always, §5.) The profile's job is what is *added* to the register, never to remove it.
 
 ## 9. Content to quarantine
 
@@ -227,4 +243,6 @@ Verbatim, from the corpus. Match the slot to the input; carry the construction, 
 
 ## 13. Changelog
 
+- **0.1.2** (2026-09-11) — interview Part 2, batch 1. Claim ladder (proves > demonstrates > shows > indicates > is consistent with > suggests; find/observe/see are reporting); abstract may sit one rung above results; contradiction sentences added to calibration; field-impact claims, the "not X but Y" reveal, and mannered prose added to Never. American English always (overrides the venue-spelling rule); "data set" always; use/utilize split. Final section is "Summary and Discussion"; drafting order recorded.
+- **0.1.1** (2026-09-11) — interview Part 1: all 27 extracted patterns ratified at their grades. Register question answered: novelty words are deliberate, for punch, and to be used only when the case is genuinely novel; written up as a `STRONG` rule with a one-per-paper cap. "Crucially," / "Notably," / "This proves that" moved from `pending` to Never.
 - **0.1.0** (2026-09-10) — built from extraction over five papers (DESI 2024, encapzulate 2021, recalibrate 2021, Peng 2026, Pratsos 2026). Interview pending; 2026-only constructions held as `pending`.

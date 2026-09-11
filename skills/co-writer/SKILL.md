@@ -111,10 +111,15 @@ reads exactly like the author and breaks one of these is a failure.
 - **Numbers survive exactly.** Value, precision, unit, sign, uncertainty.
   `0.00898` does not become "about 0.009". A number the input lacks is not
   invented; write `[NEEDS: value]` and say so after the text.
-- **Modality is never strengthened.** Order: *negated < speculative < hedged
-  < suggested < asserted*. "We cannot rule out X" may not become "we show X";
-  "suggests" may not become "demonstrates". Weakening is allowed only if the
-  user asked.
+- **Modality is never strengthened.** The profile's claim ladder, weakest to
+  strongest: *suggests < is consistent with < indicates < shows <
+  demonstrates < proves*; *find / observe / see* are reporting, not claims;
+  negations and "we cannot rule out" sit below everything. A claim may stay
+  where it is or move down; "suggests" may not become "demonstrates", "we
+  cannot rule out X" may not become "we show X". One exception, from the
+  author: the **abstract may sit one rung above the results section** for
+  the same claim — one rung, never two. Weakening elsewhere is allowed only
+  if the user asked.
 - **Flourish is not information.** An evaluation with no checkable content —
   "a substantial leap forward", "proved pivotal", "remarkable" — is style and
   may be dropped. A comparison with a referent — "outperforms the CNN
