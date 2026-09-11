@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# co-scientist MCP toolbox — one-shot, idempotent setup for every harness.
+# cite-check MCP toolbox — one-shot, idempotent setup for every harness.
 #
-#   bash setup_mcp.sh              # create the venv and register the server
+#   bash setup_mcp.sh              # create the venv, ask for API keys, register
+#   bash setup_mcp.sh --keys       # only (re)enter API keys
+#   bash setup_mcp.sh --skip-keys  # install without asking for keys
 #   bash setup_mcp.sh --uninstall  # deregister everywhere and drop the venv
+#   bash setup_mcp.sh --uninstall --purge-keys   # …and forget stored keys
 #   bash setup_mcp.sh --dry-run    # show what would change, touch nothing
 #
 # Normally you do not run this by hand: scripts/install.sh calls it for you.
 #
 # 1. Creates mcp/.venv and installs requirements (uv if available, else pip).
 # 2. Smoke-tests the server in CLI mode.
+# 2b. Asks for each registry API key (NASA ADS token; a contact e-mail for
+#     the Crossref/OpenAlex polite pools). Input is not echoed. The secret goes
+#     into the OS keychain (macOS Keychain / Linux Secret Service) when one is
+#     available, else into a 0600 file under ~/.config/cite-check/keys/. It is
+#     never written to a harness config, passed on a command line, or logged.
+#     Press Enter to skip a key: that source is simply left disabled, and the
+#     other registries keep working. No terminal (CI, an agent's shell) → the
+#     questions are skipped automatically; run --keys later from a terminal.
 # 3. Registers the server in every harness found on this machine:
 #      Claude Code        -> `claude mcp add --scope user`
-#      OpenAI Codex       -> ~/.codex/config.toml   ([mcp_servers.co_scientist])
-#      Google Antigravity -> mcp_config.json        ("mcpServers"."co-scientist")
+#      OpenAI Codex       -> ~/.codex/config.toml   ([mcp_servers.cite_check])
+#      Google Antigravity -> mcp_config.json        ("mcpServers"."cite-check")
 #    Existing registrations and unrelated config entries are left untouched.
 #
 # Newly registered MCP servers load at the NEXT session start of each harness.
@@ -32,13 +43,17 @@ SERVER="$MCP_DIR/server.py"
 
 MODE=install
 DRY_RUN=0
+KEYS_ONLY=0
+SKIP_KEYS=0
+PURGE_KEYS=0
 for arg in ${@+"$@"}; do   # ${@+...} keeps `set -u` quiet on bash 3.2 (macOS)
     case "$arg" in
-        --uninstall) MODE=uninstall ;;
-        --dry-run)   DRY_RUN=1 ;;
-        --skip-keys|--purge-keys) ;;   # passed through by scripts/install.sh; this toolbox has no API keys
-        --keys)      echo "co-scientist's toolbox needs no API keys."; exit 0 ;;
-        -h|--help)   sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --uninstall)  MODE=uninstall ;;
+        --dry-run)    DRY_RUN=1 ;;
+        --keys)       KEYS_ONLY=1 ;;
+        --skip-keys)  SKIP_KEYS=1 ;;
+        --purge-keys) PURGE_KEYS=1 ;;
+        -h|--help)    sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
@@ -54,7 +69,63 @@ host_python() {
     else return 1; fi
 }
 
-echo "== co-scientist MCP $MODE =="
+# ==============================================================================
+# API keys — prompted here, stored by server.py (`keys` subcommand), which
+# picks the keychain when there is one and a 0600 file otherwise. The value
+# travels to python on stdin, never on argv (argv shows up in `ps`).
+# ==============================================================================
+ask() {  # ask <read-options...> — from the terminal when there is one, else stdin
+    if { : </dev/tty; } 2>/dev/null; then read "$@" </dev/tty; else read "$@"; fi
+}
+
+configure_keys() {
+    local py names name label status masked url enables secret value
+    py="$(host_python)" || { echo "  keys: no python3 to store them — skipped"; return; }
+    names="$("$py" "$SERVER" keys names 2>/dev/null)" || { echo "  keys: server not runnable — skipped"; return; }
+    if [ "$DRY_RUN" = 1 ]; then
+        for name in $names; do
+            IFS=$'\x1f' read -r label status masked url enables secret <<< "$("$py" "$SERVER" keys fields "$name")"
+            if [ "$status" = none ]; then echo "  [dry-run] would ask for: $label"
+            else echo "  [dry-run] $label: configured ($status)"; fi
+        done
+        return
+    fi
+    if [ "$KEYS_ONLY" = 0 ] && [ ! -t 0 ]; then
+        echo "  keys: no terminal — not asked. From a terminal, run:  bash $0 --keys"
+        return
+    fi
+    echo "  keys: stored in $("$py" "$SERVER" keys backend); Enter skips a source"
+    for name in $names; do
+        IFS=$'\x1f' read -r label status masked url enables secret <<< "$("$py" "$SERVER" keys fields "$name")"
+        if [ "$status" != none ]; then
+            echo "  * $label — configured ($status${masked:+, $masked})"
+            printf '    Enter keeps it, or paste a new one: '
+        else
+            echo "  * $label — enables $enables"
+            [ -n "$url" ] && echo "    get one at $url"
+            printf '    paste it (Enter to skip): '
+        fi
+        if [ "$secret" = 1 ]; then ask -r -s value || value=""; echo
+        else ask -r value || value=""; fi
+        if [ -z "$value" ]; then
+            [ "$status" = none ] && echo "    skipped — this source stays off; add it later with: bash $0 --keys"
+            continue
+        fi
+        if printf '%s' "$value" | "$py" "$SERVER" keys set "$name" 2>&1 | sed 's/^/    /'; then :; else
+            echo "    (source stays as it was)"
+        fi
+        value=""
+    done
+}
+
+echo "== cite-check MCP $MODE =="
+
+if [ "$KEYS_ONLY" = 1 ]; then
+    configure_keys
+    echo ""
+    "$(host_python)" "$SERVER" keys list 2>/dev/null | sed 's/^/  /'
+    exit 0
+fi
 
 # ==============================================================================
 # 1. venv + dependencies  (install only)
@@ -94,6 +165,13 @@ if [ "$MODE" = install ]; then
         "$PY" "$SERVER" call ping '{}' || true
         exit 1
     fi
+
+    # --- 2b. API keys ---------------------------------------------------------
+    if [ "$SKIP_KEYS" = 1 ]; then
+        echo "  keys: skipped (--skip-keys); add them later with: bash $0 --keys"
+    else
+        configure_keys
+    fi
 fi
 
 # ==============================================================================
@@ -101,15 +179,15 @@ fi
 # ==============================================================================
 if command -v claude >/dev/null 2>&1; then
     if [ "$MODE" = install ]; then
-        if claude mcp get co-scientist >/dev/null 2>&1; then
+        if claude mcp get cite-check >/dev/null 2>&1; then
             echo "  claude-code: already registered"
         else
-            run claude mcp add --scope user co-scientist -- "$PY" "$SERVER"
+            run claude mcp add --scope user cite-check -- "$PY" "$SERVER"
             [ "$DRY_RUN" = 1 ] || echo "  claude-code: registered (user scope)"
         fi
     else
-        if claude mcp get co-scientist >/dev/null 2>&1; then
-            run claude mcp remove --scope user co-scientist
+        if claude mcp get cite-check >/dev/null 2>&1; then
+            run claude mcp remove --scope user cite-check
             [ "$DRY_RUN" = 1 ] || echo "  claude-code: deregistered"
         else
             echo "  claude-code: not registered"
@@ -127,24 +205,24 @@ if command -v codex >/dev/null 2>&1 || [ -f "$CODEX_CFG" ]; then
     if [ "$MODE" = install ]; then
         [ -f "$CODEX_CFG" ] || run mkdir -p "$HOME/.codex"
         [ -f "$CODEX_CFG" ] || run touch "$CODEX_CFG"
-        if [ -f "$CODEX_CFG" ] && grep -Eq '^\[mcp_servers\.co[_-]scientist\]' "$CODEX_CFG"; then
+        if [ -f "$CODEX_CFG" ] && grep -Eq '^\[mcp_servers\.cite[_-]check\]' "$CODEX_CFG"; then
             echo "  codex: already registered"
         elif [ "$DRY_RUN" = 1 ]; then
-            echo "  [dry-run] would add [mcp_servers.co_scientist] to $CODEX_CFG"
+            echo "  [dry-run] would add [mcp_servers.cite_check] to $CODEX_CFG"
         else
             # A new [table] appended at EOF is valid TOML regardless of what precedes it.
-            printf '\n[mcp_servers.co_scientist]\ncommand = "%s"\nargs = ["%s"]\n' \
+            printf '\n[mcp_servers.cite_check]\ncommand = "%s"\nargs = ["%s"]\n' \
                 "$PY" "$SERVER" >> "$CODEX_CFG"
             echo "  codex: registered in $CODEX_CFG"
         fi
-    elif [ ! -f "$CODEX_CFG" ] || ! grep -Eq '^\[mcp_servers\.co[_-]scientist\]' "$CODEX_CFG"; then
+    elif [ ! -f "$CODEX_CFG" ] || ! grep -Eq '^\[mcp_servers\.cite[_-]check\]' "$CODEX_CFG"; then
         echo "  codex: not registered"
     elif [ "$DRY_RUN" = 1 ]; then
-        echo "  [dry-run] would remove [mcp_servers.co_scientist] from $CODEX_CFG"
+        echo "  [dry-run] would remove [mcp_servers.cite_check] from $CODEX_CFG"
     else
         # Drop our table and its keys, up to the next table header or EOF.
         awk '
-            /^\[mcp_servers\.co[_-]scientist\]/ { drop = 1; next }
+            /^\[mcp_servers\.cite[_-]check\]/ { drop = 1; next }
             drop && /^\[/                       { drop = 0 }
             !drop                               { print }
         ' "$CODEX_CFG" > "$CODEX_CFG.tmp" && mv "$CODEX_CFG.tmp" "$CODEX_CFG"
@@ -169,7 +247,7 @@ done
 if [ -z "$AG_CFG" ]; then
     echo "  antigravity: no mcp_config.json found — skipped (add via its MCP settings UI once, then rerun)"
 elif [ "$DRY_RUN" = 1 ]; then
-    echo "  [dry-run] would $MODE 'co-scientist' in $AG_CFG"
+    echo "  [dry-run] would $MODE 'cite-check' in $AG_CFG"
 elif ! AG_PY="$(host_python)"; then
     echo "  antigravity: no python3 available to edit $AG_CFG — skipped" >&2
 else
@@ -190,16 +268,16 @@ if not isinstance(cfg, dict):
 
 servers = cfg.setdefault("mcpServers", {})
 if mode == "install":
-    if "co-scientist" in servers:
+    if "cite-check" in servers:
         print(f"  antigravity: already registered ({cfg_path})")
         raise SystemExit
-    servers["co-scientist"] = {"command": py, "args": [srv]}
+    servers["cite-check"] = {"command": py, "args": [srv]}
     verb = "registered in"
 else:
-    if "co-scientist" not in servers:
+    if "cite-check" not in servers:
         print(f"  antigravity: not registered ({cfg_path})")
         raise SystemExit
-    del servers["co-scientist"]
+    del servers["cite-check"]
     verb = "deregistered from"
 
 with open(cfg_path, "w") as fh:
@@ -213,6 +291,13 @@ fi
 # 4. venv teardown  (uninstall only — after the configs stop pointing at it)
 # ==============================================================================
 if [ "$MODE" = uninstall ]; then
+    if [ "$PURGE_KEYS" = 1 ]; then
+        if [ "$DRY_RUN" = 1 ]; then echo "  [dry-run] would forget stored API keys"
+        elif KP="$(host_python)"; then "$KP" "$SERVER" keys delete --all | sed 's/^/  keys: /'
+        else echo "  keys: no python3 to remove them — left in place"; fi
+    else
+        echo "  keys: kept (pass --purge-keys to forget them)"
+    fi
     if [ -d "$VENV" ]; then
         run rm -rf "$VENV"
         [ "$DRY_RUN" = 1 ] || echo "  venv: removed $VENV"
@@ -230,4 +315,7 @@ else
     echo "Done. Newly registered servers appear at the NEXT session start."
     echo "For the current session, call tools via CLI:"
     echo "  $PY $SERVER call ping '{}'"
+    echo "API keys:"
+    "$PY" "$SERVER" keys list 2>/dev/null | sed 's/^/  /'
+    echo "  (change them any time: bash $MCP_DIR/setup_mcp.sh --keys)"
 fi
