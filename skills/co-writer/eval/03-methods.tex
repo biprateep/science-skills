@@ -1,0 +1,5 @@
+Our training procedure is designed to be both efficient and robust. We begin by preprocessing the galaxy spectra: each spectrum is resampled onto a common rest-frame wavelength grid, normalized by its median flux, and masked at known sky-line residuals. Next, we train a conditional normalizing flow $q_\phi(z | \mathbf{s})$ to approximate the posterior over redshift $z$ given the spectrum $\mathbf{s}$. The flow consists of 8 rational-quadratic spline coupling layers \citep{durkan2019}, each conditioned on a 256-dimensional embedding of the spectrum produced by a 1D convolutional encoder. The objective is the standard negative log-likelihood,
+\begin{equation}
+\mathcal{L}(\phi) = -\mathbb{E}_{(z, \mathbf{s}) \sim p_{\rm data}} \left[ \log q_\phi(z | \mathbf{s}) \right],
+\end{equation}
+which we minimize using AdamW with a learning rate of $3\times10^{-4}$ and cosine decay over 200 epochs. It is worth noting that we apply early stopping based on validation loss to prevent overfitting. Crucially, we augment the training set by injecting Gaussian noise scaled to the reported flux uncertainties, which significantly improves calibration.
