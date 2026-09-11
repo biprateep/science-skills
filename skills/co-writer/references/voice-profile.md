@@ -1,6 +1,6 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.1.2 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder in progress.
+**Version:** 0.1.2 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
