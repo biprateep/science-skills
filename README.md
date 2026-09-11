@@ -26,7 +26,7 @@ git clone https://github.com/biprateep/science-skills.git
 bash science-skills/scripts/install.sh
 ```
 
-That is the whole installation. The script does two things, and skips whatever
+That is the whole installation. The script does three things, and skips whatever
 this machine does not have:
 
 1. **Registers every skill** in `skills/` with each harness it finds:
@@ -36,21 +36,34 @@ this machine does not have:
    | **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
    | **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
 
-2. **Builds and registers the MCP toolboxes** that skills ship (currently
-   co-scientist's): one `.venv` per toolbox, then an entry in Claude Code
+2. **Builds and registers the MCP toolboxes** that skills ship (co-scientist's
+   and cite-check's): one `.venv` per toolbox, then an entry in Claude Code
    (`--scope user`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
    (`mcp_config.json`). This step needs the network and takes a minute — pass
    `--skip-mcp` to leave it out, or run
    `bash skills/co-scientist/mcp/setup_mcp.sh` on its own later.
 
+3. **Asks for registry API keys** that a toolbox can use (cite-check: a NASA
+   ADS token, and a contact e-mail for the Crossref/OpenAlex polite pools).
+   Typing is not echoed; a token is tested against the registry before it is
+   kept; secrets go to the OS keychain (macOS Keychain or Linux Secret
+   Service) when there is one and otherwise to a 0600 file under
+   `~/.config/cite-check/keys/` — never into a harness config, a command
+   line, or this repo. Press Enter to skip a key and that source simply stays
+   off while the others work. With no terminal the questions are skipped;
+   `--skip-keys` skips them explicitly. Enter or change keys later with
+   `bash skills/cite-check/mcp/setup_mcp.sh --keys`.
+
 No skill file is copied — both harnesses read this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
 never touches unrelated skills, MCP servers or config entries, and understands
-`--dry-run`, `--skip-mcp` and `--help`. Set `CLAUDE_CONFIG_DIR` or
+`--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR` or
 `GEMINI_CONFIG_DIR` to target a non-default install location.
 
 To undo all of it — symlinks, config entries, MCP registrations and the
-toolbox venvs — run the matching uninstaller, which takes the same flags:
+toolbox venvs — run the matching uninstaller, which takes the same flags
+(stored API keys are kept; `bash skills/cite-check/mcp/setup_mcp.sh --uninstall
+--purge-keys` forgets them too):
 
 ```sh
 bash science-skills/scripts/uninstall.sh --dry-run   # see what would go
@@ -66,12 +79,18 @@ work-in-progress folders are reported and skipped.
 harness before looking for them. To confirm the install took:
 
 ```sh
-ls -l ~/.claude/skills                     # three symlinks into this repo
-claude mcp list | grep co-scientist        # ✔ Connected
+ls -l ~/.claude/skills                     # one symlink per skill into this repo
+claude mcp list | grep -E 'co-scientist|cite-check'   # ✔ Connected
 ```
 
-In a fresh Claude Code session, `/co-scientist`, `/jupytext` and `/plot-style`
-should appear; in Antigravity the skills show up in the skills menu.
+In a fresh Claude Code session, `/co-scientist`, `/cite-check`, `/co-writer`,
+`/jupytext` and `/plot-style` should appear; in Antigravity the skills show up in the
+skills menu.
+
+cite-check uses NASA ADS when a token was entered at install time (astronomy
+search and ADS BibTeX exports); `bash skills/cite-check/mcp/setup_mcp.sh --keys`
+adds or changes it, and `python skills/cite-check/mcp/server.py keys list`
+shows what is configured — see `skills/cite-check/references/registries.md`.
 
 For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
 folder wherever that agent discovers instructions — the Harness Adapter maps the
@@ -107,6 +126,58 @@ perform process** — and features:
   The skill self-bootstraps: if the tools are absent at run time it runs this
   script itself and falls back to the identical CLI interface
   (`mcp/server.py call <tool> '<json>'`) for the current session.
+
+### Cite-Check (`skills/cite-check`)
+Citation integrity for anything the agent writes with references, built on
+the co-scientist `resolve_citation` idea and hardened against the ways an LLM
+bibliography actually fails:
+- **Existence, properly tested**: every entry's own DOI / arXiv id / bibcode is
+  resolved and its title, first author and year compared with the registry
+  record — a real DOI on an invented title is a `MISMATCH`, not a pass.
+  Entries with no identifier (a third of a real astronomy `.bib`) are searched
+  by title, author and year across registries.
+- **Official BibTeX only**: entries are fetched from NASA ADS, Crossref,
+  DataCite, INSPIRE or arXiv exports, stamped with a provenance comment, and
+  inserted by the tool; nothing is hand-written.
+- **Search that does not trust the registries**: candidates from ADS, arXiv,
+  Crossref, OpenAlex and INSPIRE are merged and re-ranked locally (Crossref and
+  OpenAlex both rank a fraudulent republication of *Attention Is All You Need*
+  first).
+- **Claim support**: each citation instance is extracted with its sentence,
+  the cited paper's text is fetched (arXiv HTML/PDF, open-access PDF, else
+  abstract, or your own PDF), an independent judge returns a verdict, and the
+  ledger accepts `SUPPORTS` only with quotes the tool finds verbatim in the
+  paper.
+- **An audit gate** (`audit`) that fails on undefined keys, unresolved or
+  mismatched entries, and unsupported or unjudged claims, and writes a
+  Markdown report.
+- **MCP Toolbox** (`skills/cite-check/mcp/`), installed and registered by
+  `scripts/install.sh`; `co-writer` and `co-scientist` are meant to call it
+  rather than verify citations themselves (`references/integration.md`).
+
+### Co-Writer (`skills/co-writer`)
+Writes and rewrites paper prose in the author's own voice — from rough notes,
+an agent's draft or a collaborator's section — preserving the information and
+changing only how it is said. Key features:
+- **One profile, evidence-backed**: `references/voice-profile.md` holds graded
+  rules (HARD / STRONG / LIGHT), a Never list, the words a de-AI pass must leave
+  alone, and verbatim exemplars indexed by section function (abstract, gap,
+  methods, equation, results, limitation, close, caption); every rule is traced
+  to excerpts in `references/extraction-report.md` and ratified in an interview.
+- **Preservation outranks voice**: numbers survive exactly, a claim never moves
+  up the profile's ladder (`proves > demonstrates > shows > indicates > is
+  consistent with > suggests`), the citation set never grows, LaTeX markup
+  passes through untouched, and flourish with no checkable content is dropped.
+- **Built from the papers, not from self-description**: `scripts/extract_prose.py`
+  turns `.tex` into readable prose, `references/extraction.md` is the deep-read
+  prompt, and `references/interview.md` asks only what the text cannot answer.
+- **Improves from use**: every rewrite is logged; `scripts/capture_edits.py`
+  diffs what was delivered against what the author committed, and
+  `scripts/collect_transcripts.py` indexes the Claude Code and Antigravity
+  sessions behind a paper. A fixed six-input `eval/` set scores each profile
+  version by how much the author still edits.
+- Papers only, for now — astrophysics, physics and ML manuscripts in LaTeX.
+  Citations are cite-check's job, not co-writer's.
 
 ### Jupytext (`skills/jupytext`)
 An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:

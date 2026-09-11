@@ -6,6 +6,8 @@
 #   bash scripts/install.sh --uninstall  # remove what this script created
 #   bash scripts/install.sh --dry-run    # show what would change, touch nothing
 #   bash scripts/install.sh --skip-mcp   # skills only, no MCP toolbox
+#   bash scripts/install.sh --skip-keys  # do not ask for registry API keys
+#   bash scripts/install.sh --uninstall --purge-keys   # …and forget stored keys
 #
 # Step 1 registers every skill in skills/ with each harness found on this
 # machine:
@@ -17,7 +19,12 @@
 #
 # Step 2 runs every skills/*/mcp/setup_mcp.sh, which builds that skill's Python
 # venv and registers its MCP server with each harness. This needs the network
-# and takes a minute; --skip-mcp leaves it out.
+# and takes a minute; --skip-mcp leaves it out. A toolbox that talks to
+# registries (cite-check) asks for its API keys here — input is not echoed,
+# secrets go to the OS keychain or a 0600 file, never into a harness config,
+# and Enter skips a key so that source stays disabled. With no terminal the
+# questions are skipped; --skip-keys skips them explicitly. Enter or change
+# keys later with:  bash skills/cite-check/mcp/setup_mcp.sh --keys
 #
 # No skill file is copied: both harnesses read the repo working tree, so a
 # `git pull` publishes skill edits immediately. Unrelated links and config
@@ -37,12 +44,16 @@ AG_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}"
 MODE=install
 DRY_RUN=0
 SKIP_MCP=0
+SKIP_KEYS=0
+PURGE_KEYS=0
 for arg in ${@+"$@"}; do   # ${@+...} keeps `set -u` quiet on bash 3.2 (macOS)
     case "$arg" in
-        --uninstall) MODE=uninstall ;;
-        --dry-run)   DRY_RUN=1 ;;
-        --skip-mcp)  SKIP_MCP=1 ;;
-        -h|--help)   sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --uninstall)  MODE=uninstall ;;
+        --dry-run)    DRY_RUN=1 ;;
+        --skip-mcp)   SKIP_MCP=1 ;;
+        --skip-keys)  SKIP_KEYS=1 ;;
+        --purge-keys) PURGE_KEYS=1 ;;
+        -h|--help)    sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
@@ -245,6 +256,8 @@ elif [ "${#MCP_SCRIPTS[@]}" -gt 0 ]; then
     MCP_ARGS=()
     [ "$MODE" = uninstall ] && MCP_ARGS+=(--uninstall)
     [ "$DRY_RUN" = 1 ] && MCP_ARGS+=(--dry-run)
+    [ "$SKIP_KEYS" = 1 ] && MCP_ARGS+=(--skip-keys)
+    [ "$PURGE_KEYS" = 1 ] && MCP_ARGS+=(--purge-keys)
     echo ""
     echo "-- MCP toolboxes"
     for setup in "${MCP_SCRIPTS[@]}"; do
@@ -268,6 +281,8 @@ else
     echo "Done. Skills load at the NEXT session start of each harness."
     echo "New skills added to skills/ later: Antigravity picks them up automatically;"
     echo "rerun this script to link them into Claude Code."
+    echo "Registry API keys (cite-check) can be entered or changed any time with:"
+    echo "  bash skills/cite-check/mcp/setup_mcp.sh --keys"
 fi
 if [ "${#MCP_FAILED[@]}" -gt 0 ]; then
     echo ""

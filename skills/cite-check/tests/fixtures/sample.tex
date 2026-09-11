@@ -1,0 +1,21 @@
+\documentclass[twocolumn]{aastex631}
+% cite-check test fixture — a deliberately mixed bibliography
+\usepackage{graphicx}
+\begin{document}
+\title{Fixture}
+\section{Introduction}
+Attention-based sequence models dispense with recurrence entirely and rely on
+self-attention alone \citep{vaswani2017}. The EPR argument holds that quantum
+mechanics is incomplete \citep[see][]{einstein1935}, e.g.\ Fig.~1 of that
+paper.  The Planck 2015 release measured $H_0 = 67.8 \pm 0.9$ km/s/Mpc
+\citep{planck2015}; this value is now widely used \citet{fake2023} claim that
+Hubble tension is resolved by dark energy.
+\begin{equation}
+  E = mc^2
+\end{equation}
+We follow the method of \citet{wrongdoi2020} throughout.
+\input{section2}
+\nocite{unused1}
+\bibliographystyle{aasjournal}
+\bibliography{sample}
+\end{document}
