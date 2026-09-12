@@ -1,6 +1,6 @@
 # Science Skills
 
-This repository contains a collection of AI agent skills tailored for scientific research, brainstorming, mathematical derivation, and prototyping.
+This repository contains a collection of AI agent skills tailored for scientific research: brainstorming, mathematical derivation, prototyping, publication figures, citation integrity and paper writing.
 
 ## Note on Customization
 
@@ -10,12 +10,14 @@ This repository contains a collection of AI agent skills tailored for scientific
 
 ## Agent Compatibility
 
-The `co-scientist` skill is **harness-agnostic**: a single `SKILL.md` runs on both
-**Claude Code** and **Google Antigravity** (and other harnesses) via a *Harness
-Adapter* — a capability map at the top of the skill that the agent resolves to its
-own tools at runtime. See `skills/co-scientist/SKILL.md` for the per-harness
-mapping. The methodologies are conceptual and adapt to further frameworks by
-adding a column to that map.
+Every skill here is **harness-agnostic**: a single `SKILL.md` runs on
+**Claude Code**, **Google Antigravity** and other harnesses. The two that ship
+an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness Adapter* — a
+capability map at the top of the skill that the agent resolves to its own
+tools at runtime, with a CLI fallback that runs the same code. The others
+(`co-writer`, `jupytext`, `plot-style`) need only file access and a shell with
+Python 3. The methodologies are conceptual and adapt to further frameworks by
+adding a column to a map.
 
 ## Installation
 
@@ -176,8 +178,19 @@ changing only how it is said. Key features:
   `scripts/collect_transcripts.py` indexes the Claude Code and Antigravity
   sessions behind a paper. A fixed six-input `eval/` set scores each profile
   version by how much the author still edits.
+- **Citations go through cite-check**, never through co-writer's own
+  reasoning: a rewrite that touches a citing sentence is re-judged against
+  the cited paper, a citation gap is filled by `search_citation` → `bib_add`,
+  and a draft is finished only when cite-check's `audit` is ok. co-writer
+  keeps one check of its own — the citation set never grows or moves.
 - Papers only, for now — astrophysics, physics and ML manuscripts in LaTeX.
-  Citations are cite-check's job, not co-writer's.
+
+The committed profile is the repository author's voice. To make it yours:
+extract prose from your own papers (`python skills/co-writer/scripts/extract_prose.py
+paper/main.tex … --out-dir prose/`), run the deep read in
+`references/extraction.md` over it, answer `references/interview.md`, and
+write `references/voice-profile.md` from the two — then let the capture loop
+correct it as you use it.
 
 ### Jupytext (`skills/jupytext`)
 An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:
@@ -219,3 +232,6 @@ This project was built by drawing inspiration and structural methodologies from 
 - **[obra/superpowers](https://github.com/obra/superpowers)**: The phased process flow, gating, and `<HARD-GATE>` mechanisms were inspired by their `brainstorming` skill.
 - **[Gemini CLI Skill Best Practices](https://geminicli.com/docs/cli/skills-best-practices/)**: Used to audit and structure the skill prompts for maximum LLM adherence.
 - **[Claude Agent Skills Best Practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)**: Provided guidance on using XML tags for constraints and defining explicit anti-patterns.
+- **[lout33/writing-style-skill](https://github.com/lout33/writing-style-skill)**: The packaging of `co-writer` — a thin `SKILL.md` over a profile in `references/`, and the "return only the rewritten text" output discipline — follows this skill.
+- **[Artificial Corner, "Voice"](https://artificialcorner.com/p/voice)** and **[AI Blew My Mind, "Claude Skills: AI that writes like you"](https://aiblewmymind.substack.com/p/claude-skills-ai-write-like-you)**: `co-writer`'s interview instrument (push back on vague answers, reject the aspirational and the generic, grade rules HARD / STRONG / LIGHT, weight rejections over preferences) and its extraction-first method with a size cap on the profile come from these two write-ups.
+- **[cheyanneshariat/OverCite](https://github.com/cheyanneshariat/OverCite)** and **[biprateep/zerovibes](https://github.com/biprateep/zerovibes)**: `cite-check`'s registry search with official ADS export, and its tiered title-search verifier, grew from these.
