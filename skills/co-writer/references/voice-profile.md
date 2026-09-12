@@ -1,6 +1,6 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.1.2 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
+**Version:** 0.2.0 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
@@ -11,6 +11,8 @@ unlabelled). **Tags:** `measured` (from the corpus, with a code into
 [extraction-report.md](extraction-report.md); every `measured` rule below
 was ratified by the author on 2026-09-11 at the grade shown), `attested`
 (from the interview, with the date), `pending` (awaiting the interview).
+**Authority:** the specimens in §11 outrank the rules; the rules outrank
+everything else. Where a rule and a specimen disagree, imitate the specimen.
 Size cap on this file: 400 lines. When it grows past that, compress — do
 not append.
 
@@ -57,7 +59,7 @@ sparing with dashes, and unafraid of "very".
 - A priority or novelty claim the input does not make. Co-writer may keep one the input asserts; it may never add one. `HARD · attested 2026-09-11`
 - Sentence-initial "Crucially," / "Notably," / "Importantly,"; "This proves that". `HARD · attested 2026-09-11 · D.4, D.5`
 - The reveal construction "It is not X, it is Y" / "not X but Y" used for effect. (The causal form with content on both sides — "not just because its stellar population is intrinsically red but because it is a dusty edge-on spiral" — occurs once in the 2021 corpus and is not the same thing.) `HARD · attested 2026-09-11`
-- Mannered prose of any kind: fragments for effect, aphoristic one-liners, a dramatic colon ("The result: …"), a paragraph built to land a punchline. `HARD · attested 2026-09-11`
+- Mannered prose: metaphor or flourish standing where a direct statement would do — "a dial worth turning" for "a parameter worth varying", "earns its keep" for "still matters" — and its cousins: a fragment for effect, an aphoristic one-liner, a dramatic colon ("The result: …"), a paragraph built to land a punchline. Such phrases exist to display the writer; they make the reader work so the writer can perform, and a metaphor drags in connotations the writer did not choose. The fix is the literal phrase or the field's term, never a coinage. `scripts/check_mannered.py` lists the stock phrases — calibration, not a verdict. `HARD · attested 2026-09-11`
 - "revolutionary", "will change how science is done", or any claim about the method's impact on the field or the discipline. `HARD · attested 2026-09-11`
 
 ### Words that are his and stay
@@ -177,7 +179,7 @@ Funnel introduction; "However," gap → contribution; passive for instrument act
 
 ## 9. Content to quarantine
 
-The exemplars below teach constructions. Their nouns do not transfer. Never import into an unrelated paper: photo-$z$ / spec-$z$ and their apostrophe plurals, DESI, LSST, Rubin, SDSS, HSC-SSP, DEEP2/3, MaNGA, Gaia, "representative spectroscopic samples", "training and calibration", "break degeneracies in the colour–redshift relation", "next-generation imaging surveys", "well-calibrated PDFs", PIT, capsule, "redshift success rate", "background-limited".
+The specimens below teach constructions. Their nouns do not transfer. Never import into an unrelated paper: photo-$z$ / spec-$z$ and their apostrophe plurals, DESI, LSST, Rubin, SDSS, HSC-SSP, DEEP2/3, MaNGA, Gaia, "representative spectroscopic samples", "training and calibration", "break degeneracies in the colour–redshift relation", "next-generation imaging surveys", "well-calibrated PDFs", PIT, capsule, "redshift success rate", "background-limited".
 
 ## 10. Rejected (pending interview)
 
@@ -185,9 +187,9 @@ Empty. Every pattern the author declines in the interview is recorded here with 
 
 ---
 
-## 11. Exemplars by section function
+## 11. Specimens by section function
 
-Verbatim, from the corpus. Match the slot to the input; carry the construction, not the content.
+Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's verdict on each is pending**: a specimen he has endorsed outranks one he has not, and one he rejects leaves. Match the slot to the input; carry the construction, not the content. Sentences he has rejected are in [counterexamples.md](counterexamples.md).
 
 **Abstract** — RECAL
 > Many astrophysical analyses depend on estimates of redshifts (a proxy for distance) determined from photometric (i.e., imaging) data alone. Inaccurate estimates of photometric redshift uncertainties can result in large systematic errors. However, probability distribution outputs from many photometric redshift methods do not follow the frequentist definition of a Probability Density Function (PDF) for redshift --- i.e., the fraction of times the true redshift falls between two limits $z_{1}$ and $z_{2}$ should be equal to the integral of the PDF between these limits. Previous works have used the global distribution of Probability Integral Transform (PIT) values to re-calibrate PDFs, but offsetting inaccuracies in different regions of feature space can conspire to limit the efficacy of the method. We leverage a recently developed regression technique that characterizes the local PIT distribution at any location in feature space to perform a local re-calibration of photometric redshift PDFs. Though we focus on an example from astrophysics, our method can produce PDFs which are calibrated at all locations in feature space for any use case.
@@ -234,15 +236,19 @@ Verbatim, from the corpus. Match the slot to the input; carry the construction, 
 
 ## 12. How to apply this profile
 
-1. Read the input for **information only**. Its phrasing is not a source.
-2. Identify the **slot** (abstract, intro opener, gap, methods, definition, equation, results, interpretation, limitation, close, caption) and the **register** (journal or workshop). Read the matching exemplar before writing.
-3. Apply every `HARD` rule. Apply `STRONG` rules most of the time and let one or two lapse per page. Apply `LIGHT` rules only where they fit.
-4. Do not stack signatures. One "(also called …)" per paragraph; "This …" at most twice in a row; one concessive sentence per paragraph; one "remarkably" per paper.
-5. Real writers vary. A page in which every paragraph closes on "Therefore," and every methods sentence opens "To …" is a parody. The litmus test, before finishing: *would he have written this, or does it read as an AI imitating him?* If it reads as imitation, remove the most recently added signature and reread.
-6. Treat this document as the source of truth for voice, applied with judgement; it says nothing about what is true, which is the input's job and the preservation rules' job.
+1. Read the input for **information only** and write the content list. Its phrasing is not a source; when it reads as model prose, close it and compose from the list.
+2. Identify the **slot** (abstract, intro opener, gap, methods, definition, equation, results, interpretation, limitation, close, caption) and the **register** (journal or workshop).
+3. **Read the specimen for the slot immediately before writing**, at length, and write in one sitting while it is fresh. The register is transferred from the specimen; the rules say what to check afterwards.
+4. Apply every `HARD` rule. Apply `STRONG` rules most of the time and let one or two lapse per page. Apply `LIGHT` rules only where they fit.
+5. Do not stack signatures. One "(also called …)" per paragraph; "This …" at most twice in a row; one concessive sentence per paragraph; one "remarkably" per paper.
+6. **When a stretch misses, re-read the specimen and write it again.** Never revise a sentence against the Never list or against this document: a passage revised against a list gets worse. The Never list is for the mechanical check at the end, not for editing.
+7. Read [counterexamples.md](counterexamples.md) once, after the draft is written, as examples of what missed — never as a list to revise against.
+8. Real writers vary. A page in which every paragraph closes on "Therefore," and every methods sentence opens "To …" is a parody. The question — would he have written this, or does it read as a model imitating him? — belongs to the cold read, not to the writer. The writer records what it is least sure of and certifies nothing.
+9. This document is the source of truth for voice, applied with judgement. It says nothing about what is true, which is the input's job and the preservation rules' job.
 
 ## 13. Changelog
 
+- **0.2.0** (2026-09-12) — mechanisms from the book-writing skills: specimens outrank rules (authority line); read the specimen immediately before writing and rewrite from it on a miss, never revise against the list; specimens renamed specimens with the author's verdict pending; counterexamples.md added; the mannered-prose entry restated as its definition with the fix; the litmus question moved to the cold read.
 - **0.1.2** (2026-09-11) — interview Part 2, batch 1. Claim ladder (proves > demonstrates > shows > indicates > is consistent with > suggests; find/observe/see are reporting); abstract may sit one rung above results; contradiction sentences added to calibration; field-impact claims, the "not X but Y" reveal, and mannered prose added to Never. American English always (overrides the venue-spelling rule); "data set" always; use/utilize split. Final section is "Summary and Discussion"; drafting order recorded.
 - **0.1.1** (2026-09-11) — interview Part 1: all 27 extracted patterns ratified at their grades. Register question answered: novelty words are deliberate, for punch, and to be used only when the case is genuinely novel; written up as a `STRONG` rule with a one-per-paper cap. "Crucially," / "Notably," / "This proves that" moved from `pending` to Never.
 - **0.1.0** (2026-09-10) — built from extraction over five papers (DESI 2024, encapzulate 2021, recalibrate 2021, Peng 2026, Pratsos 2026). Interview pending; 2026-only constructions held as `pending`.

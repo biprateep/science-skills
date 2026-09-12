@@ -13,7 +13,7 @@ what was *accepted*. This script joins the two:
   together with a normalized edit distance to <repo>/.co-writer/corrections.md.
 
 corrections.md is the training signal for the voice profile: recurring edits
-become Never entries, regraded rules, or new exemplars (SKILL.md,
+become Never entries, regraded rules, or new specimens (SKILL.md,
 "Maintenance"). The summary printed at the end shows mean distance per slot
 and per profile version -- a later profile version is better if and only if
 the author edits less.

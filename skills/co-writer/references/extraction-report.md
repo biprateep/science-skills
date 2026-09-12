@@ -532,7 +532,7 @@ Things the profile must not fight, because the register requires them: funnel in
 
 Subject matter that must not leak into an unrelated paper: photometric redshift / photo-$z$ / spec-$z$ and the apostrophe plurals; DESI, LSST, Rubin, SDSS, HSC-SSP, DEEP2/3, MaNGA, Gaia; "representative spectroscopic samples", "training and calibration", "break degeneracies in the colour–redshift relation", "next-generation imaging surveys", "well-calibrated / locally calibrated PDFs", PIT, capsule, "redshift success rate", "background-limited". Any sentence quoted above is evidence of a *construction*; its nouns are not to be reused.
 
-## Candidate exemplars by section function
+## Candidate specimens by section function
 
 Chosen for being typical, not best. Full text is in `scratch/prose/`.
 

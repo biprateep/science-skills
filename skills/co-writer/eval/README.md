@@ -4,7 +4,7 @@ Six inputs, one per major slot, written deliberately in the register a
 language model defaults to: sentence-initial "Notably," and "Crucially,",
 em-dash asides, rule-of-three lists, "delve", "underscore", "paradigm
 shift", "pave the way", a one-sentence punch, "In summary". Topics are
-unrelated to the author's papers so that exemplar content leaking into the
+unrelated to the author's papers so that specimen content leaking into the
 output is detectable.
 
 | file | slot | register |
@@ -22,8 +22,11 @@ output is detectable.
    and save each output to `eval/runs/<profile-version>/NN.tex`. The skill's
    session-log convention records the delivery in `.co-writer/log/` with
    `file: skills/co-writer/eval/runs/<version>/NN.tex`.
-2. Edit each output in place until it reads as yours. Do not retype it;
-   edit the delivered text so the diff is the correction.
+2. Before editing, `python skills/co-writer/scripts/check_fixed.py NN.tex
+   eval/runs/<version>/NN.tex` must print "fixed items identical"; a run
+   that fails it is a preservation bug, not a voice result. Then edit each
+   output in place until it reads as yours. Do not retype it; edit the
+   delivered text so the diff is the correction.
 3. Run `python skills/co-writer/scripts/capture_edits.py` from the repo root.
    The summary prints mean edit distance per profile version.
 

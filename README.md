@@ -163,13 +163,16 @@ an agent's draft or a collaborator's section — preserving the information and
 changing only how it is said. Key features:
 - **One profile, evidence-backed**: `references/voice-profile.md` holds graded
   rules (HARD / STRONG / LIGHT), a Never list, the words a de-AI pass must leave
-  alone, and verbatim exemplars indexed by section function (abstract, gap,
+  alone, and verbatim specimens indexed by section function (abstract, gap,
   methods, equation, results, limitation, close, caption); every rule is traced
   to excerpts in `references/extraction-report.md` and ratified in an interview.
 - **Preservation outranks voice**: numbers survive exactly, a claim never moves
   up the profile's ladder (`proves > demonstrates > shows > indicates > is
   consistent with > suggests`), the citation set never grows, LaTeX markup
-  passes through untouched, and flourish with no checkable content is dropped.
+  passes through untouched, and flourish with no checkable content is dropped;
+  `scripts/check_fixed.py` gates all of it, and a cold read by an agent that
+  never saw the input answers the question the writer cannot — would the
+  author have written this.
 - **Built from the papers, not from self-description**: `scripts/extract_prose.py`
   turns `.tex` into readable prose, `references/extraction.md` is the deep-read
   prompt, and `references/interview.md` asks only what the text cannot answer.
@@ -234,4 +237,5 @@ This project was built by drawing inspiration and structural methodologies from 
 - **[Claude Agent Skills Best Practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)**: Provided guidance on using XML tags for constraints and defining explicit anti-patterns.
 - **[lout33/writing-style-skill](https://github.com/lout33/writing-style-skill)**: The packaging of `co-writer` — a thin `SKILL.md` over a profile in `references/`, and the "return only the rewritten text" output discipline — follows this skill.
 - **[Artificial Corner, "Voice"](https://artificialcorner.com/p/voice)** and **[AI Blew My Mind, "Claude Skills: AI that writes like you"](https://aiblewmymind.substack.com/p/claude-skills-ai-write-like-you)**: `co-writer`'s interview instrument (push back on vague answers, reject the aspirational and the generic, grade rules HARD / STRONG / LIGHT, weight rejections over preferences) and its extraction-first method with a size cap on the profile come from these two write-ups.
+- **[biprateep/conceptual_intro_to_deep_learning](https://github.com/biprateep/conceptual_intro_to_deep_learning)** (`.claude/skills`): the book-writing skills there supplied `co-writer`'s cold read, its trim protocol (measure first, two classes of cut, scaffolding never cut, the author rules on each), the tested route for profile changes, and the ported `check_fixed.py` and `check_mannered.py`.
 - **[cheyanneshariat/OverCite](https://github.com/cheyanneshariat/OverCite)** and **[biprateep/zerovibes](https://github.com/biprateep/zerovibes)**: `cite-check`'s registry search with official ADS export, and its tiered title-search verifier, grew from these.

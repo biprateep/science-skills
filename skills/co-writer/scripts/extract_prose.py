@@ -9,7 +9,7 @@ with no --out-dir.
 
 What survives, and why:
   section headings      kept as Markdown headings -- the voice profile indexes
-                        exemplars by section function (abstract, methods, ...)
+                        specimens by section function (abstract, methods, ...)
   inline math           kept verbatim -- how symbols are woven into sentences
                         is part of the voice in physics writing
   display equations     replaced by a ⟨display equation⟩ line -- the prose that
@@ -387,11 +387,49 @@ def output_name(path: Path) -> str:
     return f"{parent}--{path.stem}.prose.md"
 
 
+def section_counts(text: str) -> list[tuple[str, int]]:
+    """Words per heading, in order; the trim measures with this before proposing cuts."""
+    counts, heading, buf = [], "(before first heading)", []
+
+    def flush():
+        n = len(re.findall(r"[A-Za-z][A-Za-z'-]*", " ".join(buf)))
+        if heading != "(before first heading)" or n:
+            counts.append((heading, n))
+
+    for line in text.splitlines():
+        if re.match(r"^#{2,3} ", line):
+            flush()
+            heading, buf = line.strip(), []
+        else:
+            buf.append(line)
+    flush()
+    return counts
+
+
+def print_counts(name: str, text: str) -> None:
+    rows = section_counts(text)
+    total = sum(n for _, n in rows)
+    print(f"\n{name}: {total} words")
+    for heading, n in rows:
+        indent = "  " if heading.startswith("### ") else ""
+        print(f"  {indent}{n:6d}  {heading.lstrip('# ')}")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("files", nargs="+")
     parser.add_argument("--out-dir", help="write <parent>--<stem>.prose.md files here")
+    parser.add_argument("--counts", action="store_true", help="print words per section (the trim's measurement) instead of the prose")
     args = parser.parse_args(argv)
+
+    if args.counts:
+        for f in args.files:
+            p = Path(f).expanduser()
+            if not p.exists():
+                print(f"missing: {p}", file=sys.stderr)
+                return 2
+            print_counts(str(p), extract(p))
+        return 0
 
     paths = [Path(f).expanduser() for f in args.files]
     missing = [p for p in paths if not p.exists()]

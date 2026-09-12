@@ -80,7 +80,7 @@ Then four closing sections:
 - **Genre baseline** — the `GENRE` findings, so the profile knows what the
   register demands and does not fight it.
 - **Content to quarantine** — phrases and framings that are subject matter.
-- **Candidate exemplars by section function** — two or three verbatim
+- **Candidate specimens by section function** — two or three verbatim
   paragraphs each for: abstract, introduction opener, gap-and-contribution
   statement, methods paragraph, results paragraph, limitation/hedge,
   discussion or conclusion close, figure caption. Tag each with document and
