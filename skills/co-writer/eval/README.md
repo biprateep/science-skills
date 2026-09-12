@@ -29,3 +29,6 @@ output is detectable.
 
 Version n+1 is better than version n if and only if the mean distance is
 lower on this set. `eval/runs/` is gitignored; the inputs are not.
+
+The inputs cite keys that exist in no `.bib`, so for citations an eval run
+is inline mode: the set comparison applies, the cite-check pass does not.

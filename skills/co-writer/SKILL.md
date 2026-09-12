@@ -6,16 +6,18 @@ description: >-
   reads like a language model wrote it — preserving every number, claim,
   hedge and citation exactly and changing only how it is said. Covers journal
   and conference papers in astrophysics, physics, ML and their intersections,
-  in LaTeX. Use when the user says "in my style", "in my voice", "sound like
-  me", "as I would write it", "restyle", "de-AI this", "co-writer", or asks
-  for a section, paragraph, abstract or caption to be drafted or rewritten
-  the way they write. NOT for producing the science, the analysis, or the
-  report structure (co-scientist), for figures (plot-style), for
-  copy-editing that does not involve voice, or — yet — for emails, letters,
-  proposals or referee reports.
+  in LaTeX. Citations are never verified here: existence, official BibTeX
+  and claim support are delegated to the cite-check skill. Use when the user
+  says "in my style", "in my voice", "sound like me", "as I would write it",
+  "restyle", "de-AI this", "co-writer", or asks for a section, paragraph,
+  abstract or caption to be drafted or rewritten the way they write. NOT for
+  producing the science, the analysis, or the report structure
+  (co-scientist), for figures (plot-style), for citation work on its own
+  (cite-check), for copy-editing that does not involve voice, or — yet — for
+  emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice
@@ -63,7 +65,10 @@ claims and the citations already exist in the input.
 4. **Write.** Apply every `HARD` rule, most `STRONG` rules, `LIGHT` rules
    where they fit. Carry the exemplar's construction, never its nouns.
 5. **Check** — the self-check below, in order.
-6. **Return the text only.** No preamble, no "Here is the rewritten version",
+6. **Citations, when the text is file-backed and a citing sentence changed**
+   — hand the changed instances to cite-check (see "Citations" below). A
+   section or draft is not done until cite-check's `audit` is `ok`.
+7. **Return the text only.** No preamble, no "Here is the rewritten version",
    no summary of changes, no closing offer. If the user asked for a diff or a
    rationale, give the text first and the rationale after a rule.
 
@@ -127,9 +132,13 @@ reads exactly like the author and breaks one of these is a failure.
 - **No reference is invented.** The profile's results pattern opens with
   "Figure N shows"; if the input has no figure, do not add one. Never
   introduce a `\ref`, `\cite`, equation number or table to satisfy a slot.
-- **The citation set never grows, shrinks or moves.** Every `\cite` key in
-  the output was in the input, attached to the same claim. No new
-  references, however obvious.
+- **The citation set never grows or moves.** `keys_out ⊆ keys_in`, and
+  every `\cite` key in the output is attached to the claim it was attached
+  to in the input; a key drops out only under a reported hard-limit cut.
+  This is a set comparison, needs no lookup, and is the only citation check
+  co-writer performs itself. Whether the paper exists, whether the `.bib`
+  entry is genuine, whether the paper supports the sentence — that is
+  cite-check's, below.
 - **Markup passes through untouched.** `\cite`, `\ref`, `\label`, `\eqref`,
   math (inline and display), `\begin{figure}` … `\end{figure}` bodies,
   macros. Rewrite the prose around them. If the input is LaTeX, the output
@@ -141,6 +150,56 @@ reads exactly like the author and breaks one of these is a failure.
   dropping information, return the list of what was dropped after the text.
   Never silently compress a claim away.
 
+## Citations — cite-check does the verifying
+
+co-writer has no citation logic of its own beyond the set comparison above.
+Existence, provenance and support are computed by the **cite-check** skill
+(`skills/cite-check/`), the repository's one citation engine, and every
+improvement made there applies here with no change to this file. Before the
+first citation action in a session, read its contract —
+`<skills>/cite-check/references/integration.md` — and follow it; where this
+section and that file differ, that file wins.
+
+**Finding the tools.** cite-check is a sibling of this skill: the same
+`skills/` directory in the repository, or the same directory of symlinks the
+installer wrote (`~/.claude/skills/`). In order: (1) the harness lists the
+tools (`mcp__cite-check__*` in Claude Code; server `cite-check` elsewhere) →
+call them; (2) it does not → run `bash <skills>/cite-check/mcp/setup_mcp.sh`
+once, and for the rest of this session use the identical CLI:
+`<skills>/cite-check/mcp/.venv/bin/python <skills>/cite-check/mcp/server.py call <tool> '<json>'`
+(exit 0 pass, 1 fail, JSON on stdout); (3) `ping` once — no ADS token → say
+so to the user once, then proceed with the other registries.
+
+**When co-writer calls it — three triggers.**
+
+1. **A rewrite changed a sentence that carries a citation.** Restyling a
+   citing sentence changes its claim, and the cited paper may no longer
+   support the claim as now written. After a section rewrite: `extract_cites`
+   on the rewritten file; cite-check's support check (its Workflow C —
+   `fetch_text`, `find_passages`, an **independent** judge, `record_support`)
+   on every instance whose claim changed; then
+   `audit(tex_path, require_support=true)`. Two rules must both hold:
+   co-writer's, that the sentence is no stronger than the input's; and
+   cite-check's, that the paper supports the sentence as written.
+2. **The user asks for a citation, or the input carries a gap** — `[cite]`,
+   `\cite{?}`, "(REF)", "citation needed". cite-check's Workflow A:
+   `search_citation` → take a `high` candidate, ask the user about a `medium`,
+   never a `low` → `bib_add` → write `\cite{<key>}` → support check for that
+   instance. `no-official-bibtex` → leave the sentence uncited and say so.
+   This is the only way a key enters the output that was not in the input.
+3. **A whole draft, or anything the user calls finished.** `audit` must
+   return `ok: true`. Relay its `failures` and `warnings` to the user
+   verbatim; do not soften them and do not lower `require_support`.
+
+**Inline mode.** A paragraph pasted into the chat has no `.bib` and no file.
+There co-writer applies the set comparison only, and says once that the
+support check runs when the paragraph is in its file.
+
+**Never**, however the request is phrased: write or complete a `.bib` entry;
+cite a key, DOI, arXiv id or bibcode from memory; record a support verdict
+co-writer decided itself while writing; re-implement any cite-check check
+with its own reasoning; edit anything under `cite-check/mcp/`.
+
 ## Modes by Input
 
 | Input | What changes |
@@ -150,6 +209,7 @@ reads exactly like the author and breaks one of these is a failure.
 | A whole draft | Section by section, re-reading the profile's register table between sections. Keep the document's structure; do not add or remove sections. |
 | A word or page limit | Preserve first, then cut; report every cut. |
 | "de-AI this" | Same process; the Never list and the "words that are his" list carry the weight. Do not scrub *leverage*, *utilize*, *robust*, *crucial*, *very*, *significantly* — they are the author's. |
+| Any file-backed input with citations | After the rewrite, the cite-check pass in "Citations"; a section or draft is not done until `audit` is `ok`. |
 
 ## Anti-Patterns
 
@@ -179,20 +239,24 @@ What a model reaching for "good academic prose" will do, and must not:
   input does not have.
 - **Add a summary sentence** at the end of a section that the input did not
   have.
+- **Verify a citation by reasoning.** "This DOI looks right", "I recall that
+  paper shows this" — not a check. cite-check's tools are the check.
 - **Write a preamble or postamble.** Text only.
 
 ## Self-Check Before Finishing
 
 1. Every number in the input is in the output, at the same precision. ☐
 2. No claim is stronger than it was. ☐
-3. Same `\cite` keys, attached to the same claims. ☐
-4. All `\ref` / `\label` / math / floats untouched. ☐
-5. No phrase of eight-plus words from an exemplar that was not in the input. ☐
-6. Nothing from the Never list. ☐
-7. Dashes ≤ 1 per page. ☐
-8. No signature stacked more than twice in a paragraph. ☐
-9. Venue spelling consistent. ☐
-10. Litmus: read it once as the author. Would he have written it, or does it
+3. `keys_out ⊆ keys_in`, each key attached to the claim it was attached to. ☐
+4. File-backed and a citing sentence changed → cite-check's support pass run;
+   a section or draft is called done only with `audit` ok. ☐
+5. All `\ref` / `\label` / math / floats untouched. ☐
+6. No phrase of eight-plus words from an exemplar that was not in the input. ☐
+7. Nothing from the Never list. ☐
+8. Dashes ≤ 1 per page. ☐
+9. No signature stacked more than twice in a paragraph. ☐
+10. American spelling throughout. ☐
+11. Litmus: read it once as the author. Would he have written it, or does it
     read as an AI imitating him? If the latter, remove the most recently added
     signature and reread. ☐
 
@@ -231,9 +295,14 @@ has a 400-line cap — past it, compress; do not append.
 
 ## Interaction With Other Skills
 
-co-writer is self-contained: it reads only its own `references/` and does not
-load or defer to any other skill's writing guidance.
+co-writer reads its own `references/` and, for citation work, cite-check's
+`references/integration.md`; it does not load or defer to any other skill's
+writing guidance.
 
+- **cite-check** is the citation engine. co-writer keeps only the set
+  comparison; existence, BibTeX and claim support are cite-check's, called as
+  in "Citations". Improvements to cite-check reach co-writer with no change
+  here.
 - **co-scientist** produces the science and assembles the report; co-writer
   is run afterwards, section by section, over the prose. co-scientist's
   manifest says which claims are verified; co-writer preserves claims, it
@@ -263,4 +332,6 @@ skills/co-writer/
 ├── log/                             # one file per rewrite + one session note
 ├── corrections.md                   # from capture_edits.py
 └── transcripts/                     # from collect_transcripts.py
+
+skills/cite-check/references/integration.md   # read before any citation action — the contract this skill follows
 ```

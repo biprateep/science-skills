@@ -84,9 +84,10 @@ narrated into a pass.
 
 ## co-writer specifically
 
-- co-writer's preservation contract (§4.4(c) of its design brief:
-  citation-set preservation, claim–citation pairing) stays in co-writer; the
-  resolution chain and the support check move here.
+- co-writer's preservation contract (its `SKILL.md`, "Hard Rules —
+  Preservation": `keys_out ⊆ keys_in`, each key on its original claim) stays
+  in co-writer; the resolution chain and the support check live here, and
+  co-writer's "Citations" section says when it calls them.
 - Modality: co-writer's modality ledger says a rewrite may not strengthen a
   claim; the judge here checks the *paper* against the sentence's strength.
   Both must hold. A rewrite that turns "suggests" into "shows" fails the
