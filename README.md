@@ -29,7 +29,7 @@ git clone https://github.com/biprateep/science-skills.git
 bash science-skills/scripts/install.sh
 ```
 
-That is the whole installation. The script does three things, and skips whatever
+That is the whole installation. The script does four things, and skips whatever
 this machine does not have:
 
 1. **Registers every skill** in `skills/` with each harness it finds:
@@ -56,6 +56,12 @@ this machine does not have:
    off while the others work. With no terminal the questions are skipped;
    `--skip-keys` skips them explicitly. Enter or change keys later with
    `bash skills/cite-check/mcp/setup_mcp.sh --keys`.
+
+4. **Checks the tools the skills run** — [uv](https://docs.astral.sh/uv/)
+   (`code-style` formats, lints and type-checks through it; the toolboxes also
+   build faster with it) and Python 3.10+ — and prints the install command for
+   any that is missing. It installs neither itself; without them the skills
+   still load, only `code-style`'s checks cannot run.
 
 No skill file is copied — both harnesses read this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
@@ -98,6 +104,21 @@ shows what is configured — see `skills/cite-check/references/registries.md`.
 For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
 folder wherever that agent discovers instructions — the Harness Adapter maps the
 capabilities.
+
+### Updating
+
+On each machine where the skills are installed, pull and rerun the installer:
+
+```sh
+git -C science-skills pull
+bash science-skills/scripts/install.sh
+```
+
+The pull alone makes edits to existing skills live. The rerun covers what a
+pull cannot: it links skills that are new since the last run into Claude Code,
+removes the links of skills renamed or deleted upstream, reinstalls each MCP
+toolbox's requirements, and repeats the tool check. Antigravity scans
+`skills/` and needs nothing. As always, restart the harness to load the changes.
 
 ## Featured Skills
 

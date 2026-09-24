@@ -26,9 +26,18 @@
 # questions are skipped; --skip-keys skips them explicitly. Enter or change
 # keys later with:  bash skills/cite-check/mcp/setup_mcp.sh --keys
 #
+# Step 3 checks the command-line tools the skills run: uv (code-style formats,
+# lints and type-checks through it, and the toolboxes build faster with it)
+# and python3. A missing one is reported with how to install it; this script
+# installs neither.
+#
 # No skill file is copied: both harnesses read the repo working tree, so a
 # `git pull` publishes skill edits immediately. Unrelated links and config
 # entries are left untouched.
+#
+# To update a machine: `git pull`, then rerun this script. It links skills
+# that are new since the last run, removes links to skills renamed or deleted
+# upstream, reinstalls each toolbox's requirements and repeats the tool check.
 #
 # Overrides: CLAUDE_CONFIG_DIR (default ~/.claude), GEMINI_CONFIG_DIR
 # (default ~/.gemini/config). Set either to a path to target a custom install.
@@ -53,7 +62,9 @@ for arg in ${@+"$@"}; do   # ${@+...} keeps `set -u` quiet on bash 3.2 (macOS)
         --skip-mcp)   SKIP_MCP=1 ;;
         --skip-keys)  SKIP_KEYS=1 ;;
         --purge-keys) PURGE_KEYS=1 ;;
-        -h|--help)    sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        # The header runs from line 2 to the line before `set -euo pipefail`.
+        -h|--help)    sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" \
+                          | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
@@ -271,6 +282,39 @@ elif [ "${#MCP_SCRIPTS[@]}" -gt 0 ]; then
 fi
 
 # ==============================================================================
+# Tools the skills run — checked, never installed
+# ==============================================================================
+# code-style formats, lints and type-checks through uv (uvx ruff, uv run mypy),
+# and its checker needs Python 3.10+. Without them the skills still load and
+# their rules still apply; only the checks cannot run. So a missing tool is
+# reported, here and in the summary, and does not fail the install.
+MISSING_TOOLS=()
+if [ "$MODE" = install ]; then
+    echo ""
+    echo "-- Tools"
+    if command -v uv >/dev/null 2>&1; then
+        echo "    uv: $(uv --version 2>/dev/null || echo found)"
+    else
+        echo "    uv: NOT FOUND — code-style runs ruff and mypy through it. Install with"
+        echo "        curl -LsSf https://astral.sh/uv/install.sh | sh"
+        echo "      (other ways: https://docs.astral.sh/uv/getting-started/installation/)"
+        MISSING_TOOLS+=(uv)
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        py_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)"
+        if python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' 2>/dev/null; then
+            echo "    python3: $py_version"
+        else
+            echo "    python3: $py_version — older than 3.10, which code-style's checker needs"
+            echo "      (inside a uv project, 'uv run' supplies its own Python)"
+        fi
+    else
+        echo "    python3: NOT FOUND — the skills' scripts need Python 3.10+"
+        MISSING_TOOLS+=(python3)
+    fi
+fi
+
+# ==============================================================================
 echo ""
 if [ "$DRY_RUN" = 1 ]; then
     echo "Dry run — nothing was changed. Rerun without --dry-run to $MODE."
@@ -279,10 +323,14 @@ elif [ "$MODE" = uninstall ]; then
     echo "The repo itself is untouched — delete this clone by hand if you want it gone."
 else
     echo "Done. Skills load at the NEXT session start of each harness."
-    echo "New skills added to skills/ later: Antigravity picks them up automatically;"
-    echo "rerun this script to link them into Claude Code."
+    echo "To update this machine later:  git pull && bash scripts/install.sh"
+    echo "(new skills get linked into Claude Code; Antigravity finds them by itself)."
     echo "Registry API keys (cite-check) can be entered or changed any time with:"
     echo "  bash skills/cite-check/mcp/setup_mcp.sh --keys"
+fi
+if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
+    echo ""
+    echo "Missing tools (see '-- Tools' above): ${MISSING_TOOLS[*]}"
 fi
 if [ "${#MCP_FAILED[@]}" -gt 0 ]; then
     echo ""
