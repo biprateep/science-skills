@@ -1,7 +1,7 @@
 # Publication figure defaults — house style for manuscript figures.
 #
 # Apply with:   plt.style.use("<path>/paper.mplstyle")
-# or via:       from plotstyle import use_style; use_style()
+# or via:       import plotstyle, then plotstyle.use_style()
 #
 # Figure WIDTHS are not settable here — they are per-figure geometry.
 # Use COLUMN_WIDTH / TEXT_WIDTH or figsize() from plotstyle.py.

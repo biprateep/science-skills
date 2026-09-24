@@ -253,6 +253,7 @@ An agent skill that enforces the Jupytext percent format (`py:percent`) for all 
 - **Clean Version Control**: Produces human-readable diffs unlike JSON-based `.ipynb` files.
 - **Mandatory Structure**: Enforces YAML headers, cell delimiters, narrative markdown, and meaningful chunking.
 - **Anti-Pattern Guards**: Prevents common LLM mistakes like missing headers, monolithic cells, and mixed markdown styles.
+- **Code-style inside the cells**: the complete example follows `code-style` — modules imported, constants in a configuration cell, the figure closed once saved.
 
 ### Plot Style (`skills/plot-style`)
 Enforces a single publication matplotlib aesthetic on every figure, derived from
@@ -268,7 +269,9 @@ the figure code in real AASTeX (AJ/ApJ) manuscripts. Key features:
   legends — set once, never patched per-axis.
 - **Idiom library** (`assets/plotstyle.py`): stacked histograms, shared
   colorbars, one-to-one comparisons, and equal-count running-median bands, each
-  as a helper plus a copy-paste template in `references/recipes.md`.
+  as a helper plus a copy-paste template in `references/recipes.md`. The
+  helper follows `code-style` (typed, Google docstrings) and is imported as a
+  module: `import plotstyle`, then `plotstyle.use_style()`.
 - **Matplotlib's own palettes** unless the user names one: the default cycle
   for series, `viridis` for continuous data, pinned by the style sheet; a
   stated palette is installed once in the preamble and series still address

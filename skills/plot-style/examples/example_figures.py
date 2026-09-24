@@ -21,29 +21,30 @@
 # structure. Run it as `python example_figures.py`, or open it cell-by-cell.
 
 # %% Imports
+import pathlib
 import sys
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image  # ships with matplotlib; used only to measure the output
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "assets"))
-
-from plotstyle import (  # noqa: E402
-    BIG_SIZE,
-    COLUMN_WIDTH,
-    TEXT_WIDTH,
-    figsize,
-    grid_figsize,
-    one_to_one,
-    running_median,
-    save,
-    side_colorbar,
-    stacked_hist,
-    use_style,
-    verify_style,
+# This example takes the helper from the skill's assets/ directory. A real
+# script has plotstyle.py beside it, so the import needs no path change.
+sys.path.insert(
+    0, str(pathlib.Path(__file__).resolve().parent.parent / "assets")
 )
+
+import plotstyle
+
+# %% [markdown]
+# ## Configuration
+#
+# Where the figures go, and the seed that makes the synthetic data
+# reproducible.
+
+# %% Configuration
+OUT = pathlib.Path(__file__).resolve().parent / "figs"
+SEED = 42
 
 # %% [markdown]
 # ## Apply the style
@@ -57,13 +58,15 @@ from plotstyle import (  # noqa: E402
 # letting matplotlib substitute DejaVu Sans in silence.
 
 # %% Set and verify the style
-use_style()
-style = verify_style()
+plotstyle.use_style()
+style = plotstyle.verify_style()
 print("serif font in use:", style["font"])
-print("palette:", "matplotlib default" if style["default_palette"] else style["palette"], "/", style["cmap"])
-
-OUT = Path(__file__).resolve().parent / "figs"
-rng = np.random.default_rng(42)
+print(
+    "palette:",
+    "matplotlib default" if style["default_palette"] else style["palette"],
+    "/",
+    style["cmap"],
+)
 
 # %% [markdown]
 # ## Synthetic catalogue
@@ -71,21 +74,24 @@ rng = np.random.default_rng(42)
 # Two "fields" with different depths, standing in for the real catalogue.
 
 # %% Generate data
+rng = np.random.default_rng(SEED)
 fields = ["XMMLSS", "COSMOS"]
 labels = [f"DESI-{name}" for name in fields]
 
-cat = {}
-for name, (n, ra0, dec0, mag0) in zip(
+catalogue = {}
+for name, (n_targets, ra_center, dec_center, mag_mean) in zip(
     fields, [(4000, 35.0, -4.8, 22.9), (3000, 150.1, 2.2, 23.2)]
 ):
-    mag = rng.normal(mag0, 0.45, n)
-    cat[name] = {
-        "ra": ra0 + rng.uniform(-1.6, 1.6, n),
-        "dec": dec0 + rng.uniform(-1.6, 1.6, n),
+    mag = rng.normal(mag_mean, 0.45, n_targets)
+    catalogue[name] = {
+        "ra": ra_center + rng.uniform(-1.6, 1.6, n_targets),
+        "dec": dec_center + rng.uniform(-1.6, 1.6, n_targets),
         "mag_i": mag,
         # Seconds. Fainter targets are given exponentially longer exposures.
         "exptime": np.clip(
-            10 ** (0.5 * (mag - 21)) * 400 * rng.lognormal(0, 0.3, n), 900, 31200
+            10 ** (0.5 * (mag - 21)) * 400 * rng.lognormal(0, 0.3, n_targets),
+            900,
+            31200,
         ),
     }
 
@@ -98,27 +104,29 @@ for name, (n, ra0, dec0, mag0) in zip(
 # given the same explicit `vmin`/`vmax` so that shared scale is honest.
 
 # %% Sky distribution
-fig, ax = plt.subplots(1, 2, figsize=(TEXT_WIDTH, 0.4 * TEXT_WIDTH))
+fig, ax = plt.subplots(
+    1, 2, figsize=(plotstyle.TEXT_WIDTH, 0.4 * plotstyle.TEXT_WIDTH)
+)
 
 for i, name in enumerate(fields):
-    d = cat[name]
-    s = ax[i].scatter(
-        d["ra"],
-        d["dec"],
+    field = catalogue[name]
+    points = ax[i].scatter(
+        field["ra"],
+        field["dec"],
         marker=".",
         s=4,
-        c=d["exptime"] / 60,
+        c=field["exptime"] / 60,
         vmin=15,
         vmax=350,
         cmap="viridis",
         rasterized=True,
     )
-    ax[i].set_title(f"DESI-{name}", fontsize=BIG_SIZE)
+    ax[i].set_title(f"DESI-{name}", fontsize=plotstyle.BIG_SIZE)
     ax[i].set_xlabel("R.A. [deg]")
     ax[i].set_ylabel("DEC. [deg]")
 
-side_colorbar(fig, s, "Exposure Time [min]")
-save(fig, OUT / "points_on_sky")
+plotstyle.side_colorbar(fig, points, "Exposure Time [min]")
+plotstyle.save(fig, OUT / "points_on_sky")
 plt.close(fig)
 
 # %% [markdown]
@@ -131,19 +139,28 @@ plt.close(fig)
 # aspect 0.7 across the text width come to `0.35 * TEXT_WIDTH`.
 
 # %% Magnitude distributions
-fig, ax = plt.subplots(1, 2, figsize=grid_figsize(1, 2, "text", panel_aspect=0.7))
+fig, ax = plt.subplots(
+    1, 2, figsize=plotstyle.grid_figsize(1, 2, "text", panel_aspect=0.7)
+)
 
-stacked_hist(ax[0], [cat[f]["mag_i"] for f in fields], labels=labels, bins=30)
+plotstyle.stacked_hist(
+    ax[0], [catalogue[name]["mag_i"] for name in fields], labels=labels, bins=30
+)
 ax[0].set_xlabel(r"$i$-magnitude")
 ax[0].set_ylabel("Counts")
 ax[0].legend()
 
-stacked_hist(ax[1], [cat[f]["exptime"] / 60 for f in fields], labels=labels, bins=20)
+plotstyle.stacked_hist(
+    ax[1],
+    [catalogue[name]["exptime"] / 60 for name in fields],
+    labels=labels,
+    bins=20,
+)
 ax[1].set_xlabel("Exposure Time [min]")
 ax[1].set_ylabel("Counts")
 ax[1].legend()
 
-save(fig, OUT / "distributions")
+plotstyle.save(fig, OUT / "distributions")
 plt.close(fig)
 
 # %% [markdown]
@@ -154,17 +171,19 @@ plt.close(fig)
 # shape — the eye reads departures from the diagonal directly.
 
 # %% Measurement comparison
-fig, ax = plt.subplots(1, 1, figsize=(COLUMN_WIDTH, COLUMN_WIDTH))
+fig, ax = plt.subplots(
+    1, 1, figsize=(plotstyle.COLUMN_WIDTH, plotstyle.COLUMN_WIDTH)
+)
 
-truth = np.concatenate([cat[f]["mag_i"] for f in fields])
+truth = np.concatenate([catalogue[name]["mag_i"] for name in fields])
 measured = truth + rng.normal(0.02, 0.12, truth.size)
 
 ax.scatter(truth, measured, marker=".", s=0.5, rasterized=True)
-one_to_one(ax, 21.5, 25.0)
+plotstyle.one_to_one(ax, 21.5, 25.0)
 ax.set_xlabel("HSC $i$ fiber mag")
 ax.set_ylabel("LS $i$ fiber mag")
 
-save(fig, OUT / "one_to_one")
+plotstyle.save(fig, OUT / "one_to_one")
 plt.close(fig)
 
 # %% [markdown]
@@ -176,18 +195,18 @@ plt.close(fig)
 # single-column "tall" (4:3) panel leaves room for the band.
 
 # %% Residual trend
-fig, ax = plt.subplots(1, 1, figsize=figsize("column", "tall"))
+fig, ax = plt.subplots(1, 1, figsize=plotstyle.figsize("column", "tall"))
 
 offset = measured - truth
 
 ax.scatter(truth, offset, marker=".", s=0.5, rasterized=True)
-running_median(ax, truth, offset, nbins=10)
+plotstyle.running_median(ax, truth, offset, nbins=10)
 ax.axhline(0, c="k", ls="--")
 ax.set_xlim(21.5, 25.0)
 ax.set_xlabel("HSC $i$ fiber mag")
 ax.set_ylabel("LS $-$ HSC [mag]")
 
-save(fig, OUT / "residual_trend")
+plotstyle.save(fig, OUT / "residual_trend")
 plt.close(fig)
 
 # %% [markdown]
@@ -203,19 +222,23 @@ plt.close(fig)
 
 # %% Report
 nominal = {
-    "points_on_sky": TEXT_WIDTH,
-    "distributions": TEXT_WIDTH,
-    "one_to_one": COLUMN_WIDTH,
-    "residual_trend": COLUMN_WIDTH,
+    "points_on_sky": plotstyle.TEXT_WIDTH,
+    "distributions": plotstyle.TEXT_WIDTH,
+    "one_to_one": plotstyle.COLUMN_WIDTH,
+    "residual_trend": plotstyle.COLUMN_WIDTH,
 }
-print(f"\n{'figure':18s} {'kB':>7s} {'px':>11s} {'saved in':>9s} {'nominal':>8s} {'scale':>6s}")
+print(
+    f"\n{'figure':18s} {'kB':>7s} {'px':>11s} {'saved in':>9s}"
+    f" {'nominal':>8s} {'scale':>6s}"
+)
 for path in sorted(OUT.glob("*.png")):
-    with Image.open(path) as im:
-        w_px, h_px = im.size
-        dpi = im.info.get("dpi", (300, 300))[0]
-    saved_in = w_px / dpi
-    nom = nominal.get(path.stem, float("nan"))
+    with Image.open(path) as image:
+        width_px, height_px = image.size
+        dpi = image.info.get("dpi", (300, 300))[0]
+    saved_in = width_px / dpi
+    nominal_in = nominal.get(path.stem, float("nan"))
     print(
-        f"{path.stem:18s} {path.stat().st_size / 1024:7.1f} {w_px:5d}x{h_px:<5d} "
-        f"{saved_in:8.2f}\" {nom:7.2f}\" {nom / saved_in:6.3f}"
+        f"{path.stem:18s} {path.stat().st_size / 1024:7.1f}"
+        f" {width_px:5d}x{height_px:<5d} "
+        f'{saved_in:8.2f}" {nominal_in:7.2f}" {nominal_in / saved_in:6.3f}'
     )

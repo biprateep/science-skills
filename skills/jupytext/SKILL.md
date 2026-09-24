@@ -11,7 +11,7 @@ description: >-
   jupytext, percent format, interactive script, run cell by cell.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Jupytext Percent Format for Python Scripts
@@ -152,12 +152,12 @@ optional but **strongly encouraged** for navigation:
 
 ```python
 # %% Imports
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 # %% Generate data
-x = np.linspace(0, 2 * np.pi, 200)
-y = np.sin(x)
+angle_rad = np.linspace(0, 2 * np.pi, 200)
+sine = np.sin(angle_rad)
 ```
 
 ### 5. Cell Metadata
@@ -284,8 +284,11 @@ jupytext --to ipynb script.py    # writes script.ipynb; must succeed
 
 ## Complete Example
 
-A minimal but complete, correctly formatted file. A copy also lives in
-`examples/minimal_example.py`, which you can open or run as a reference.
+A minimal but complete, correctly formatted file. A shorter one lives in
+`examples/minimal_example.py`, which you can open or run as a reference. The
+code inside the cells follows the code-style skill: modules imported, never
+their members; every constant in the configuration cell, in capitals;
+descriptive names; the figure closed once it is saved.
 
 ```python
 # ---
@@ -310,9 +313,23 @@ A minimal but complete, correctly formatted file. A copy also lives in
 # Written in the Jupytext percent format for interactive notebook compatibility.
 
 # %% Imports
-import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt
+import numpy as np
+from scipy import signal
+
+# %% [markdown]
+# ## Configuration
+#
+# Every constant is set once, here, and named in capitals: the sampling rate,
+# the signal and its noise, and the filter.
+
+# %% Configuration
+SEED = 42
+SAMPLING_FREQUENCY_HZ = 500
+SIGNAL_FREQUENCY_HZ = 5
+NOISE_SIGMA = 0.5
+CUTOFF_HZ = 10
+FILTER_ORDER = 4
 
 # %% [markdown]
 # ## 1. Generate Synthetic Data
@@ -321,11 +338,10 @@ from scipy.signal import butter, filtfilt
 # The seed makes the run reproducible.
 
 # %% Generate noisy signal
-rng = np.random.default_rng(42)
-fs = 500  # Sampling frequency (Hz)
-t = np.linspace(0, 1, fs, endpoint=False)
-signal_clean = np.sin(2 * np.pi * 5 * t)
-signal_noisy = signal_clean + rng.normal(0, 0.5, len(t))
+rng = np.random.default_rng(SEED)
+time_s = np.linspace(0, 1, SAMPLING_FREQUENCY_HZ, endpoint=False)
+signal_clean = np.sin(2 * np.pi * SIGNAL_FREQUENCY_HZ * time_s)
+signal_noisy = signal_clean + rng.normal(0, NOISE_SIGMA, len(time_s))
 
 # %% [markdown]
 # ## 2. Apply Butterworth Low-Pass Filter
@@ -334,10 +350,10 @@ signal_noisy = signal_clean + rng.normal(0, 0.5, len(t))
 # noise while preserving the 5 Hz signal.
 
 # %% Filter the signal
-cutoff = 10  # Hz
-order = 4
-b, a = butter(order, cutoff / (fs / 2), btype='low')
-signal_filtered = filtfilt(b, a, signal_noisy)
+numerator, denominator = signal.butter(
+    FILTER_ORDER, CUTOFF_HZ / (SAMPLING_FREQUENCY_HZ / 2), btype="low"
+)
+signal_filtered = signal.filtfilt(numerator, denominator, signal_noisy)
 
 # %% [markdown]
 # ## 3. Visualize Results
@@ -346,17 +362,26 @@ signal_filtered = filtfilt(b, a, signal_noisy)
 
 # %% Plot comparison
 fig, ax = plt.subplots(figsize=(10, 5))
-ax.plot(t, signal_noisy, alpha=0.4, label='Noisy signal', color='gray')
-ax.plot(t, signal_clean, linewidth=2, label='True signal', color='tab:blue')
-ax.plot(t, signal_filtered, linewidth=2, label='Filtered', color='tab:red',
-        linestyle='--')
-ax.set_xlabel('Time (s)')
-ax.set_ylabel('Amplitude')
-ax.set_title('Low-Pass Butterworth Filter: Noise Removal')
+ax.plot(time_s, signal_noisy, alpha=0.4, label="Noisy signal", color="gray")
+ax.plot(
+    time_s, signal_clean, linewidth=2, label="True signal", color="tab:blue"
+)
+ax.plot(
+    time_s,
+    signal_filtered,
+    linewidth=2,
+    label="Filtered",
+    color="tab:red",
+    linestyle="--",
+)
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Amplitude")
+ax.set_title("Low-Pass Butterworth Filter: Noise Removal")
 ax.legend()
 plt.tight_layout()
-plt.savefig('filter_comparison.png', dpi=150)
+plt.savefig("filter_comparison.png", dpi=150)
 plt.show()
+plt.close(fig)
 ```
 
 ---

@@ -14,7 +14,7 @@ description: >-
   figure, publication quality, or journal column width.
 license: MIT
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # Publication Plot Style
@@ -63,19 +63,25 @@ axis-by-axis after the fact.
 </HARD-RULE>
 
 Preferred — copy `assets/plotstyle.py` and `assets/paper.mplstyle` next to
-the analysis script (they are self-contained, numpy + matplotlib only):
+the analysis script (they are self-contained, numpy + matplotlib only), and
+import the module, never its names (the code-style skill's rule):
 
 ```python
-from plotstyle import use_style, verify_style, figsize, COLUMN_WIDTH, TEXT_WIDTH, BIG_SIZE
+import plotstyle
 
-use_style()      # rcParams + AASTeX geometry; use_style(journal="...") for another class
-verify_style()   # raises if the serif face did not resolve or an rcParam was overridden
+# rcParams + AASTeX geometry; use_style(journal="...") for another class.
+plotstyle.use_style()
+# Raises if the serif face did not resolve or an rcParam was overridden.
+plotstyle.verify_style()
 ```
+
+Everything else is then addressed through the module: `plotstyle.figsize()`,
+`plotstyle.COLUMN_WIDTH`, `plotstyle.BIG_SIZE`, `plotstyle.save()`.
 
 When a helper module is unwanted, inline the equivalent — this exact block:
 
 ```python
-# figure defaults for AASTEX AJ
+# Figure defaults for AASTeX (AJ).
 COLUMN_WIDTH = 242.26653 / 72.27  # in inches
 TEXT_WIDTH = 513.11743 / 72.27
 SMALL_SIZE = 9  # in pts
@@ -83,7 +89,7 @@ NORMAL_SIZE = 10
 BIG_SIZE = 12
 FONT_FAMILY = "Nimbus Roman No9 L"
 
-params = {
+RC_PARAMS = {
     "font.family": FONT_FAMILY,
     "font.size": NORMAL_SIZE,
     "axes.titlesize": NORMAL_SIZE,
@@ -99,7 +105,7 @@ params = {
     "figure.dpi": 300,
     "mathtext.fontset": "cm",
 }
-plt.rcParams.update(params)
+plt.rcParams.update(RC_PARAMS)
 ```
 
 The inline block does **not** set `legend.frameon`, `savefig.bbox`,
@@ -148,11 +154,11 @@ another class, measure it and register it — never guess a width, a wrong
 one silently rescales every figure in the paper:
 
 ```python
-from plotstyle import register_journal, use_style, figsize
+import plotstyle
 
-register_journal("mnras", column_pt=<measured>, text_pt=<measured>)
-use_style(journal="mnras")
-fig, ax = plt.subplots(figsize=figsize("column"))   # now MNRAS widths
+plotstyle.register_journal("mnras", column_pt=<measured>, text_pt=<measured>)
+plotstyle.use_style(journal="mnras")
+fig, ax = plt.subplots(figsize=plotstyle.figsize("column"))  # now MNRAS widths
 ```
 
 `figsize()` and `grid_figsize()` follow the journal passed to `use_style()`;
@@ -228,9 +234,12 @@ quietly change them. When the user *does* state a palette, install it once
 in the preamble and nowhere else:
 
 ```python
-use_style(palette="Dark2")                  # property cycle from a qualitative map
-use_style(cmap="cividis")                   # default colormap for c=, imshow, pcolormesh
-set_palette(["#0072B2", "#E69F00", "#009E73"])   # or an explicit list, after use_style()
+# A property cycle from a qualitative map:
+plotstyle.use_style(palette="Dark2")
+# The default colormap for c=, imshow, pcolormesh:
+plotstyle.use_style(cmap="cividis")
+# Or an explicit list, after use_style():
+plotstyle.set_palette(["#0072B2", "#E69F00", "#009E73"])
 ```
 
 Series keep addressing the cycle by `C`-index either way, so changing the
@@ -270,9 +279,15 @@ directory beside the script. Every figure, every time.
 </HARD-RULE>
 
 ```python
-save(fig, "./figs/points_on_sky")                                      # helper: adds .png
-plt.savefig("./figs/points_on_sky.png", bbox_inches="tight", dpi=300)  # written out
+plotstyle.save(fig, "./figs/points_on_sky")  # helper: adds .png
+# or, written out:
+fig.savefig("./figs/points_on_sky.png", bbox_inches="tight", dpi=300)
+
+plt.close(fig)  # either way, once the figure is saved
 ```
+
+Close each figure once it is saved (code-style §3.11): a script that makes
+many figures otherwise keeps every one of them open.
 
 300 dpi at column width is roughly 1000 px across, at text width roughly
 2100 px — print resolution, and small enough that a paper's worth of
@@ -339,7 +354,7 @@ Stop and fix if you catch any of these:
 - **Saving PDF/SVG by default** — the house output is a tight 300 dpi PNG;
   vector only on request.
 - **`savefig` without `bbox_inches="tight", dpi=300`** when the inline
-  params block is in use — the block sets neither.
+  rcParams block is in use — the block sets neither.
 - **`plt.tight_layout()` as a substitute for `bbox_inches="tight"`** — a
   figure-level colorbar added with `fig.add_axes` is not a layout-managed
   axes, so matplotlib warns (*"includes Axes that are not compatible with
@@ -358,7 +373,7 @@ Stop and fix if you catch any of these:
 
 ## Self-Check Before Finishing
 
-- [ ] Style applied via `use_style()` or the inline `params` block, before any figure.
+- [ ] Style applied via `plotstyle.use_style()` or the inline `RC_PARAMS` block, before any figure.
 - [ ] `verify_style()` passed (or `findfont` confirmed a Nimbus / Times face).
 - [ ] Every `figsize` derives from `COLUMN_WIDTH` / `TEXT_WIDTH` or `figsize()` / `grid_figsize()`; height is a fraction of width.
 - [ ] No numeric `fontsize`; only `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE` where allowed.
@@ -366,7 +381,7 @@ Stop and fix if you catch any of these:
 - [ ] Data series colored by `C`-index; `k` only for reference lines.
 - [ ] Legends are `frameon=False`.
 - [ ] Axis labels carry units in square brackets; math in raw strings.
-- [ ] Saved as PNG into `figs/` with `bbox_inches="tight", dpi=300`.
+- [ ] Saved as PNG into `figs/` with `bbox_inches="tight", dpi=300`, then closed with `plt.close(fig)`.
 - [ ] `scripts/check_plot_style.py` exits 0 on the script.
 - [ ] Script actually ran and produced the file.
 
@@ -382,6 +397,10 @@ Stop and fix if you catch any of these:
   looks*. Figures produced under that protocol follow these rules.
 - **dataviz** — that skill governs web/interactive charts with their own
   palette system. For matplotlib manuscript figures, this skill wins.
+- **code-style** — decides how the plotting code is written (module imports,
+  names, docstrings, closing saved figures); this skill decides how the
+  figure looks. `import plotstyle`, then `plotstyle.use_style()`, is the form
+  both accept.
 
 ---
 
