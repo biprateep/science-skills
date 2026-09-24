@@ -1,6 +1,12 @@
 # Co-Scientist mini-experiment / verification / visualization environment.
-# Copy into the working directory and pin exact versions per run for reproducibility:
-#   pip install -r requirements.txt && pip freeze > requirements.lock.txt
+# Add it to the working directory's uv project; its uv.lock then pins the exact
+# version of every package for the run (see references/protocols/checkpointing.md,
+# "Reproducibility"):
+#   uv init --bare                                   # only for a new directory
+#   uv add -r <skill-dir>/resources/requirements.txt
+#   uv run python scripts/<name>.py
+# A script that must run on its own declares its dependencies inline (PEP 723):
+#   uv add --script <script>.py sympy mpmath
 numpy
 scipy
 sympy

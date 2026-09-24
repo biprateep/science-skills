@@ -137,8 +137,9 @@ perform process** — and features:
   arXiv/DOI/OpenAlex id, plus an explicit novelty / prior-art verdict.
 - **Adversarial red-team**: an independent reviewer tries to break each result
   before it reaches the report.
-- **Reproducible computation & data analysis**: seeds, recorded environments, and
-  effect sizes — for synthetic data and the user's real datasets.
+- **Reproducible computation & data analysis**: seeds, an environment locked
+  by uv (`uv.lock`), and effect sizes — for synthetic data and the user's real
+  datasets.
 - **Single-writer subagent orchestration**: a resumable run manifest, an
   assumptions/limitations ledger, and LaTeX reporting that compiles to PDF.
 - **MCP Toolbox** (`skills/co-scientist/mcp/`): the enforcement-critical core —
@@ -246,6 +247,9 @@ with a modern toolchain in place of Google's own:
 - **Research code in mind**: shapes and units in docstrings, NumPy
   truthiness, paper notation with a citation, explicit random generators,
   and notebook-specific allowances agreed with `jupytext` and `plot-style`.
+- **Followed across the repository**: the examples of `jupytext` and
+  `plot-style`, plot-style's helper and checker, co-writer's scripts and
+  co-scientist's script template are all written to it.
 
 ### Jupytext (`skills/jupytext`)
 An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:

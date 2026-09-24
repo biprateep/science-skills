@@ -135,7 +135,27 @@ section.
 Anything stochastic or computational must be reproducible:
 
 - Every generated script **sets and logs an explicit RNG seed**.
+- The environment is **recorded by uv**, not described. Before the first script
+  runs, make a working directory of its own a uv project:
+
+  ```
+  uv init --bare                                     # writes pyproject.toml
+  uv add -r <skill-dir>/resources/requirements.txt   # numpy, scipy, sympy, ...
+  ```
+
+  Add anything else a script needs with `uv add <package>`, and run every
+  script through the environment: `uv run python scripts/<name>.py`.
+  `pyproject.toml` and `uv.lock`, which pins every version, ship with the
+  project. Never `pip install` into it, and keep no `requirements.txt` beside
+  the lock.
+- A working directory inside an existing project (a `pyproject.toml` here or
+  above, a conda environment, a virtualenv) uses that project's environment
+  and records versions its own way; add packages to it only with the user's
+  agreement.
+- A script meant to run on its own, outside any project, declares its
+  dependencies inline instead (PEP 723): `uv add --script <file> <packages>`.
 - Each run records its environment (Python version + key library versions) into
-  the relevant checkpoint, and the project ships a `requirements.txt`
-  (see `resources/requirements.txt`).
+  the relevant checkpoint.
 - Record the exact command used to produce each figure/result in the manifest.
+- Scripts follow the code-style skill: modules imported, Google docstrings,
+  randomness from one seeded generator passed to whatever needs it.

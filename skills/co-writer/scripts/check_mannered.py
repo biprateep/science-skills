@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List mannered phrases and Never-list constructions in a file, with their lines.
+"""List mannered phrases and Never-list constructions in a file, by line.
 
 Calibration, never a verdict. Mannered prose substitutes metaphor and flourish
 for direct statement; the fix is the literal phrase or the field's term, never
@@ -19,9 +19,9 @@ since banned. That is the admission rule: a phrase the author's own published
 prose uses is not mannered for him, whatever a style guide says, and an entry
 that turns out to hit his corpus is removed, not the corpus.
 
-    python check_mannered.py FILE [FILE ...]      every hit, with context
-    python check_mannered.py --count FILE ...     one line per file
-    python check_mannered.py --quiet FILE ...     exit 1 if any hit, print nothing
+    python check_mannered.py FILE [FILE ...]    every hit, with context
+    python check_mannered.py --count FILE ...   one line per file
+    python check_mannered.py --quiet FILE ...   exit 1 if any hit, print nothing
 
 Lines beginning ">" (quoted text) and "%" (LaTeX comments) are skipped.
 Ported from the book project's scripts/check_mannered.py with a lexicon for
@@ -30,9 +30,10 @@ papers. Standard library only.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+import pathlib
 import re
 import sys
-from pathlib import Path
 
 # (pattern, the plain phrase to reach for instead)
 MANNERED = [
@@ -83,15 +84,24 @@ MANNERED = [
 
 # The profile's HARD bans. Mechanical; not the author's constructions.
 NEVER = [
-    (r"(?:^|[.!?]\s+)(Notably|Interestingly|Importantly|Crucially),", "remarkably / unsurprisingly / as expected, once -- or nothing"),
+    (
+        r"(?:^|[.!?]\s+)(Notably|Interestingly|Importantly|Crucially),",
+        "remarkably / unsurprisingly / as expected, once -- or nothing",
+    ),
     (r"(?:^|[.!?]\s+)Note that\b", "We note that"),
     (r"\bIt is worth noting\b", "We note that"),
     (r"\bIt should be noted\b", "We note that"),
     (r"(?:^|[.!?]\s+)(Firstly|Secondly|Thirdly),", "We first ... We then ..."),
-    (r"(?:^|[.!?]\s+)(Overall|In summary),", "(delete; the Summary section does this)"),
+    (
+        r"(?:^|[.!?]\s+)(Overall|In summary),",
+        "(delete; the Summary section does this)",
+    ),
     (r"\bIt is not [^.,]{2,60}, it is\b", "state the claim directly"),
     (r"\bIt is not [^.]{2,60}\. It is\b", "state the claim directly"),
-    (r"\brevolutioni[sz]e|\brevolutionary\b", "(claims are about performance on named metrics)"),
+    (
+        r"\brevolutioni[sz]e|\brevolutionary\b",
+        "(claims are about performance on named metrics)",
+    ),
     (r"\bchange how science is done\b", "(delete)"),
 ]
 
@@ -100,52 +110,100 @@ TALLY = [
     ("question", r"\?(?=\s|$)"),
 ]
 
+# One hit: (line number, lexicon, matched phrase, plain phrase, line).
+_Hit = tuple[int, str, str, str, str]
 
-def hits(path: Path):
+
+def hits(path: pathlib.Path) -> tuple[list[_Hit], dict[str, int]]:
+    """Finds every lexicon hit in one file and tallies its dashes and questions.
+
+    Lines that begin with ">" (quoted text) or "%" (LaTeX comments) are
+    skipped.
+
+    Args:
+      path: The file.
+
+    Returns:
+      A tuple (found, tallies): each hit as (line number, "mannered" or
+      "never", the matched phrase, the plain phrase to use instead, the
+      stripped line), and the count of each TALLY pattern. Both are empty
+      when the file cannot be read.
+    """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return [], {}
-    out, tallies = [], {name: 0 for name, _ in TALLY}
+    found: list[_Hit] = []
+    tallies = {name: 0 for name, _ in TALLY}
     for lineno, line in enumerate(text.splitlines(), 1):
-        s = line.lstrip()
-        if s.startswith(">") or s.startswith("%"):
+        stripped = line.lstrip()
+        if stripped.startswith(">") or stripped.startswith("%"):
             continue
         for kind, lexicon in (("mannered", MANNERED), ("never", NEVER)):
-            for pat, plain in lexicon:
-                for m in re.finditer(pat, line, flags=re.IGNORECASE if kind == "mannered" else 0):
-                    out.append((lineno, kind, m.group(0).strip(), plain, line.strip()))
-        for name, pat in TALLY:
-            tallies[name] += len(re.findall(pat, line))
-    return out, tallies
+            flags = re.IGNORECASE if kind == "mannered" else 0
+            for pattern, plain in lexicon:
+                for match in re.finditer(pattern, line, flags=flags):
+                    found.append(
+                        (
+                            lineno,
+                            kind,
+                            match.group(0).strip(),
+                            plain,
+                            line.strip(),
+                        )
+                    )
+        for name, pattern in TALLY:
+            tallies[name] += len(re.findall(pattern, line))
+    return found, tallies
 
 
-def main(argv: list[str]) -> int:
+def main(argv: Sequence[str]) -> int:
+    """Prints the hits of the files named in argv.
+
+    Args:
+      argv: The command-line arguments after the program name.
+
+    Returns:
+      The exit status: under --quiet, 1 if any file has a hit; 2 on bad
+      usage; 0 otherwise.
+    """
     count = "--count" in argv
     quiet = "--quiet" in argv
-    files = [Path(a) for a in argv if not a.startswith("--")]
+    files = [pathlib.Path(a) for a in argv if not a.startswith("--")]
     if not files:
         print(__doc__)
         return 2
     total = 0
-    for f in files:
-        h, t = hits(f)
-        total += len(h)
-        words = max(1, len(re.findall(r"[A-Za-z]+", f.read_text(encoding="utf-8", errors="replace"))))
+    for path in files:
+        found, tallies = hits(path)
+        total += len(found)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        words = max(1, len(re.findall(r"[A-Za-z]+", text)))
         if quiet:
             continue
+        dashes_per_1k = 1000 * tallies["dash"] / words
         if count:
-            print(f"{len(h):4d} hits  dashes/1k={1000*t['dash']/words:5.2f}  questions={t['question']:2d}  {f}")
+            print(
+                f"{len(found):4d} hits  dashes/1k={dashes_per_1k:5.2f}"
+                f"  questions={tallies['question']:2d}  {path}"
+            )
             continue
-        print(f"\n{f}: {len(h)} hit(s); dashes {t['dash']} ({1000*t['dash']/words:.2f}/1k words); sentences ending '?': {t['question']}")
-        for lineno, kind, phrase, plain, line in h:
+        print(
+            f"\n{path}: {len(found)} hit(s); dashes {tallies['dash']}"
+            f" ({dashes_per_1k:.2f}/1k words); sentences ending '?':"
+            f" {tallies['question']}"
+        )
+        for lineno, kind, phrase, plain, line in found:
             snippet = line if len(line) <= 140 else line[:137] + "..."
             print(f"  {lineno:5d}  [{kind}] {phrase!r:34}  ->  {plain}")
             print(f"         {snippet}")
     if quiet:
         return 1 if total else 0
     if not count:
-        print(f"\n{total} hit(s) in {len(files)} file(s). Calibration, not a verdict.")
+        print(
+            f"\n{total} hit(s) in {len(files)} file(s). Calibration, not a"
+            " verdict."
+        )
     return 0
 
 

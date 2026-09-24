@@ -11,8 +11,12 @@ read-only. Copy it to the working directory as `report.tex` and edit **that**:
 
 ```
 cp <skill-dir>/resources/paper_template.tex ./report.tex
-cp <skill-dir>/resources/requirements.txt   ./requirements.txt   # if not present
 ```
+
+The run's environment record ships with the report: `pyproject.toml` and
+`uv.lock`, created before the first script ran. If they are missing (no script
+has run yet), create them now as `checkpointing.md` → Reproducibility says; do
+not copy a `requirements.txt` in beside them.
 
 Because the template sets `\graphicspath{{figures/}}` (relative), compilation
 **must** happen in the working directory, where `figures/` lives — which is

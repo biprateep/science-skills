@@ -42,7 +42,7 @@ scripts follow §§3–5 unchanged, and their output is the evidence string.
 
 ## 1. CAS of Record
 
-- **SymPy** is the CAS of record: free, open source, pip-installable, already in
+- **SymPy** is the CAS of record: free, open source, on PyPI, already in
   `resources/requirements.txt`, and runs on any harness with `<run-shell>` and
   Python. Default to it.
 - **Escalation (optional):** if SymPy times out or cannot simplify a hard
@@ -83,35 +83,104 @@ orchestrator). Requirements:
 Pattern (adapt, don't copy blindly):
 
 ```python
+"""Step-chain check of derivation NNN (<name>).
+
+Each load-bearing step is checked on its own and printed as one STEP line; the
+exit status is 1 if any step fails.
+
+Unverifiable (class U): step 4 (dominated convergence), for Red-Team review.
+"""
+
+from collections.abc import Sequence
 import random
-import sympy as sp
+import sys
 
-SEED = 12345                      # log this in the checkpoint
-random.seed(SEED)
-FAILURES = []
+import sympy
 
-x = sp.symbols("x", real=True)
-k = sp.symbols("k", positive=True)   # class-A assumptions live HERE
+SEED = 12345  # Log this in the checkpoint.
 
-def numeric_ok(lhs, rhs, syms, lo=0.1, hi=3.0, n=20, tol=1e-9):
-    f = sp.lambdify(syms, lhs - rhs, "mpmath")
-    return all(abs(complex(f(*[random.uniform(lo, hi) for _ in syms]))) < tol
-               for _ in range(n))
 
-def check(label, cls, lhs, rhs, syms=()):
-    ok, method = sp.simplify(sp.expand(lhs - rhs)) == 0, "symbolic"
-    if not ok and cls in ("A", "N"):          # documented fallback only
-        ok, method = numeric_ok(lhs, rhs, syms), f"numeric(seed={SEED})"
-    print(f"STEP {label} [{cls}] {'PASS' if ok else 'FAIL'} ({method})")
-    if not ok:
-        FAILURES.append(label)
+def numeric_ok(
+    lhs: sympy.Expr,
+    rhs: sympy.Expr,
+    symbols: Sequence[sympy.Symbol],
+    rng: random.Random,
+    low: float = 0.1,
+    high: float = 3.0,
+    n_samples: int = 20,
+    tolerance: float = 1e-9,
+) -> bool:
+    """Returns whether lhs - rhs vanishes at random points of the domain.
 
-# UNVERIFIABLE (class U): step 4 (dominated convergence) — for Red-Team review.
+    Args:
+      lhs: The expression before the step.
+      rhs: The expression after it.
+      symbols: The free symbols, each drawn uniformly from [low, high].
+      rng: The seeded generator the points are drawn from.
+      low: The lower end of the sampled domain.
+      high: The upper end of the sampled domain.
+      n_samples: How many points to try.
+      tolerance: The largest |lhs - rhs| that counts as zero.
+    """
+    difference = sympy.lambdify(symbols, lhs - rhs, "mpmath")
+    for _ in range(n_samples):
+        point = [rng.uniform(low, high) for _ in symbols]
+        # `not <` rather than `>=`, so that a NaN fails the step.
+        if not abs(complex(difference(*point))) < tolerance:
+            return False
+    return True
 
-# Step 2 -> 3: integration by parts
-check("2->3", "S", sp.integrate(x * sp.exp(-k * x), (x, 0, sp.oo)), 1 / k**2)
 
-raise SystemExit(1 if FAILURES else 0)
+def check(
+    label: str,
+    step_class: str,
+    lhs: sympy.Expr,
+    rhs: sympy.Expr,
+    rng: random.Random,
+    symbols: Sequence[sympy.Symbol] = (),
+) -> bool:
+    """Checks one step, prints its STEP line and returns whether it passed.
+
+    Args:
+      label: The step, e.g. "2->3".
+      step_class: Its class in the checkability taxonomy: "S", "A" or "N".
+      lhs: The expression before the step.
+      rhs: The expression after it.
+      rng: The seeded generator for the numeric fallback.
+      symbols: The free symbols the numeric fallback samples.
+    """
+    passed = sympy.simplify(sympy.expand(lhs - rhs)) == 0
+    method = "symbolic"
+    if not passed and step_class in ("A", "N"):  # Documented fallback only.
+        passed = numeric_ok(lhs, rhs, symbols, rng)
+        method = f"numeric(seed={SEED})"
+    verdict = "PASS" if passed else "FAIL"
+    print(f"STEP {label} [{step_class}] {verdict} ({method})")
+    return passed
+
+
+def main() -> int:
+    """Checks every step; returns the exit status, 1 if any step failed."""
+    rng = random.Random(SEED)
+    # The derivation's own symbols; class-A assumptions live HERE.
+    x = sympy.symbols("x", real=True)
+    k = sympy.symbols("k", positive=True)
+
+    results = [
+        # Step 2 -> 3: integration by parts.
+        check(
+            "2->3",
+            "S",
+            sympy.integrate(x * sympy.exp(-k * x), (x, 0, sympy.oo)),
+            1 / k**2,
+            rng,
+        ),
+    ]
+    return 0 if all(results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
 ## 4. Tactic Ladder (before concluding FAIL)
@@ -123,8 +192,8 @@ needs help. Before recording FAIL on a symbolic step, escalate in order:
 2. Domain-specific simplifiers: `trigsimp`, `powsimp`, `logcombine`
    (`force=True` only when the class-A assumptions justify it).
 3. Declare tighter symbol assumptions (`positive=True`, `integer=True`) or use
-   `sp.posify` — then reclassify the step S → A and ledger the assumption.
-4. `rewrite` to a common form (e.g. `.rewrite(sp.exp)` for trig/hyperbolic).
+   `sympy.posify` — then reclassify the step S → A and ledger the assumption.
+4. `rewrite` to a common form (e.g. `.rewrite(sympy.exp)` for trig/hyperbolic).
 5. `lhs.equals(rhs)` — note this samples numerically internally, so a PASS here
    is **numeric-strength** evidence: report the method as numeric, not symbolic.
 6. Numeric sampling fallback (class N) with logged seed and tolerance.
@@ -143,13 +212,13 @@ where a generic `simplify(lhs - rhs)` stalls or fails.
 ### 5.1 Differentiation & integration
 
 - **Differentiation steps** (derivatives, partials, gradients, chain rule) are
-  almost always class S: recompute with `sp.diff`; multivariable via
-  `sp.Matrix([...]).jacobian([...])` and `sp.hessian`.
+  almost always class S: recompute with `sympy.diff`; multivariable via
+  `sympy.Matrix([...]).jacobian([...])` and `sympy.hessian`.
 - **Antiderivatives:** differentiate the claimed result and compare to the
-  integrand — `sp.diff` is reliable even when `sp.integrate` is not.
-- **Definite integrals:** compare against `sp.integrate` **with the class-A
+  integrand — `sympy.diff` is reliable even when `sympy.integrate` is not.
+- **Definite integrals:** compare against `sympy.integrate` **with the class-A
   assumptions declared on the symbols** — convergence usually depends on them
-  (with `k = sp.symbols("k", positive=True)`,
+  (with `k = sympy.symbols("k", positive=True)`,
   `integrate(x*exp(-k*x), (x, 0, oo))` returns `1/k**2`; without it you get a
   conditional or an unevaluated integral). If `integrate` hangs or returns
   unevaluated, fall back to numeric quadrature at several sampled parameter
@@ -161,7 +230,7 @@ where a generic `simplify(lhs - rhs)` stalls or fails.
   u-substitution): check the integrand identity at **each rewrite**, not just
   the final value. Interchange-of-limit steps (Fubini, dominated convergence,
   term-by-term integration) are class U — flag them for the Red-Team.
-- **ODE solutions:** `sp.checkodesol(ode, sol)` instead of re-deriving.
+- **ODE solutions:** `sympy.checkodesol(ode, sol)` instead of re-deriving.
 
 ### 5.2 Probability & statistics (`sympy.stats`)
 
@@ -179,7 +248,7 @@ Statistical and probabilistic derivations are machine-checkable too — use
   (`characteristic_function(X)(t)`) or MGFs is usually far easier than the
   change-of-variables integral — equal CFs imply equal distributions. For a
   CLT-style argument, also assert the claimed CF limit with
-  `sp.limit` / `sp.series` as its own step in the chain.
+  `sympy.limit` / `sympy.series` as its own step in the chain.
 - **Conditional / Bayes identities:** substitute the explicit densities and
   check algebraically (class S).
 - **Monte Carlo fallback (class N) — the tolerance MUST scale with the
@@ -196,12 +265,12 @@ Statistical and probabilistic derivations are machine-checkable too — use
 ### 5.3 Other structures
 
 - **Algebraic solutions:** substitute back with `.subs(...)` and simplify to 0.
-- **Limiting cases** (from the sanity gate): `sp.limit`, `sp.series` — assert
-  each claimed limit/leading order symbolically.
+- **Limiting cases** (from the sanity gate): `sympy.limit`, `sympy.series` —
+  assert each claimed limit/leading order symbolically.
 - **Dimensional analysis:** `sympy.physics.units` — build both sides with units
   and assert `convert_to(lhs - rhs, base_units)` vanishes, or check the
   dimension system directly.
-- **Finite sums / products:** compare `sp.summation` against the closed form,
+- **Finite sums / products:** compare `sympy.summation` against the closed form,
   plus explicit evaluation at small `n` (n = 1, 2, 3).
 - **Matrix identities:** verify on symbolic matrices of the stated shape; if a
   claim is for general n, verify n = 2, 3, 4 explicitly and mark the general

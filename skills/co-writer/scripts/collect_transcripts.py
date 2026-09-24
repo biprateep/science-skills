@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gather the chat transcripts behind a paper into <repo>/.co-writer/transcripts/.
+"""Gather a paper's chat transcripts into <repo>/.co-writer/transcripts/.
 
     python collect_transcripts.py [--repo DIR] [--copy]
 
@@ -26,24 +26,27 @@ Writes .co-writer/transcripts/index.md. Idempotent. Standard library only.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
+import datetime
 import json
-import os
+import pathlib
 import re
 import shutil
 import sys
-from datetime import datetime
-from pathlib import Path
+from typing import Any
 
-CLAUDE_DIR = Path.home() / ".claude" / "projects"
-AG_BRAIN = Path.home() / ".gemini" / "antigravity" / "brain"
+CLAUDE_DIR = pathlib.Path.home() / ".claude" / "projects"
+ANTIGRAVITY_BRAIN = pathlib.Path.home() / ".gemini" / "antigravity" / "brain"
 OUT = ".co-writer/transcripts"
 
 
-def slug_for(repo: Path) -> str:
+def slug_for(repo: pathlib.Path) -> str:
+    """Returns the name Claude Code gives the project directory of repo."""
     return "-" + str(repo).strip("/").replace("/", "-")
 
 
-def first_text(content) -> str:
+def first_text(content: object) -> str:
+    """Returns the text of a message's content, or its first text block."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -53,31 +56,56 @@ def first_text(content) -> str:
     return ""
 
 
-def index_claude_session(path: Path) -> dict:
-    info = {"id": path.stem, "first": None, "last": None, "branch": None, "user_turns": 0,
-            "first_prompt": "", "cowriter_mentions": 0, "bytes": path.stat().st_size}
-    with path.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
+def index_claude_session(path: pathlib.Path) -> dict[str, Any]:
+    """Summarizes one Claude Code session transcript.
+
+    Args:
+      path: The session's .jsonl file.
+
+    Returns:
+      Its id, first and last timestamps, git branch, number of user turns,
+      first prompt, mentions of "co-writer" and size in bytes.
+    """
+    info: dict[str, Any] = {
+        "id": path.stem,
+        "first": None,
+        "last": None,
+        "branch": None,
+        "user_turns": 0,
+        "first_prompt": "",
+        "cowriter_mentions": 0,
+        "bytes": path.stat().st_size,
+    }
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
             info["cowriter_mentions"] += line.count("co-writer")
             try:
-                d = json.loads(line)
+                record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ts = d.get("timestamp")
-            if ts:
-                info["first"] = info["first"] or ts
-                info["last"] = ts
-            if d.get("type") == "user":
-                info["branch"] = info["branch"] or d.get("gitBranch")
-                text = first_text(d.get("message", {}).get("content"))
-                if text and not text.startswith("<"):  # skip tool results / system-shaped turns
+            timestamp = record.get("timestamp")
+            if timestamp:
+                info["first"] = info["first"] or timestamp
+                info["last"] = timestamp
+            if record.get("type") == "user":
+                info["branch"] = info["branch"] or record.get("gitBranch")
+                text = first_text(record.get("message", {}).get("content"))
+                # Skip tool results and system-shaped turns.
+                if text and not text.startswith("<"):
                     info["user_turns"] += 1
                     if not info["first_prompt"]:
                         info["first_prompt"] = re.sub(r"\s+", " ", text)[:120]
     return info
 
 
-def link_or_copy(src: Path, dst: Path, copy: bool) -> None:
+def link_or_copy(src: pathlib.Path, dst: pathlib.Path, copy: bool) -> None:
+    """Links dst to src, or copies src to dst, replacing what is there.
+
+    Args:
+      src: The file to link to or copy.
+      dst: Where the link or copy goes.
+      copy: Whether to copy; a copy that is not older than src is kept.
+    """
     if dst.exists() or dst.is_symlink():
         if copy and dst.stat().st_mtime >= src.stat().st_mtime:
             return
@@ -88,96 +116,234 @@ def link_or_copy(src: Path, dst: Path, copy: bool) -> None:
         dst.symlink_to(src)
 
 
-def collect_claude(repo: Path, out: Path, copy: bool) -> list[dict]:
+def collect_claude(
+    repo: pathlib.Path, out: pathlib.Path, copy: bool
+) -> list[dict[str, Any]]:
+    """Links or copies the repo's Claude Code sessions into out/claude.
+
+    Args:
+      repo: The paper's repository.
+      out: The transcripts directory.
+      copy: Whether to copy the sessions instead of linking them.
+
+    Returns:
+      One index_claude_session() row per session, oldest first, each marked
+      with whether it came from a worktree or subdirectory.
+    """
     slug = slug_for(repo)
-    dirs = [d for d in CLAUDE_DIR.glob(slug + "*") if d.is_dir()] if CLAUDE_DIR.exists() else []
+    folders = []
+    if CLAUDE_DIR.exists():
+        folders = [
+            folder for folder in CLAUDE_DIR.glob(f"{slug}*") if folder.is_dir()
+        ]
     dest = out / "claude"
     dest.mkdir(parents=True, exist_ok=True)
     rows = []
-    for d in sorted(dirs):
-        for f in sorted(d.glob("*.jsonl")):
-            link_or_copy(f, dest / f.name, copy)
-            info = index_claude_session(f)
-            info["worktree"] = d.name != slug
+    for folder in sorted(folders):
+        for session in sorted(folder.glob("*.jsonl")):
+            link_or_copy(session, dest / session.name, copy)
+            info = index_claude_session(session)
+            info["worktree"] = folder.name != slug
             rows.append(info)
-    rows.sort(key=lambda r: r["first"] or "")
+    rows.sort(key=lambda row: row["first"] or "")
     return rows
 
 
-def collect_antigravity(repo: Path, out: Path, copy: bool) -> list[dict]:
-    if not AG_BRAIN.exists():
+def collect_antigravity(
+    repo: pathlib.Path, out: pathlib.Path, copy: bool
+) -> list[dict[str, str]]:
+    """Links or copies the Antigravity artefacts that mention the repo.
+
+    Args:
+      repo: The paper's repository.
+      out: The transcripts directory; conversations go to out/antigravity.
+      copy: Whether to copy the conversations instead of linking them.
+
+    Returns:
+      One row per conversation, oldest first: its id, when its artefacts
+      last changed, their names, and the first line of its task.md.
+    """
+    if not ANTIGRAVITY_BRAIN.exists():
         return []
     needle = str(repo)
     dest = out / "antigravity"
     dest.mkdir(parents=True, exist_ok=True)
     rows = []
-    for conv in sorted(AG_BRAIN.iterdir()):
-        if not conv.is_dir():
+    for conversation in sorted(ANTIGRAVITY_BRAIN.iterdir()):
+        if not conversation.is_dir():
             continue
-        mds = [p for p in conv.glob("*.md")]
-        hit = [p for p in mds if needle in p.read_text(encoding="utf-8", errors="replace")]
-        if not hit:
+        markdown_files = list(conversation.glob("*.md"))
+        mentioning = [
+            path
+            for path in markdown_files
+            if needle in path.read_text(encoding="utf-8", errors="replace")
+        ]
+        if not mentioning:
             continue
-        target = dest / conv.name
-        if copy:
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(conv, target, ignore=shutil.ignore_patterns("*.resolved*", "*.metadata.json"))
-        else:
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            target.symlink_to(conv)
-        task = conv / "task.md"
-        first_line = ""
-        if task.exists():
-            for line in task.read_text(encoding="utf-8", errors="replace").splitlines():
-                if line.strip():
-                    first_line = line.strip()[:120]
-                    break
-        mtime = datetime.fromtimestamp(max(p.stat().st_mtime for p in mds)).isoformat(timespec="minutes")
-        rows.append({"id": conv.name, "modified": mtime, "artefacts": ", ".join(sorted(p.name for p in mds)),
-                     "task": first_line})
-    rows.sort(key=lambda r: r["modified"])
+        _place_conversation(conversation, dest / conversation.name, copy)
+        newest = max(path.stat().st_mtime for path in markdown_files)
+        modified = datetime.datetime.fromtimestamp(newest)
+        rows.append(
+            {
+                "id": conversation.name,
+                "modified": modified.isoformat(timespec="minutes"),
+                "artefacts": ", ".join(
+                    sorted(path.name for path in markdown_files)
+                ),
+                "task": _first_task_line(conversation / "task.md"),
+            }
+        )
+    rows.sort(key=lambda row: row["modified"])
     return rows
 
 
-def write_index(out: Path, repo: Path, claude_rows: list[dict], ag_rows: list[dict]) -> None:
-    lines = [f"# Transcripts for {repo}", "",
-             f"Collected {datetime.now().isoformat(timespec='minutes')} by scripts/collect_transcripts.py.", ""]
-    lines += ["## Claude Code", "",
-              "| session | first | last | branch | user turns | co-writer mentions | first prompt |",
-              "|---|---|---|---|---|---|---|"]
-    for r in claude_rows:
-        wt = " (subdir or worktree)" if r.get("worktree") else ""
-        lines.append(f"| `{r['id']}`{wt} | {(r['first'] or '')[:16]} | {(r['last'] or '')[:16]} | {r['branch'] or ''} | "
-                     f"{r['user_turns']} | {r['cowriter_mentions']} | {r['first_prompt'].replace('|', '/')} |")
-    if not claude_rows:
-        lines.append("| — | | | | | | no sessions found under ~/.claude/projects for this path |")
-    lines += ["", "## Antigravity (brain artefacts mentioning this repo)", "",
-              "| conversation | modified | artefacts | task |", "|---|---|---|---|"]
-    for r in ag_rows:
-        lines.append(f"| `{r['id']}` | {r['modified']} | {r['artefacts']} | {r['task'].replace('|', '/')} |")
-    if not ag_rows:
-        lines.append("| — | | | none found; Antigravity sessions are recorded by the session note in .co-writer/log/ |")
-    lines += ["", "Full Antigravity conversations are binary under ~/.gemini/antigravity/conversations/ and are not parsed.", ""]
+def _place_conversation(
+    conversation: pathlib.Path, target: pathlib.Path, copy: bool
+) -> None:
+    """Links target to a conversation folder, or copies its artefacts there."""
+    if copy:
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(
+            conversation,
+            target,
+            ignore=shutil.ignore_patterns("*.resolved*", "*.metadata.json"),
+        )
+    else:
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(conversation)
+
+
+def _first_task_line(task: pathlib.Path) -> str:
+    """Returns the first non-blank line of task.md, or "" if there is none."""
+    if task.exists():
+        text = task.read_text(encoding="utf-8", errors="replace")
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()[:120]
+    return ""
+
+
+def _claude_row(row: dict[str, Any]) -> str:
+    """Formats one Claude Code session as a table row of the index."""
+    worktree = " (subdir or worktree)" if row.get("worktree") else ""
+    first = (row["first"] or "")[:16]
+    last = (row["last"] or "")[:16]
+    prompt = row["first_prompt"].replace("|", "/")
+    return (
+        f"| `{row['id']}`{worktree} | {first} | {last} | {row['branch'] or ''}"
+        f" | {row['user_turns']} | {row['cowriter_mentions']} | {prompt} |"
+    )
+
+
+def write_index(
+    out: pathlib.Path,
+    repo: pathlib.Path,
+    claude_rows: Sequence[dict[str, Any]],
+    antigravity_rows: Sequence[dict[str, str]],
+) -> None:
+    """Writes out/index.md, the table of every session found.
+
+    Args:
+      out: The transcripts directory.
+      repo: The paper's repository.
+      claude_rows: The rows collect_claude() returned.
+      antigravity_rows: The rows collect_antigravity() returned.
+    """
+    collected = datetime.datetime.now().isoformat(timespec="minutes")
+    lines = [
+        f"# Transcripts for {repo}",
+        "",
+        f"Collected {collected} by scripts/collect_transcripts.py.",
+        "",
+    ]
+    lines += _claude_section(claude_rows)
+    lines += _antigravity_section(antigravity_rows)
+    lines += [
+        "",
+        "Full Antigravity conversations are binary under"
+        " ~/.gemini/antigravity/conversations/ and are not parsed.",
+        "",
+    ]
     (out / "index.md").write_text("\n".join(lines), encoding="utf-8")
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--repo", help="repo root (default: cwd)")
-    ap.add_argument("--copy", action="store_true", help="copy files instead of symlinking")
-    args = ap.parse_args(argv)
+def _claude_section(rows: Sequence[dict[str, Any]]) -> list[str]:
+    """Returns the lines of the index's Claude Code table."""
+    lines = [
+        "## Claude Code",
+        "",
+        "| session | first | last | branch | user turns | co-writer mentions"
+        " | first prompt |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    lines += [_claude_row(row) for row in rows]
+    if not rows:
+        lines.append(
+            "| — | | | | | | no sessions found under ~/.claude/projects for"
+            " this path |"
+        )
+    return lines
 
-    repo = Path(args.repo).expanduser().resolve() if args.repo else Path.cwd().resolve()
+
+def _antigravity_section(rows: Sequence[dict[str, str]]) -> list[str]:
+    """Returns the lines of the index's Antigravity table."""
+    lines = [
+        "",
+        "## Antigravity (brain artefacts mentioning this repo)",
+        "",
+        "| conversation | modified | artefacts | task |",
+        "|---|---|---|---|",
+    ]
+    for row in rows:
+        task = row["task"].replace("|", "/")
+        lines.append(
+            f"| `{row['id']}` | {row['modified']} | {row['artefacts']}"
+            f" | {task} |"
+        )
+    if not rows:
+        lines.append(
+            "| — | | | none found; Antigravity sessions are recorded by the"
+            " session note in .co-writer/log/ |"
+        )
+    return lines
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Collects and indexes the transcripts of a paper repository.
+
+    Args:
+      argv: The arguments after the program name; None reads sys.argv.
+
+    Returns:
+      The exit status, 0.
+    """
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--repo", help="repo root (default: cwd)")
+    parser.add_argument(
+        "--copy", action="store_true", help="copy files instead of symlinking"
+    )
+    args = parser.parse_args(argv)
+
+    if args.repo:
+        repo = pathlib.Path(args.repo).expanduser().resolve()
+    else:
+        repo = pathlib.Path.cwd().resolve()
     out = repo / OUT
     out.mkdir(parents=True, exist_ok=True)
 
     claude_rows = collect_claude(repo, out, args.copy)
-    ag_rows = collect_antigravity(repo, out, args.copy)
-    write_index(out, repo, claude_rows, ag_rows)
+    antigravity_rows = collect_antigravity(repo, out, args.copy)
+    write_index(out, repo, claude_rows, antigravity_rows)
 
-    print(f"claude sessions: {len(claude_rows)}   antigravity conversations: {len(ag_rows)}")
+    print(
+        f"claude sessions: {len(claude_rows)}   antigravity conversations:"
+        f" {len(antigravity_rows)}"
+    )
     print(f"index: {out / 'index.md'}")
     return 0
 

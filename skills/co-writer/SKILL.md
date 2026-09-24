@@ -17,7 +17,7 @@ description: >-
   emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice

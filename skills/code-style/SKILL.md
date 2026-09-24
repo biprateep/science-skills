@@ -16,7 +16,7 @@ description: >-
   (plot-style) or notebook cell layout (jupytext).
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # Code Style: Google Python, with ruff and uv
@@ -407,18 +407,18 @@ What a model writing "idiomatic Python" reaches for, and this skill forbids:
 
 - **jupytext** decides the shape of a notebook file: header, cells,
   narrative. This skill decides the code inside the cells, with the
-  notebook allowances above. Where jupytext's examples import members
-  (`from scipy.signal import butter`), this skill wins.
+  notebook allowances above; jupytext's own examples follow both. Where a
+  notebook's code and this skill disagree, this skill wins.
 - **plot-style** decides how a figure looks; this skill decides how its code
   is written. Import its helper as a module — `import plotstyle`, then
   `plotstyle.use_style()`, `plotstyle.figsize("column")` — which plot-style's
   checker accepts, and close each figure after `plotstyle.save(fig, ...)`.
-- **co-scientist**'s analysis and verification scripts follow this skill.
-  Its `requirements.txt` plus `pip freeze` becomes, in a uv project,
-  `uv add -r requirements.txt` with `uv.lock` as the record of the
-  environment.
-- **co-writer** and **cite-check** write prose, not code; their own scripts
-  follow this skill when they are edited.
+- **co-scientist**'s analysis and verification scripts follow this skill,
+  and its working directory is a uv project: its `requirements.txt` goes in
+  with `uv add -r`, and `uv.lock` is the record of the environment.
+- **co-writer** and **cite-check** write prose, not code. co-writer's
+  scripts follow this skill; cite-check's toolbox does when it is next
+  edited.
 
 ---
 
