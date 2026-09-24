@@ -1,6 +1,6 @@
 # Science Skills
 
-This repository contains a collection of AI agent skills tailored for scientific research: brainstorming, mathematical derivation, prototyping, publication figures, citation integrity and paper writing.
+This repository contains a collection of AI agent skills tailored for scientific research: brainstorming, mathematical derivation, prototyping, code style, publication figures, citation integrity and paper writing.
 
 ## Note on Customization
 
@@ -15,9 +15,10 @@ Every skill here is **harness-agnostic**: a single `SKILL.md` runs on
 an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness Adapter* — a
 capability map at the top of the skill that the agent resolves to its own
 tools at runtime, with a CLI fallback that runs the same code. The others
-(`co-writer`, `jupytext`, `plot-style`) need only file access and a shell with
-Python 3. The methodologies are conceptual and adapt to further frameworks by
-adding a column to a map.
+(`code-style`, `co-writer`, `jupytext`, `plot-style`) need only file access and
+a shell with Python 3 (`code-style` runs its checks through
+[uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
+to further frameworks by adding a column to a map.
 
 ## Installation
 
@@ -86,8 +87,8 @@ claude mcp list | grep -E 'co-scientist|cite-check'   # ✔ Connected
 ```
 
 In a fresh Claude Code session, `/co-scientist`, `/cite-check`, `/co-writer`,
-`/jupytext` and `/plot-style` should appear; in Antigravity the skills show up in the
-skills menu.
+`/code-style`, `/jupytext` and `/plot-style` should appear; in Antigravity the
+skills show up in the skills menu.
 
 cite-check uses NASA ADS when a token was entered at install time (astronomy
 search and ADS BibTeX exports); `bash skills/cite-check/mcp/setup_mcp.sh --keys`
@@ -195,6 +196,36 @@ paper/main.tex … --out-dir prose/`), run the deep read in
 write `references/voice-profile.md` from the two — then let the capture loop
 correct it as you use it.
 
+### Code Style (`skills/code-style`)
+Every line of Python an agent writes follows the
+[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html),
+with a modern toolchain in place of Google's own:
+- **The whole guide, restated**: `references/rules.md` goes through it
+  section by section — imports of modules only, Google docstrings,
+  exceptions, defaults, truthiness, resources, naming, `main()`, type
+  annotations — with the reason for each rule, an example from scientific
+  code, and the check that enforces it.
+- **ruff for lint and format** in place of pylint and Black:
+  `assets/ruff.toml` selects the ruff equivalents of the checks Google's
+  pylintrc keeps and of the guide's own rules (80 columns, Google docstring
+  convention, Google import order), each annotated with its guide section.
+- **uv for Python, environments and dependencies**: projects through
+  `uv init` / `uv add` with a committed `uv.lock`, standalone scripts through
+  inline PEP 723 metadata — including where that block goes in a jupytext
+  notebook.
+- **mypy in place of pytype**, which Google has discontinued
+  (`assets/mypy.ini`); every function signature is annotated.
+- **A checker for what ruff cannot express** (`scripts/check_code_style.py`,
+  standard library only): member imports resolved against the real packages,
+  NumPy- or reST-style docstrings, a notebook's title cell standing in for
+  its module docstring, `@staticmethod`, asserts used for validation,
+  unclosed h5py/FITS/xarray handles and figures, the TODO layout, top-level
+  program code, and more — 30 rules, each tied to a guide section, with
+  tests.
+- **Research code in mind**: shapes and units in docstrings, NumPy
+  truthiness, paper notation with a citation, explicit random generators,
+  and notebook-specific allowances agreed with `jupytext` and `plot-style`.
+
 ### Jupytext (`skills/jupytext`)
 An agent skill that enforces the Jupytext percent format (`py:percent`) for all generated Python scripts. Key features:
 - **Dual-Purpose Files**: Scripts are valid `.py` files AND openable as Jupyter notebooks in VS Code, JupyterLab, and PyCharm.
@@ -238,4 +269,5 @@ This project was built by drawing inspiration and structural methodologies from 
 - **[lout33/writing-style-skill](https://github.com/lout33/writing-style-skill)**: The packaging of `co-writer` — a thin `SKILL.md` over a profile in `references/`, and the "return only the rewritten text" output discipline — follows this skill.
 - **[Artificial Corner, "Voice"](https://artificialcorner.com/p/voice)** and **[AI Blew My Mind, "Claude Skills: AI that writes like you"](https://aiblewmymind.substack.com/p/claude-skills-ai-write-like-you)**: `co-writer`'s interview instrument (push back on vague answers, reject the aspirational and the generic, grade rules HARD / STRONG / LIGHT, weight rejections over preferences) and its extraction-first method with a size cap on the profile come from these two write-ups.
 - **[biprateep/conceptual_intro_to_deep_learning](https://github.com/biprateep/conceptual_intro_to_deep_learning)** (`.claude/skills`): the book-writing skills there supplied `co-writer`'s cold read, its trim protocol (measure first, two classes of cut, scaffolding never cut, the author rules on each), the tested route for profile changes, and the ported `check_fixed.py` and `check_mannered.py`.
+- **[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)** and its **[pylintrc](https://google.github.io/styleguide/pylintrc)** (© Google, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)): `code-style` restates the guide's rules in its own words and maps them, and the pylintrc's checks, onto ruff, mypy and uv.
 - **[cheyanneshariat/OverCite](https://github.com/cheyanneshariat/OverCite)** and **[biprateep/zerovibes](https://github.com/biprateep/zerovibes)**: `cite-check`'s registry search with official ADS export, and its tiered title-search verifier, grew from these.

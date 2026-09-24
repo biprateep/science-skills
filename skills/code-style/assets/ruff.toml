@@ -1,0 +1,156 @@
+# ruff configuration for the Google Python Style Guide, as adopted by the
+# code-style skill. Every selected rule names the guide section (§) it
+# enforces, or the pylint check from Google's pylintrc that it replaces.
+# Rules ruff cannot express are checked by scripts/check_code_style.py (codes
+# GS001-GS030); see references/rules.md for the full mapping.
+#
+# In a project: copy this file to the project root as ruff.toml. ruff reads it
+# in preference to [tool.ruff] in pyproject.toml, and takes target-version
+# from the project's requires-python.
+# On loose files: pass it explicitly, e.g.
+#   uvx ruff format --config <skill-dir>/assets/ruff.toml <files>
+#   uvx ruff check --config <skill-dir>/assets/ruff.toml --fix <files>
+#
+# Written against ruff 0.16.8. Only stable rules are selected.
+
+required-version = ">=0.16.0"
+line-length = 80  # §3.2
+indent-width = 4  # §3.4
+
+[format]
+quote-style = "double"  # §3.10: one quote character throughout a file
+indent-style = "space"  # §3.4: never tabs
+skip-magic-trailing-comma = false  # §3.4.1: a trailing comma keeps one item per line
+
+[lint]
+select = [
+    # §2.1 lint: the checks Google's pylintrc keeps on. Its refactor group (R)
+    # is off, so no PLR rule is selected except PLR0402 below.
+    "F",  # pyflakes: unused imports and variables, undefined names
+    "E",  # pycodestyle: E401/E402 imports (§3.13), E501 line length (§3.2),
+          # E70x statements (§3.1, §3.14), E711/E712 None and bool (§2.14),
+          # E722 bare except (§2.4), E731 named lambda (§2.10), E741 (§3.16.1)
+    "W",  # trailing whitespace (§3.6), tabs (§3.4), invalid escapes
+    "PLC",  # pylint conventions: PLC0415 imports at top (§3.13), PLC1802 len (§2.14)
+    "PLE",  # pylint errors
+    "PLW",  # pylint warnings: PLW0177 comparison with nan, and more
+    "PLR0402",  # §2.2: `import a.b as b` is `from a import b`
+    "B006", "B008",  # §2.12: mutable or call-evaluated defaults (pylint W0102)
+    "B012",  # return/break/continue in finally (pylint W0150)
+    "B015", "B018",  # pointless statements (pylint W0104)
+    "B019",  # functools.lru_cache on a method (pylint W1518)
+    "B023",  # §2.16: closure over a loop variable (pylint W0640)
+    "B904",  # raise ... from inside except (pylint W0707)
+    "BLE",  # §2.4: catch-all except Exception (pylint W0718)
+    "TRY002",  # §2.4: raising bare Exception (pylint W0719)
+    "TRY203",  # try/except that only re-raises (pylint W0706)
+    "ARG",  # unused arguments (pylint W0613); fix with `del arg  # Unused.`
+    "A001", "A002", "A004", "A006",  # shadowed builtins (pylint W0622)
+    "SLF001",  # §3.16.2: access to another object's _protected member (pylint W0212)
+    "S102", "S307",  # §2.19: exec and eval (pylint W0122, W0123)
+    "G",  # §3.10.1: logging takes a pattern and arguments (pylint W1201-W1203)
+    "PGH004",  # §2.1: suppress named rules, never a blanket noqa
+    "RUF100",  # §2.1: suppressions that no longer suppress anything
+
+    # §2.2, §2.3, §3.13 imports. Modules-only imports are GS001.
+    "I",  # grouping and order, settings below
+    "TID252",  # §2.2: no relative imports
+    "ICN001",  # §2.2: the standard abbreviation when one exists (np, pd, plt)
+
+    # §2.8 default iterators and operators
+    "SIM118",  # `key in adict`, not `adict.keys()` (pylint C0201)
+    "FURB129",  # `for line in afile`, not `afile.readlines()`
+
+    # §2.10 lambda functions
+    "C417",  # a generator expression, not map() or filter() with a lambda
+
+    # §2.21, §3.19 type annotations
+    "ANN0", "ANN2",  # every signature is annotated (the guide asks this of
+                     # public APIs; this skill asks it of all code it writes)
+    "UP",  # §3.19: X | None, list[int], no typing.Text; exceptions in ignore
+    "RUF013",  # §3.19.5: no implicit Optional
+    "RUF036",  # §3.19.5: None last in a union
+    "RUF009",  # §2.12: call-evaluated dataclass defaults
+
+    # §3.7 shebang line
+    "EXE",
+
+    # §3.8 comments and docstrings; convention below. Module docstrings are
+    # GS014, which accepts a jupytext title cell in their place.
+    "D",
+
+    # §3.12 TODO comments; the `TODO: link - text` layout is GS024. TD002
+    # (author) is not selected: the guide discourages naming a person.
+    "TD001", "TD003", "TD004", "TD005", "TD006", "TD007",
+
+    # §3.16 naming
+    "N",
+
+    # §3.11 files and similar resources. Other resources are GS022.
+    "SIM115",  # open() outside a with block
+
+    # Science addition, not from the guide: NumPy APIs deprecated or removed
+    # in NumPy 2, and the legacy global random state.
+    "NPY",
+]
+ignore = [
+    "D100",  # module docstrings: GS014, which knows jupytext notebooks
+    "D105",  # magic methods need no docstring (pylintrc no-docstring-rgx)
+    "UP031", "UP032",  # §3.10 allows % and str.format as well as f-strings
+    "UP040", "UP046", "UP047",  # §3.19.6, §3.19.10: TypeAlias and TypeVar,
+                                # not the PEP 695 `type` and `[T]` syntax
+    "PLW0603",  # `global` statement: disabled in Google's pylintrc
+    "PLW0120",  # else clause on a loop: disabled in Google's pylintrc
+    "PLW1641",  # __eq__ without __hash__: disabled in Google's pylintrc
+    "PLW2901",  # redefined loop name: a pylint extension Google does not load
+]
+# Codes from scripts/check_code_style.py, so ruff accepts `# noqa: GS001`.
+external = ["GS"]
+# Google's pylintrc dummy-variables-rgx: only these names may go unused.
+dummy-variable-rgx = "^(_|unused_.*|dummy_.*)$"
+
+[lint.per-file-ignores]
+# §3.8.2.1: test modules need no docstrings on the module, on TestCase
+# classes or on test methods. §3.16.2: tests may read protected members.
+# Test signatures need no annotations, and pytest injects fixtures that the
+# test body never names.
+"**/tests/**" = ["D101", "D102", "D103", "D107", "ANN", "SLF001", "ARG"]
+"**/test_*.py" = ["D101", "D102", "D103", "D107", "ANN", "SLF001", "ARG"]
+"**/*_test.py" = ["D101", "D102", "D103", "D107", "ANN", "SLF001", "ARG"]
+"**/conftest.py" = ["D101", "D102", "D103", "D107", "ANN", "SLF001", "ARG"]
+
+[lint.pydocstyle]
+convention = "google"  # §3.8: Args:, Returns:, Raises: sections
+
+[lint.isort]
+# §3.13: one import per line, except symbols from typing and collections.abc
+# (§3.19.12); groups future, standard library, third party, this repository;
+# each group sorted by full module path, ignoring case and import style.
+force-single-line = true
+single-line-exclusions = ["collections.abc", "typing", "typing_extensions"]
+force-sort-within-sections = true
+order-by-type = false
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"  # §2.2
+
+[lint.flake8-annotations]
+mypy-init-return = true  # §3.19.1: __init__ may omit `-> None`
+
+[lint.flake8-import-conventions.extend-aliases]
+# §2.2: a module is aliased only to its standard abbreviation. ruff already
+# knows np, npt, pd, plt, mpl, sns, tf, pl, pa, px and a few more; these are
+# the standard ones of scientific Python. ICN001 requires the alias whenever
+# the module is imported, so list only abbreviations the field never varies.
+"astropy.constants" = "const"
+"astropy.units" = "u"
+"dask.array" = "da"
+"dask.dataframe" = "dd"
+"healpy" = "hp"
+"jax.numpy" = "jnp"
+"networkx" = "nx"
+"plotly.graph_objects" = "go"
+"pyarrow.parquet" = "pq"
+"statsmodels.api" = "sm"
+"tensorflow_probability" = "tfp"
+"xarray" = "xr"
