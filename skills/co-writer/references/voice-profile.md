@@ -1,6 +1,6 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.2.0 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
+**Version:** 0.3.0 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
@@ -155,7 +155,7 @@ From the corpus:
 - Equation sandwich: lead-in ending in a colon ("is given by:", "defined as:", "we obtain:", "This gives us the relation:") → equation → "where …" naming every symbol in order → one sentence saying what it means. `STRONG · measured I.1`
 - Symbols are introduced with "Let … be" / "denote" and then used in running prose. `STRONG · measured I.2`
 - Figures are sentence subjects: "Figure N shows / illustrates / demonstrates …"; then "We see that …". Pointers in parentheses: "(see Fig. N)", "(top row)". `STRONG · measured A.6, I.2`
-- Captions name every visual element with its colour, then end on the conclusion: "We observe that …". `STRONG · measured I.3`
+- Captions open on what the figure plots and against what. Multi-panel figures label panels in bold (`\textbf{Left}:`, `\textbf{Middle}:`, `\textbf{Right}:`), each with its metric and how to read it. A line plot's markers and line styles are left to the legend. A distribution or histogram names each element with its colour. The caption ends on the conclusion: "We observe that …". `STRONG · measured I.3 · revised from the author's edits, tested 2026-09-29`
 - A central value is followed by its range in parentheses, and the parentheses are explained once: "94 min (17–308 min). The numbers in parentheses denote the 5th and 95th percentile values." `STRONG · measured J.2`
 - Results carry the precision of the measurement, and the number precedes its interpretation. `HARD · measured J.3`
 - Acronyms: "(ACRONYM; [citation])". `HARD · measured K.1`
@@ -179,11 +179,17 @@ Funnel introduction; "However," gap → contribution; passive for instrument act
 
 ## 9. Content to quarantine
 
-The specimens below teach constructions. Their nouns do not transfer. Never import into an unrelated paper: photo-$z$ / spec-$z$ and their apostrophe plurals, DESI, LSST, Rubin, SDSS, HSC-SSP, DEEP2/3, MaNGA, Gaia, "representative spectroscopic samples", "training and calibration", "break degeneracies in the colour–redshift relation", "next-generation imaging surveys", "well-calibrated PDFs", PIT, capsule, "redshift success rate", "background-limited".
+The specimens below teach constructions. Their nouns do not transfer. Never import into an unrelated paper: photo-$z$ / spec-$z$ and their apostrophe plurals, DESI, LSST, Rubin, SDSS, HSC-SSP, DEEP2/3, MaNGA, Gaia, "representative spectroscopic samples", "training and calibration", "break degeneracies in the colour–redshift relation", "next-generation imaging surveys", "well-calibrated PDFs", PIT, capsule, "redshift success rate", "background-limited". From the FM4PZ specimens: tabular foundation models, TabFM, TabPFN, TabICL, "bespoke estimators", "in-context learning", "training context size", CDE loss, DC1, FlexZBoost, CMNN, GPz, $N_{\rm train}$, $N_{\rm cal}$, "representative calibration sample", "imaging-only astronomical surveys", and every number in them.
 
-## 10. Rejected (pending interview)
+## 10. Rejected
 
-Empty. Every pattern the author declines in the interview is recorded here with the date, so it is not re-proposed.
+Every pattern the author declines, and every candidate that fails its test, is recorded here with the date, so it is not re-proposed without new evidence that answers the reason.
+
+Failed the test of 2026-09-29 (digest 2026-09-29T1222). Each was a reading of the author's edits, not their words. A fresh-context rewrite with the rule added did not move the output toward the author's accepted text on most inputs, compared with the same inputs without it. One sample per input, so each is re-proposable when a later digest brings new evidence:
+- **C5, workshop vocabulary** ("say what a step does, not its machinery"): similarity rose on 1 of 5 inputs, mean 0.652 → 0.616; machinery phrases unchanged (4 → 4).
+- **C6, "training data size" over bare "context size", "data set" over "survey"**: rose on 0 of 3, mean 0.644 → 0.616, although the targeted phrasing went (2 → 0).
+- **C7, no colon joining a setup to its payoff**: rose on 1 of 3, mean 0.542 → 0.510; the baseline wrote no such colon either, so the rule had nothing to act on.
+- **C9, gloss every metric and data-release acronym at first use**: rose on 1 of 3, mean 0.725 → 0.677; glosses went 2 → 5, more than the author's own versions carry (4).
 
 ---
 
@@ -191,8 +197,11 @@ Empty. Every pattern the author declines in the interview is recorded here with 
 
 Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's verdict on each is pending**: a specimen he has endorsed outranks one he has not, and one he rejects leaves. Match the slot to the input; carry the construction, not the content. Sentences he has rejected are in [counterexamples.md](counterexamples.md).
 
-**Abstract** — RECAL
+**Abstract (journal)** — RECAL
 > Many astrophysical analyses depend on estimates of redshifts (a proxy for distance) determined from photometric (i.e., imaging) data alone. Inaccurate estimates of photometric redshift uncertainties can result in large systematic errors. However, probability distribution outputs from many photometric redshift methods do not follow the frequentist definition of a Probability Density Function (PDF) for redshift --- i.e., the fraction of times the true redshift falls between two limits $z_{1}$ and $z_{2}$ should be equal to the integral of the PDF between these limits. Previous works have used the global distribution of Probability Integral Transform (PIT) values to re-calibrate PDFs, but offsetting inaccuracies in different regions of feature space can conspire to limit the efficacy of the method. We leverage a recently developed regression technique that characterizes the local PIT distribution at any location in feature space to perform a local re-calibration of photometric redshift PDFs. Though we focus on an example from astrophysics, our method can produce PDFs which are calibrated at all locations in feature space for any use case.
+
+**Abstract (workshop)** — FM4PZ · endorsed by the author 2026-09-19 ("use this as my example")
+> Estimating galaxy redshifts (a proxy for distance) from imaging data alone, also known as photometric redshifts (\pzs), is essential for studies of extragalactic astrophysics and cosmology. However, data-driven estimators rely on spectroscopic training data sets, which are scarce and systematically biased toward bright, easily observed galaxies. In this work, we show that tabular foundation models can outperform bespoke estimators using in-context learning, predicting full probability distributions in a single forward pass without data-specific retraining. Evaluating on a widely used benchmark data set, we find that foundation models systematically outperform bespoke estimators across both representative and biased regimes, matching baselines trained on over $40{,}000$ galaxies with just $1{,}000$ training context examples. We also show that adding a small representative sample ($\sim 1{,}000$ galaxies) to a biased training data set substantially improves foundation model performance over baselines. This shows that tabular foundation models offer a sample-efficient framework for upcoming imaging-only astronomical surveys, where observational selection bias can be mitigated simply by including a small representative calibration sample in context.
 
 **Introduction opener** — ENC
 > Wide-field extra-galactic sky surveys collect photometric or spectroscopic measurements to create 3-dimensional maps of the Universe by measuring on-sky positions and redshifts of a variety of astronomical objects. These maps help us study the growth of the Universe and its large-scale structure over time by measuring various observable quantities as a function of redshift. For example, [Author et al.] studied distances to nearby galaxies as a function of redshift to discover the expansion of the Universe and more recently, [Author et al.] and [cite] studied the relationship between luminosity distances of Type Ia supernovae and their redshifts to discover cosmic acceleration and hence dark energy.
@@ -232,6 +241,15 @@ Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's
 **Caption** — ENC
 > Normalised distribution of the redshift prediction errors. The blue histogram shows the distribution of redshift prediction errors of our algorithm on the test set. The orange line shows a Gaussian distribution with the location and scale parameters set as the prediction bias and $\sigma_{\mathrm{NMAD}}$ respectively. The distributions are normalised to have unit area under the curves. The shaded region marks the threshold for outliers. The distribution of the prediction errors is symmetric, centred around 0 and closely resembles a Gaussian distribution, indicating little if any systematic preference for over- or under-estimation.
 
+**Caption, table (workshop)** — FM4PZ · endorsed by the author 2026-09-19 ("Put that in your memory for a future example")
+> Photo-$z$ estimation at the full training set size with training data both representative and non-representative of the test set. Training sets are of size 43,486 and 35,011 galaxies respectively; both are scored on held-out data drawn like the parent catalog. Columns are the CDE loss, a measure of calibration of PDFs; $\sigma_{\rm IQR}$, a robust measure of scatter in residuals; bias, the median residual; and the catastrophic outlier fraction $f_{\rm out}$. Lower is better for CDE loss, $\sigma_{\rm IQR}$, and $f_{\rm out}$; bias is best at zero. The best value in each column is in \textbf{bold}. The two sections are scored on different test sets, so CDE loss may be compared within a column but not across the sections. We find that the foundation models tend to outperform the bespoke methods by a significant margin while TabFM is the most performant among the foundation models.
+
+**Caption, multi-panel line figure (workshop)** — FM4PZ · endorsed by the author 2026-09-19 ("commit this version to your memory for future reference")
+> Performance scaling of tabular foundation models and bespoke \pz estimators on the representative DC1 benchmark as a function of training data size, evaluated on the same test set. \textbf{Left}: CDE loss, where lower values indicate sharper and better-calibrated distributions. \textbf{Right}: Dispersion of the point estimates with respect to the truth ($\sigma_{\rm IQR}$) evaluated at the mode of the distribution ($z_{\rm peak}$), plotted on a logarithmic scale. We observe that tabular foundation models scale steadily with training context size and match or outperform the bespoke estimators across both metrics, with TabFM achieving the lowest CDE loss and scatter across nearly all training sizes. All foundation models achieve better CDE loss with just $1{,}000$ training examples compared to the baseline methods with the full data.
+
+**Caption, matrix / heat-map figure (workshop)** — FM4PZ · endorsed by the author 2026-09-19 ("commit that to your memory as an example")
+> Relative CDE loss advantage of TabFM over the three bespoke baselines as a function of biased training context size ($N_{\rm train} = 1{,}000$ to $35{,}011$) and representative calibration sample size ($N_{\rm cal} = 0$ to $10{,}000$). \textbf{Left}: TabFM against FlexZBoost. \textbf{Middle}: TabFM against CMNN. \textbf{Right}: TabFM against GPz. We observe that TabFM achieves $42\%$ to $259\%$ deeper CDE loss than the baselines across all cells. The cell with the red border indicates the regime where the advantage is the highest.
+
 ---
 
 ## 12. How to apply this profile
@@ -248,6 +266,7 @@ Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's
 
 ## 13. Changelog
 
+- **0.3.0** (2026-09-29) — first review of a digest (proposal 2026-09-29T1222, 52 of the author's edits harvested from Claude Code and Antigravity sessions on FM4PZ). Adopted: four workshop specimens the author asked on 2026-09-19 to keep as examples (abstract; table, multi-panel line and matrix captions), their nouns quarantined in §9; the caption rule (§6, I.3) revised to open on what is plotted, bold panel labels, markers left to the legend, colours named for distributions, after it passed its test. Rejected after testing: C5, C6, C7, C9 (§10). Held: whether "dataset" in the author's own typing overrides the HARD "data set" rule.
 - **0.2.0** (2026-09-12) — mechanisms from the book-writing skills: specimens outrank rules (authority line); read the specimen immediately before writing and rewrite from it on a miss, never revise against the list; specimens renamed specimens with the author's verdict pending; counterexamples.md added; the mannered-prose entry restated as its definition with the fix; the litmus question moved to the cold read.
 - **0.1.2** (2026-09-11) — interview Part 2, batch 1. Claim ladder (proves > demonstrates > shows > indicates > is consistent with > suggests; find/observe/see are reporting); abstract may sit one rung above results; contradiction sentences added to calibration; field-impact claims, the "not X but Y" reveal, and mannered prose added to Never. American English always (overrides the venue-spelling rule); "data set" always; use/utilize split. Final section is "Summary and Discussion"; drafting order recorded.
 - **0.1.1** (2026-09-11) — interview Part 1: all 27 extracted patterns ratified at their grades. Register question answered: novelty words are deliberate, for punch, and to be used only when the case is genuinely novel; written up as a `STRONG` rule with a one-per-paper cap. "Crucially," / "Notably," / "This proves that" moved from `pending` to Never.
