@@ -199,11 +199,15 @@ changing only how it is said. Key features:
 - **Built from the papers, not from self-description**: `scripts/extract_prose.py`
   turns `.tex` into readable prose, `references/extraction.md` is the deep-read
   prompt, and `references/interview.md` asks only what the text cannot answer.
-- **Improves from use**: every rewrite is logged; `scripts/capture_edits.py`
-  diffs what was delivered against what the author committed, and
-  `scripts/collect_transcripts.py` indexes the Claude Code and Antigravity
-  sessions behind a paper. A fixed six-input `eval/` set scores each profile
-  version by how much the author still edits.
+- **Improves from use**: every agent logs every rewrite through one script,
+  `scripts/cowriter.py`, into one store, `~/.co-writer/`. When the author
+  says "co-writer update", `scripts/update.sh` harvests those logs, the
+  paper's git history and the Claude Code and Antigravity transcripts into
+  pairs of what an agent delivered and what the author kept, and has an
+  agent digest the new ones into a proposal. The
+  profile changes only when the author rules on it ("co-writer review"). A
+  fixed six-input `eval/` set scores each profile version by how much the
+  author still edits.
 - **Citations go through cite-check**, never through co-writer's own
   reasoning: a rewrite that touches a citing sentence is re-judged against
   the cited paper, a citation gap is filled by `search_citation` → `bib_add`,

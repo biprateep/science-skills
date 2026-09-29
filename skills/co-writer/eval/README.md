@@ -19,16 +19,17 @@ output is detectable.
 ## Protocol, once per profile version
 
 1. In a fresh session with no prior context, run co-writer over each input
-   and save each output to `eval/runs/<profile-version>/NN.tex`. The skill's
-   session-log convention records the delivery in `.co-writer/log/` with
-   `file: skills/co-writer/eval/runs/<version>/NN.tex`.
+   and save each output to `eval/runs/<profile-version>/NN.tex`. Log each
+   delivery as usual, with `--paper co-writer-eval --file
+   skills/co-writer/eval/runs/<version>/NN.tex`.
 2. Before editing, `python skills/co-writer/scripts/check_fixed.py NN.tex
    eval/runs/<version>/NN.tex` must print "fixed items identical"; a run
    that fails it is a preservation bug, not a voice result. Then edit each
    output in place until it reads as yours. Do not retype it; edit the
    delivered text so the diff is the correction.
-3. Run `python skills/co-writer/scripts/capture_edits.py` from the repo root.
-   The summary prints mean edit distance per profile version.
+3. Run `python3 skills/co-writer/scripts/cowriter.py harvest --paper
+   co-writer-eval`, then `cowriter.py status`, which prints the mean edit
+   distance per profile version.
 
 Version n+1 is better than version n if and only if the mean distance is
 lower on this set. `eval/runs/` is gitignored; the inputs are not.

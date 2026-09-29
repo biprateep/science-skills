@@ -2,8 +2,8 @@
 
 **Status:** Part 1 completed 2026-09-11 (all 27 ratified). Part 2 answered:
 4, 5, 6, 10, 11, 12, 15, 16, 21, 23, 31, 32, 33. The rest of Part 2 and all
-of Part 3 are deferred: resume them when a correction in `.co-writer/
-corrections.md` needs an answer the text cannot give, or at the first digest.
+of Part 3 are deferred: resume them when a digest proposal (`~/.co-writer/proposals/`) needs an
+answer the text cannot give, or at the first review.
 
 Extraction ([extraction-report.md](extraction-report.md)) reads what the
 papers do. It cannot read *why*, whether a habit is a choice, which of two

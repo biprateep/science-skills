@@ -17,7 +17,7 @@ description: >-
   emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice
@@ -75,7 +75,8 @@ claims and the citations already exist in the input.
    `LIGHT` rules where they fit. Carry the specimen's construction, never its
    nouns.
 5. **Check what is fixed.** `python <skill>/scripts/check_fixed.py INPUT
-   OUTPUT` (write both to the scratchpad in inline mode). It must print
+   OUTPUT` (write both to scratch files if they are not files already; step
+   9 logs the same two). It must print
    "fixed items identical", or only WARN lines after a ruled hard-limit cut.
    Then the self-check below.
 6. **The cold read** ([references/cold-read.md](references/cold-read.md)):
@@ -89,9 +90,16 @@ claims and the citations already exist in the input.
    rationale, give the text first and the rationale after a rule. Never
    certify the voice; the passages you are least sure of go into the session
    log, not into the reply.
-9. **Log it.** Append the entry on the form in
-   [references/session-log.md](references/session-log.md), in the paper's
-   repository. A rewrite that is not logged teaches nothing.
+9. **Log it** with the script, never by hand:
+   `python3 <skill>/scripts/cowriter.py log --file <the .tex> --agent <you>
+   --slot <slot> --register <register> --input INPUT --output OUTPUT`, with
+   the author's words about the output as `--note`, verbatim, when they give
+   any ([references/session-log.md](references/session-log.md)). Every
+   agent writes the same format to the same place, `~/.co-writer/`, whatever
+   its working directory. At the end of the session, `cowriter.py session`;
+   then `cowriter.py status --brief`, and if it prints a line, pass that one
+   line on to the author after the text. A rewrite that is not logged
+   teaches nothing.
 
 ## Hard Rules — Preservation
 
@@ -240,10 +248,14 @@ What a model reaching for "good academic prose" will do, and must not:
 ## Maintenance
 
 The profile improves from use through the loop in
-[references/maintenance.md](references/maintenance.md): capture the author's
-edits, collect the transcripts, digest them into candidates he adopts, tests
-or holds, score each version on the eval set, re-extract when a paper is
-finished. Nothing there is read at write time.
+[references/maintenance.md](references/maintenance.md). Nothing runs on its
+own: when the author says "co-writer update", `bash <skill>/scripts/update.sh`
+harvests the logs, the paper's git history and the Claude Code and
+Antigravity transcripts into pairs of what an agent delivered and what the
+author kept, and an agent digests the new ones into a proposal, following
+[references/digest.md](references/digest.md). The profile changes only when
+the author rules on the proposal ("co-writer review"): adopt, test, hold or
+reject, one candidate at a time. Nothing there is read at write time.
 
 ## Interaction With Other Skills
 
@@ -273,7 +285,8 @@ skills/co-writer/
 │   ├── cold-read.md                 # section and draft mode — who reads, what it gets, the brief
 │   ├── counterexamples.md           # once after drafting — sentences the author rejected
 │   ├── trim.md                      # only with a page or word limit — protocol and proposer's brief
-│   ├── maintenance.md               # never at write time — capture, collect, digest, eval, new paper
+│   ├── maintenance.md               # never at write time — log, update, review, eval, new paper
+│   ├── digest.md                    # never at write time — the brief for the agent that digests a packet
 │   ├── extraction.md                # never at write time — the deep-read prompt
 │   ├── extraction-report.md         # never at write time — evidence for every rule
 │   └── interview.md                 # never at write time — the questions the text cannot answer
@@ -281,16 +294,19 @@ skills/co-writer/
 │   ├── check_fixed.py               # INPUT vs OUTPUT: cites, refs, labels, math, numbers — the preservation gate
 │   ├── check_mannered.py            # stock phrases and Never-list hits, with lines — calibration, not a verdict
 │   ├── extract_prose.py             # .tex → readable prose; --counts gives words per section for the trim
-│   ├── capture_edits.py             # session log + author's edits → corrections.md
-│   └── collect_transcripts.py       # Claude Code / Antigravity transcripts → .co-writer/transcripts/
+│   ├── cowriter.py                  # the store: log, session, harvest, status, packet, file, migrate
+│   └── update.sh                    # "co-writer update": harvest; packet → digest agent → proposal
 └── eval/
     ├── README.md                    # the per-version protocol
     └── 01-abstract.tex … 06-caption.tex   # fixed inputs, one per slot
 
 skills/cite-check/references/integration.md   # before any citation action — the contract this skill follows
 
-<paper repo>/.co-writer/             # gitignored, written at use time
-├── log/                             # one file per rewrite + one session note
-├── corrections.md                   # from capture_edits.py
-└── transcripts/                     # from collect_transcripts.py
+~/.co-writer/                        # the store, outside every repo ($CO_WRITER_HOME)
+├── papers.json                      # paper id → repository root and .tex files
+├── papers/<paper>/log/              # one file per rewrite + one session note, via cowriter.py only
+├── papers/<paper>/snapshots/        # the .tex at each harvest
+├── pairs.jsonl, pairs.md            # draft → delivered → accepted, from harvest
+├── packets/<stamp>/                 # what a digest reads
+└── proposals/<stamp>.md             # what a digest proposes; ruled in "co-writer review"
 ```
