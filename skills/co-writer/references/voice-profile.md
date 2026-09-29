@@ -1,6 +1,6 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.3.0 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
+**Version:** 0.3.1 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
@@ -139,11 +139,11 @@ From the corpus:
 
 - "We" performs every author decision; passive is for what the instrument, the pipeline, or other people did. `STRONG · measured F.1`
 - Reader-inclusive "us": "gives us", "provides us with", "allows us to", "tells us". `STRONG · measured F.2`
-- "our data set / our method / our algorithm / our model". `LIGHT · measured F.3`
+- "our dataset / our method / our algorithm / our model". `LIGHT · measured F.3`
 - Asides are "We note that …" / "We also note that …". `HARD · measured F.4`
 - Approximate numbers use roughly / approximately / about / around / $\sim$ interchangeably. `LIGHT · measured G.1`
 - **American English, always**, whatever the venue. (The 2021 MNRAS paper is British because the journal copy-edited it; that is not the author's choice.) `HARD · attested 2026-09-11`
-- "data set", two words, always. `HARD · attested 2026-09-11`
+- "dataset", one word, always, including in headings ("Datasets Used") and in specimens that spell it "data set", which predate this rule. `HARD · attested 2026-09-29, replacing "data set, two words" of 2026-09-11`
 - "use" is the default; "utilize" when a resource or capability is being put to work ("utilize the data to develop a model", "utilized a local sky subtraction"). `LIGHT · attested 2026-09-11 · G.1`
 - Dashes: at most one per page, for an "i.e."-style gloss or an appositive list; zero is the norm. `HARD · measured H.1`
 - Semicolons: journal papers only, joining a clause to its qualification, often carrying "however" or "therefore". `LIGHT · measured H.2`
@@ -169,7 +169,7 @@ From the corpus:
 | "We see that" narration | yes | "we find" / "demonstrates" |
 | Semicolons | yes | rare |
 | Paragraph length | 100–300 words | 60–120 words |
-| Section headings | \section / \subsection | run-in `\paragraph{Data Sets Used.}` |
+| Section headings | \section / \subsection | run-in `\paragraph{Datasets Used.}` |
 | Final section | "Summary and Discussion", with "(see Fig. N)" pointers | "Results and Discussion" ends the paper |
 | Pedagogy at first use | full | compressed to a clause |
 
@@ -266,6 +266,7 @@ Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's
 
 ## 13. Changelog
 
+- **0.3.1** (2026-09-29) — "dataset", one word, replaces "data set" as the HARD rule (the author's ruling on C10 of digest 2026-09-29T1222, after their own edits wrote "dataset"); specimens keep their original spelling and the rule overrides it.
 - **0.3.0** (2026-09-29) — first review of a digest (proposal 2026-09-29T1222, 52 of the author's edits harvested from Claude Code and Antigravity sessions on FM4PZ). Adopted: four workshop specimens the author asked on 2026-09-19 to keep as examples (abstract; table, multi-panel line and matrix captions), their nouns quarantined in §9; the caption rule (§6, I.3) revised to open on what is plotted, bold panel labels, markers left to the legend, colours named for distributions, after it passed its test. Rejected after testing: C5, C6, C7, C9 (§10). Held: whether "dataset" in the author's own typing overrides the HARD "data set" rule.
 - **0.2.0** (2026-09-12) — mechanisms from the book-writing skills: specimens outrank rules (authority line); read the specimen immediately before writing and rewrite from it on a miss, never revise against the list; specimens renamed specimens with the author's verdict pending; counterexamples.md added; the mannered-prose entry restated as its definition with the fix; the litmus question moved to the cold read.
 - **0.1.2** (2026-09-11) — interview Part 2, batch 1. Claim ladder (proves > demonstrates > shows > indicates > is consistent with > suggests; find/observe/see are reporting); abstract may sit one rung above results; contradiction sentences added to calibration; field-impact claims, the "not X but Y" reveal, and mannered prose added to Never. American English always (overrides the venue-spelling rule); "data set" always; use/utilize split. Final section is "Summary and Discussion"; drafting order recorded.
