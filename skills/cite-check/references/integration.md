@@ -72,10 +72,14 @@ narrated into a pass.
 
 ## co-scientist specifically
 
-- The Literature subagent's `resolve_citation` in co-scientist's own toolbox
-  is a subset of this one. Prefer `cite-check`'s `search_citation` (multiple
-  registries, local ranking) and `resolve_citation` (cross-linked ids, ADS
-  bibcodes) when the tools are available.
+- co-scientist has no citation tool of its own (its `resolve_citation` was
+  removed in co-scientist 0.7.0). Its Literature subagent finds papers with
+  its own search, then identifies each through `search_citation` /
+  `resolve_citation` here; its orchestrator writes `report.bib` with
+  `bib_add`.
+- co-scientist runs the support check once, on the report's final prose
+  (after its co-writer pass), and requires `audit` `ok: true` before
+  `compile_report`.
 - The run manifest's `citations` section (`{"key", "id", "resolved",
   "supports"}`) maps onto the ledger: `id` is cite-check's canonical id,
   `resolved` is `verify_bib` status ∈ {VERIFIED, FOUND}, and `supports` is the

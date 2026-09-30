@@ -24,6 +24,11 @@ your harness, do the work inline following the same protocol.
 5. **Sequential by default.** Run subagents in order; parallelize only genuinely
    independent work (distinct lit topics, independent figures) after the
    orchestrator pre-allocates non-overlapping id ranges.
+6. **Component skills by name, never by content.** When a subagent's work falls
+   in a component skill's portion (SKILL.md → Component Skills), its prompt
+   says *"Load the `<name>` skill with `<load-skill>` and follow it in full"*.
+   Do not paste, summarize or paraphrase that skill's rules into the prompt:
+   the subagent reads the current version itself.
 
 Each prompt should end with: *"Return your full content for the orchestrator to
 save as `<the literal filename the orchestrator assigned>`. Do not write files
@@ -36,25 +41,29 @@ that filename. If blocked on a decision only the user can make, return
 ## Literature subagent
 
 - **TypeName (Antigravity):** `research` · **Claude Code:** `general-purpose`
-- **Role:** Literature Surveyor & Fact-Checker
+- **Role:** Literature Surveyor
 - **Prompt template:**
   > "Survey the literature on [TOPIC] relevant to [HYPOTHESIS] using
   > `<literature-search>` (arXiv + OpenAlex APIs via `<web-fetch>`, or the
-  > harness literature skills). Find [N] relevant papers. For **each**: title,
-  > authors, year, a **resolvable identifier** (arXiv id / DOI / OpenAlex id) that
-  > you obtained from an actual search/fetch — never composed from memory — and a
-  > short verbatim passage supporting the specific claim it is cited for.
-  > **Verify** each identifier with the `resolve_citation` tool (MCP Toolbox, or
-  > CLI: `mcp/.venv/bin/python mcp/server.py call resolve_citation
-  > '{"identifier": "..."}'`) and confirm the returned title and authors match
-  > what you are citing; if the toolbox is unavailable, fetch the arXiv abs page
-  > / `doi.org` / Crossref via `<web-fetch>` instead. Mark any citation that
-  > returns `resolved: false` (or that you cannot resolve) as UNVERIFIED and
-  > exclude it from claims.
+  > harness literature skills). Find [N] relevant papers. Load the
+  > **cite-check** skill with `<load-skill>` and read its caller contract,
+  > `<skills>/cite-check/references/integration.md`; identify every paper you
+  > report through its tools exactly as that contract says — an identifier
+  > from memory or from a page you read is a search query, not a result. For
+  > each paper return: the identifier and candidate confidence cite-check gave,
+  > title, year, and the specific claim you would cite it for. A paper
+  > cite-check cannot identify is listed as UNVERIFIED and supports no claim.
   > Then give a **novelty verdict**: has this hypothesis already been done,
   > refuted, or partially addressed? Search explicitly for **refuting** prior art
-  > and priority, not only support. Return a synthesis + the verified citation
-  > list + the novelty verdict."
+  > and priority, not only support. Return a synthesis + the candidate list +
+  > the novelty verdict. Do not write a `.bib`; the orchestrator does that
+  > through cite-check."
+- **Orchestrator, after it returns:** add the papers the report will cite to
+  `report.bib` with cite-check (its contract, "When the caller adds a
+  citation"), and record each in the manifest's `citations` section. Whether a
+  paper supports its sentence is judged later, on the report's final prose
+  (`protocols/reporting.md` §5), because rewording a sentence invalidates a
+  verdict on the old one.
 
 ## Derivation subagent
 
@@ -69,8 +78,9 @@ that filename. If blocked on a decision only the user can make, return
   the `verify_derivation` tool for expression-chain steps (each classified
   S / A / N / U per the taxonomy, no step silently unchecked), plus a custom
   SymPy script (`scripts/check_NNN_*.py`, logged seed) for structures the tool
-  cannot express (`cas_verification.md` §0); append assumptions to the ledger;
-  tag the result with a confidence level. Return the derivation + the per-step
+  cannot express (`cas_verification.md` §0), written under the **code-style**
+  skill (load it); append assumptions to the ledger; tag the result with a
+  confidence level. Return the derivation + the per-step
   PASS/FAIL table (the tool's output, not a hand-written table) + any
   check-script content.
 
@@ -83,12 +93,15 @@ experiments, and real-data analysis.)*
 - **Role:** Computational Scientist
 - **Prompt template:**
   > "Implement [the model / experiment / data analysis] following
-  > `references/protocols/data_analysis.md`. Write a self-contained script to
-  > `scripts/<assigned-name>.py` with a **logged RNG seed** and recorded
-  > environment. For data: do EDA + a data-quality summary, state the test and α
+  > `references/protocols/data_analysis.md`. Load the **code-style** skill
+  > with `<load-skill>` and write the script under it, to
+  > `scripts/<assigned-name>.py`, with a **logged RNG seed** and recorded
+  > environment; any figure it draws is made under the **plot-style** skill
+  > (load it too). For data: do EDA + a data-quality summary, state the test and α
   > before running, report **effect size with uncertainty** (not just a p-value),
-  > and note confounders / failed assumptions. Return the script, the results, and
-  > a reproducibility note (seed, env, command)."
+  > and note confounders / failed assumptions. Return the script, the results,
+  > a reproducibility note (seed, env, command), and the result of every check
+  > those skills require."
 
 ## Red-Team / Reviewer subagent
 
@@ -105,8 +118,9 @@ experiments, and real-data analysis.)*
   > verification is weakest; check **dimensional consistency** and
   > **limiting cases**; identify the most fragile assumptions and any hidden ones;
   > propose **alternative explanations**; name known **contradicting** results or
-  > prior art; and for each cited paper, judge whether it actually supports the
-  > claim. Output a structured critique with each issue rated **Critical / Major /
+  > prior art. (Whether a cited paper supports the sentence that cites it is
+  > not yours to judge: cite-check's independent judge does that on the final
+  > report prose.) Output a structured critique with each issue rated **Critical / Major /
   > Minor** and the single experiment most likely to falsify the hypothesis.
   > Default to skepticism: if uncertain whether something is sound, flag it."
 - **Rule:** must be a separate invocation from the producer. Unresolved
@@ -116,29 +130,39 @@ experiments, and real-data analysis.)*
 
 - **TypeName (Antigravity):** `self` · **Claude Code:** `general-purpose`
 - **Role:** Scientific Visualizer
-- **Prompt template:** per `references/protocols/visualization.md`: write a
-  self-contained matplotlib/numpy script to `scripts/<assigned-name>.py` (logged
-  seed), produce `figures/<assigned-name>.png`, and **return** the figure path +
-  caption for the orchestrator to record. Use the `<image-gen>` fallback
-  (TikZ/Graphviz/Mermaid) only where matplotlib cannot draw the figure.
+- **Prompt template:**
+  > "Make [FIGURE: what it shows and why] per
+  > `references/protocols/visualization.md`. Load the **plot-style** and
+  > **code-style** skills with `<load-skill>` and follow both in full: the
+  > figure's look, size and output are plot-style's, the script's code is
+  > code-style's. co-scientist fixes only the paths: script
+  > `scripts/<assigned-name>.py` (logged seed), figure
+  > `figures/<assigned-name>.png`, width from the report geometry in
+  > `visualization.md`. Return the figure path, a caption stating what the
+  > reader should conclude, and the result of every check those skills
+  > require." Use the `<image-gen>` fallback (TikZ/Graphviz/Mermaid) only where
+  > matplotlib cannot draw the figure.
 
 ## Section Writer subagent
 
 - **TypeName (Antigravity):** `self` · **Claude Code:** `general-purpose`
 - **Role:** Section Writer
 - **Prompt template:**
-  > "Using checkpoints [LIST] and the **exact** figure paths [PATHS], draft the
-  > [SECTION] of the report in LaTeX following `paper_template.tex`. Embed the
-  > given figures inline with `\includegraphics` where each concept is discussed —
-  > use only the figure paths provided; do not invent figure ids. **Write
-  > pedagogically, for a reader who has not followed this project** (rules in
-  > `protocols/reporting.md` §3): explain the problem setup in full and define
-  > every symbol; reproduce derivations step by step with justifications — never
-  > 'it can be shown'; state all experimental/computational details (parameters,
-  > seeds, tolerances, pass/fail criteria); add algorithm floats for nontrivial
-  > procedures; open subsections with plain-language intuition. Length is not a
-  > constraint. Return the LaTeX for this section (the orchestrator will splice
-  > it into `report.tex`)."
+  > "Using checkpoints [LIST], the **exact** figure paths [PATHS] and the cite
+  > keys already in `report.bib` [KEYS, each with the claim it supports],
+  > draft the [SECTION] of the report in LaTeX following `paper_template.tex`.
+  > Embed the given figures inline with `\includegraphics` where each concept
+  > is discussed — use only the figure paths provided; do not invent figure
+  > ids. Cite only the keys given, each for the claim it was given for; where
+  > a sentence needs a citation you were not given, write `[cite]` and say so.
+  > **Write pedagogically, for a reader who has not followed this project**,
+  > following the content rules of `protocols/reporting.md` §3 (pasted below).
+  > Length is not a constraint. Write for content and completeness; the
+  > sentences will be rewritten in the author's voice afterwards by
+  > co-writer, so do not spend effort on style. Return the LaTeX for this
+  > section (the orchestrator will splice it into `report.tex`)."
+  >
+  > [PASTE `protocols/reporting.md` §3.]
 
 ## Debate / Judge subagent (optional — tournament only)
 

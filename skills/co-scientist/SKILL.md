@@ -5,7 +5,9 @@ description: >-
   grounded, verified, written-up work: generating and ranking competing
   hypotheses, surveying and fact-checking the literature, deriving mathematics
   rigorously and verifying it, analyzing real or synthetic data reproducibly,
-  red-teaming the result, and assembling a LaTeX report. Use for multi-step
+  red-teaming the result, and assembling a LaTeX report. Citations, figures,
+  Python and report prose are handed to the cite-check, plot-style,
+  code-style and co-writer skills. Use for multi-step
   research projects — "develop a theory/model", "formulate and test a
   hypothesis", "brainstorm novel research directions", "write this up as a
   scientific report", "co-scientist". NOT for one-off factual or algebra
@@ -13,7 +15,7 @@ description: >-
   debugging — answer those directly without this workflow.
 license: MIT
 metadata:
-  version: "0.6.1"
+  version: "0.7.0"
 ---
 
 # Co-Scientist: Scientific Research Partner
@@ -28,6 +30,11 @@ conclusions, and assembles a LaTeX report. Its guiding rule: **verify substance,
 do not just perform process.** A well-formatted but wrong derivation, a fabricated
 citation, or an unchallenged hypothesis is a failure even if every step was
 "followed."
+
+It is also a **composer**: four portions of the work belong to sibling skills
+(citations, figures, Python, report prose) and are done by loading those
+skills at the point of use, never by rules restated here — see Component
+Skills below.
 
 This skill is **harness-agnostic**: it runs on Claude Code, OpenAI Codex,
 Google Antigravity, or any other agent harness, by mapping its capabilities
@@ -54,10 +61,15 @@ Fallback.
 | `<image-gen>`         | *(none — use Fallback)*                         | *(none — use Fallback)*            | `generate_image`                        | matplotlib / TikZ / Mermaid            |
 | `<run-shell>`         | `Bash` tool                                    | `shell`                            | shell/terminal tool                     | — (required)                           |
 | `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | `apply_patch` / shell              | file read/write tools                   | — (required)                           |
+| `<load-skill>`        | `Skill` tool, by name                          | `<read-file>` `<skills>/<name>/SKILL.md` | skill auto-loaded, else read its `SKILL.md` | `<read-file>` `<skills>/<name>/SKILL.md`, whole |
 
 † arXiv API: `http://export.arxiv.org/api/query?search_query=...`
   OpenAlex API: `https://api.openalex.org/works?search=...`
-  Crossref (DOI resolve): `https://api.crossref.org/works/<doi>`
+  These are for *finding* papers. Confirming that a paper exists and says what
+  it is cited for is cite-check's (Component Skills).
+
+`<skills>` is the directory that holds this skill's siblings: the parent of
+`<skill-dir>`.
 
 **Minimum viable harness:** `<run-shell>` (with Python) and file read/write —
 these power CAS verification, data analysis, and report compilation, and have
@@ -82,10 +94,12 @@ hand-rolled equivalents wherever they apply:
 | Tool | Replaces | Details in |
 |------|----------|-----------|
 | `verify_derivation` | writing + running a per-derivation sympy check script (for expression-chain steps) | `protocols/cas_verification.md` §0 |
-| `resolve_citation` | hand-fetching arXiv/DOI/OpenAlex pages to confirm a citation | `subagents.md` (Literature) |
 | `manifest_init` / `manifest_read` / `manifest_append` / `manifest_set` / `manifest_update_checkpoint` | hand-editing `checkpoints/manifest.json` (file-locked; ids allocated atomically; `verified: true` requires evidence) | `protocols/checkpointing.md` |
 | `validate_figures` | eyeballing `\includegraphics` targets | `protocols/reporting.md` |
 | `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: refuses while unverified derivation/data checkpoints or missing figures exist | `protocols/reporting.md` §4 |
+
+This toolbox has no citation tools: those are cite-check's own toolbox
+(`mcp__cite-check__*`), reached as its contract says (Component Skills).
 
 **Bootstrap check (do this once, when entering Derivation or Full Project
 mode):**
@@ -107,6 +121,44 @@ mode):**
 If both registration and CLI mode fail (e.g. no Python), fall back to the prose
 protocols in `references/` — they remain the full specification of what the
 tools enforce. Never edit anything under `mcp/` during a run.
+
+---
+
+## Component Skills — delegated, never restated
+
+co-scientist decides *whether*, *what* and *when*; four sibling skills decide
+*how* for their portion of the work. Their rules are not copied into this skill,
+its references, its subagent prompts or its checkpoints, so every change made
+to one of them applies to the next co-scientist run with no edit here.
+
+| Portion | Skill | co-scientist keeps | The skill owns | Phases |
+|---------|-------|--------------------|----------------|--------|
+| Citations | **cite-check** | literature discovery, the novelty verdict, which claims need a citation | identifiers, official BibTeX (`report.bib`), claim support, the `audit` gate | 4, 10 |
+| Figures | **plot-style** | whether a figure helps, what it shows, its `fig_NNN` name, the manifest entry | how every matplotlib figure looks, is sized and is saved, and its checks | 6, 9 |
+| Python | **code-style** | what a script computes, its seed, its name under `scripts/` | how the code is written, the uv environment, lint and type checks | 0, 6, 9 |
+| Report prose | **co-writer** | the report's structure and content (`reporting.md` §3) | how its sentences read, with every number, hedge and citation preserved | 10 |
+
+Rules for every portion:
+
+1. **Load at the point of use, in full.** `<load-skill>` the skill when its
+   portion first comes up in a run, and follow it as written; never work from
+   memory of it or from a summary in this skill. A subagent doing that work
+   gets the skill's *name* in its prompt and loads it itself — not a
+   paraphrase of its rules.
+2. **The skill wins on its portion.** Where anything in co-scientist appears to
+   disagree with it, the component skill's text is the one followed. The only
+   co-scientist decisions that bind it are the interface points named in the
+   protocols: figure paths (`figures/fig_NNN_*.png`, which plot-style defers
+   to), the report template's measured width, and `report.bib` as the
+   bibliography file.
+3. **Its checks are its own.** co-scientist records the *outcome* of a
+   component's checks as evidence (in the checkpoint or manifest); it does not
+   re-implement them.
+4. **A missing skill is said once, not substituted.** If `<load-skill>` cannot
+   find one, tell the user and record it in the manifest's `next_action`.
+   Without cite-check no citation enters the report (literature claims stay
+   marked **UNVERIFIED**); without plot-style, code-style or co-writer the work
+   proceeds unstyled and the report's Limitations section says so.
 
 ---
 
@@ -156,7 +208,7 @@ compiled report. Quick and Derivation modes stay in the conversation.
 ## Core Principles
 
 1. **Verify substance, not process.** Independently check math (symbolic +
-   numeric), verify that every citation resolves, and red-team conclusions.
+   numeric), have cite-check verify every citation, and red-team conclusions.
 2. **Collaborative & calibrated.** Build ideas with the user in natural dialogue.
    Tag every hypothesis and result with a confidence level and the reason for it.
    Ask clarifying questions **one at a time**, never as a list of five.
@@ -175,6 +227,7 @@ compiled report. Quick and Derivation modes stay in the conversation.
 
 Detailed protocols live in `references/` and are loaded on demand (see Reference
 Index). Read each one when its phase begins — do not load them all up front.
+The same holds for the component skills: load each when its portion begins.
 
 ---
 
@@ -188,7 +241,8 @@ bootstrap check**. Create the workspace and **run manifest** with
 `manifest_init` (it creates `checkpoints/`, `figures/`, `scripts/` and
 `checkpoints/manifest.json` atomically; on an existing manifest it resumes
 instead of overwriting). Write `checkpoint_000_project_init.md` with the user's
-goal and detected harness.
+goal and detected harness. Before the first script runs, set up the run's
+environment under **code-style** (`checkpointing.md` → Reproducibility).
 → `references/protocols/checkpointing.md`
 
 **Phase 1 — Explore & clarify.** Read any provided notes/data. Ask clarifying
@@ -213,9 +267,11 @@ user approval.** Revise on request. On approval, write the design checkpoint.
 *(In Derivation mode this gate is the lighter "Derivation Plan" confirmation.)*
 
 **Phase 4 — Literature grounding + novelty verdict.** Delegate to the Literature
-subagent. It returns verified citations (every paper carries a resolvable
-arXiv/DOI/OpenAlex id, confirmed via `<web-fetch>` — never composed from memory)
+subagent. It surveys the field and returns candidate papers — each identified
+through **cite-check** (never from memory) — with the claim each would support,
 and an explicit **novelty verdict**: is this already done / refuted / open?
+The orchestrator adds the papers the report will cite to `report.bib` through
+cite-check.
 → `references/subagents.md`
 
 ⛔ **Phase 5 — Review gate.** Relay the novelty verdict and literature summary.
@@ -227,7 +283,9 @@ Derivation subagent and/or data work to the Computation subagent. Both produce
 **verified** results (per-step CAS verification for math — via the
 `verify_derivation` tool for expression chains, custom check scripts for
 structures it cannot express; reproducible runs with effect sizes for data).
-Record verification with `manifest_update_checkpoint` (+ evidence).
+Record verification with `manifest_update_checkpoint` (+ evidence). Every
+script is written under **code-style**; any figure made along the way, under
+**plot-style**.
 → `references/protocols/math_derivation.md`, `references/protocols/cas_verification.md`, `references/protocols/data_analysis.md`
 
 **Phase 7 — Red-team.** Delegate to the Red-Team / Reviewer subagent: an
@@ -247,7 +305,7 @@ Branch:
   out and why it matters). Negative results are valid outputs, not failures.
 
 **Phase 9 — Visualization.** For results that a figure clarifies, delegate to the
-Visualization subagent.
+Visualization subagent. This phase picks the figures; **plot-style** makes them.
 → `references/protocols/visualization.md`
 
 **Phase 10 — Assemble & compile report.** Delegate sections to Section Writer
@@ -255,9 +313,11 @@ subagents. The orchestrator copies the template to `report.tex` in the working
 directory (never edits the bundled template) and passes each writer the **exact**
 figure paths from the manifest. The report is **pedagogical, not condensed**:
 full problem setup, every derivation step, all experimental details, algorithm
-floats and conceptual figures — length is not a constraint. Compile with the
-`compile_report` tool — it mechanically enforces the verification and figure
-gates before running LaTeX.
+floats and conceptual figures — length is not a constraint. Then, in order:
+**co-writer** rewrites each section's prose in the author's voice; **cite-check**
+judges every citation in the final prose and its `audit` must pass; the
+`compile_report` tool compiles, mechanically enforcing the verification and
+figure gates before running LaTeX.
 → `references/protocols/reporting.md`
 
 ---
@@ -268,11 +328,11 @@ The orchestrator delegates **by kind of work** (to isolate context), not by a
 guessed line count. Roster (full definitions and prompt templates in
 `references/subagents.md`):
 
-- **Literature** — survey + verify citations + novelty verdict
+- **Literature** — survey + candidate citations (ids via cite-check) + novelty verdict
 - **Derivation** — rigorous, sanity-checked math, step-chain-verified with a CAS (SymPy)
 - **Computation** — coding, numerical experiments, and real-data analysis
 - **Red-Team / Reviewer** — adversarial verification of a *different* agent's work
-- **Visualization** — publication-quality figures
+- **Visualization** — chooses and produces figures (made under plot-style)
 - **Section Writer** — drafts one report section from checkpoints
 
 ### Subagent Contract (read before spawning any subagent)
@@ -296,6 +356,9 @@ subagents cannot write to the orchestrator's files:
    depend on earlier ones). Run in parallel **only** for genuinely independent,
    non-overlapping work (e.g. several distinct literature topics, or independent
    figures), and only after the orchestrator has pre-allocated their id ranges.
+6. **Component skills by name.** A subagent whose work falls in a component
+   skill's portion is told which skill to load; its prompt never carries that
+   skill's rules.
 
 ---
 
@@ -315,8 +378,9 @@ step-chain CAS verification gate — every load-bearing step checked symbolicall
 where decidable, numerically (logged seed) otherwise, unverifiable steps
 explicitly flagged — per the Math Derivation and CAS Verification Protocols.
 A citation may
-NOT enter the report until its identifier has been resolved (the
-`resolve_citation` tool, else `<web-fetch>`). Where the MCP Toolbox is
+NOT enter the report except through **cite-check**, and a report that cites
+anything is not compiled until cite-check's `audit` returns `ok: true` with
+`require_support: true`. Where the MCP Toolbox is
 available, this gate is **mechanically enforced**: `verified: true` can only be
 recorded through `manifest_update_checkpoint` with evidence, and
 `compile_report` refuses to build while unverified derivation/data checkpoints
@@ -342,7 +406,11 @@ lower the result's confidence, before compiling.
   one-line note. Burying the key step in filler is worse than brevity.
 - **Asking five questions at once.** Clarify one question at a time.
 - **Trusting model memory for facts or citations.** Always ground via
-  `<literature-search>`; verify every identifier resolves.
+  `<literature-search>`. A citation is checked by cite-check's tools, not by
+  fetching a page and deciding it looks right.
+- **Restating a component skill.** Copying a plot-style, code-style,
+  co-writer or cite-check rule into a prompt, checkpoint or protocol freezes
+  it at today's version. Name the skill; let it be loaded.
 - **Self-grading.** The agent that produced a derivation must not be the one that
   "verifies" it. Use an independent Red-Team / Reviewer invocation.
 - **Subagents writing to shared files / inventing ids.** Orchestrator is the sole
@@ -367,6 +435,9 @@ Load on demand — read each file when its phase begins, not all up front:
 - `references/protocols/reporting.md` — assemble & compile the LaTeX report safely
 - `references/subagents.md` — subagent definitions, prompt templates, the contract
 - `references/strategy_index.md` — brainstorming frameworks (open-ended ideation only)
+- Component skills, loaded with `<load-skill>` when their portion begins:
+  **cite-check** (its caller contract: `<skills>/cite-check/references/integration.md`),
+  **plot-style**, **code-style**, **co-writer**
 - `mcp/server.py` — the MCP Toolbox implementation (tools listed above); `mcp/setup_mcp.sh` — idempotent per-harness registration; `tests/verify_mcp.sh` — toolbox smoke tests
 
 ## Process Flow
@@ -384,6 +455,9 @@ flowchart TD
   red --> decide{{"8. Outcome: supported?"}}
   decide -- no --> rank
   decide -- yes --> viz["9. Visualization"]
-  viz --> report["10. Assemble + compile report"]
+  viz --> report["10. Assemble report<br/>(co-writer prose)"]
   decide -- "negative result" --> report
+  report --> audit{{"cite-check audit ok?"}}
+  audit -- no --> report
+  audit -- yes --> compile["compile_report"]
 ```

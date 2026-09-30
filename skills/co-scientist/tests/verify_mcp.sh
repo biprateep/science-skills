@@ -2,9 +2,9 @@
 # ==============================================================================
 # Smoke-test the co-scientist MCP toolbox (CLI mode — no MCP client needed).
 #
-#   bash tests/verify_mcp.sh [--network]
+#   bash tests/verify_mcp.sh
 #
-# --network additionally exercises resolve_citation against live registries.
+# Citation tools are cite-check's; its own tests/verify_mcp.sh covers them.
 # Uses mcp/.venv if present, else system python3 (needs sympy).
 # ==============================================================================
 set -uo pipefail
@@ -71,17 +71,6 @@ fi
 printf '\\documentclass{article}\\usepackage{graphicx}\\begin{document}\\includegraphics{nope}\\end{document}\n' > "$W/fig.tex"
 check "figures: missing target detected" 1 "$PY" "$SERVER" call validate_figures \
   "{\"tex_path\": \"$W/fig.tex\"}"
-
-if [ "${1:-}" = "--network" ]; then
-    check "citation: real arXiv id resolves" 0 "$PY" "$SERVER" call resolve_citation \
-      '{"identifier": "arXiv:1706.03762"}'
-    check "citation: real DOI resolves" 0 "$PY" "$SERVER" call resolve_citation \
-      '{"identifier": "10.1103/PhysRev.47.777"}'
-    check "citation: fake id rejected" 1 "$PY" "$SERVER" call resolve_citation \
-      '{"identifier": "2599.99999"}'
-else
-    echo "SKIP  citation checks (pass --network to enable)"
-fi
 
 echo ""
 echo "$PASS passed, $FAIL failed"

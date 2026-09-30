@@ -21,10 +21,11 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
 | Harness adapter | Skill detects the harness and uses the right tools for `<literature-search>`, `<spawn-subagent>`, etc. |
 | Hypothesis ranking | 3–5 framings generated and ranked before the design gate |
 | Math rigor + verification | CLT via characteristic functions has ≥8 load-bearing steps; sanity + sympy/numeric verification |
-| Literature + novelty | Verified citations (resolvable ids) + a novelty verdict |
+| Literature + novelty | Citations through cite-check (audit ok) + a novelty verdict |
 | Red-team | Independent reviewer challenges the derivation |
 | Checkpoints + manifest | Multiple phases, resumable manifest |
-| Visualization | Histogram convergence to Gaussian, inline |
+| Visualization | Histogram convergence to Gaussian, inline, made under plot-style |
+| Component skills | cite-check, plot-style, code-style and co-writer loaded for their portions; none restated |
 | Report | Compiles, with an Assumptions and Limitations section |
 
 ---
@@ -78,7 +79,7 @@ After completion, from the **clean working directory** run:
 - [ ] Covers: definition of φ_X(t), c.f. of the standardized sum, Taylor expansion of log φ, limit → Gaussian c.f., Lévy continuity theorem
 
 ### Literature, novelty & honesty
-- [ ] Citations carry resolvable arXiv/DOI/OpenAlex ids confirmed via fetch (no fabricated references)
+- [ ] `report.bib` was written by cite-check (provenance comments on every entry) and cite-check's `audit` with `require_support: true` is `ok` on the final `report.tex`
 - [ ] An explicit novelty verdict is given
 - [ ] A red-team / review checkpoint exists, produced by a separate invocation
 - [ ] Hypotheses and results carry confidence tags
@@ -96,10 +97,17 @@ After completion, from the **clean working directory** run:
 - [ ] ≥1 `viz_*.py` and ≥1 figure in `figures/`, with a logged seed
 - [ ] Histogram convergence to Gaussian across sample sizes, with a quantitative agreement metric
 - [ ] Figures referenced inline in checkpoints and the report (not a trailing dump)
+- [ ] Every `viz_*.py` passes plot-style's checker; report figures are drawn at the template width and included without rescaling
 
 ### Report quality
 - [ ] `report.tex` exists in the working directory (the bundled template was NOT edited in place)
 - [ ] Compiles to PDF without errors; `\includegraphics` inline; an Assumptions and Limitations section is present
+- [ ] The report prose went through co-writer (an entry for `report.tex` in `~/.co-writer/`), and its numbers and claims match the checkpoints
+
+### Component skills
+- [ ] Each of cite-check, plot-style, code-style and co-writer was loaded when its portion began (by the orchestrator or by the subagent doing that work)
+- [ ] No subagent prompt or checkpoint restates one of their rules; prompts name the skill instead
+- [ ] Every script under `scripts/` passes code-style's checker
 
 ---
 

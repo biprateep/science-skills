@@ -17,11 +17,9 @@ import random
 import re
 import subprocess
 import sys
-import urllib.request
-import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 # ---------------------------------------------------------------------------
 # ping
@@ -219,84 +217,6 @@ def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 1234
 
 
 # ---------------------------------------------------------------------------
-# resolve_citation — arXiv / DOI / OpenAlex
-# ---------------------------------------------------------------------------
-
-_ARXIV_NEW = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
-_ARXIV_OLD = re.compile(r"^[a-z-]+(\.[A-Z]{2})?/\d{7}$")
-
-
-def _http_get(url, timeout):
-    req = urllib.request.Request(url, headers={"User-Agent": f"co-scientist-mcp/{VERSION}"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="replace")
-
-
-def resolve_citation(identifier: str, timeout: int = 20) -> dict:
-    """Resolve an arXiv id, DOI, or OpenAlex id to real bibliographic metadata.
-
-    Returns resolved=False with a reason if the identifier does not exist —
-    a citation may not enter the manifest/report unless resolved=True.
-    """
-    raw = identifier.strip()
-    ident = re.sub(r"^(arxiv:|doi:)\s*", "", raw, flags=re.I)
-    ident = re.sub(r"^https?://(www\.)?(arxiv\.org/(abs|pdf)/|doi\.org/|openalex\.org/)", "", ident, flags=re.I)
-    ident = ident.strip().rstrip("/").removesuffix(".pdf")
-
-    try:
-        if _ARXIV_NEW.match(ident) or _ARXIV_OLD.match(ident):
-            body = _http_get(f"http://export.arxiv.org/api/query?id_list={ident}", timeout)
-            ns = {"a": "http://www.w3.org/2005/Atom"}
-            entry = ET.fromstring(body).find("a:entry", ns)
-            title = entry.findtext("a:title", "", ns).strip() if entry is not None else ""
-            if not title or title == "Error":
-                return {"resolved": False, "id": raw, "id_type": "arxiv",
-                        "reason": "arXiv API returned no entry for this id"}
-            return {
-                "resolved": True, "id": f"arXiv:{ident}", "id_type": "arxiv",
-                "title": re.sub(r"\s+", " ", title),
-                "authors": [a.findtext("a:name", "", ns)
-                            for a in entry.findall("a:author", ns)][:10],
-                "year": (entry.findtext("a:published", "", ns) or "")[:4],
-                "venue": "arXiv",
-                "url": f"https://arxiv.org/abs/{ident}",
-            }
-        if ident.startswith("10."):
-            data = json.loads(_http_get(f"https://api.crossref.org/works/{ident}", timeout))
-            msg = data.get("message", {})
-            issued = (msg.get("issued", {}).get("date-parts") or [[None]])[0][0]
-            return {
-                "resolved": True, "id": ident, "id_type": "doi",
-                "title": (msg.get("title") or ["(untitled)"])[0],
-                "authors": [f"{a.get('given', '')} {a.get('family', '')}".strip()
-                            for a in msg.get("author", [])][:10],
-                "year": str(issued) if issued else "",
-                "venue": (msg.get("container-title") or [""])[0],
-                "url": f"https://doi.org/{ident}",
-            }
-        if re.match(r"^[Ww]\d+$", ident):
-            data = json.loads(_http_get(f"https://api.openalex.org/works/{ident.upper()}", timeout))
-            return {
-                "resolved": True, "id": ident.upper(), "id_type": "openalex",
-                "title": data.get("display_name", "(untitled)"),
-                "authors": [a["author"]["display_name"]
-                            for a in data.get("authorships", [])][:10],
-                "year": str(data.get("publication_year", "")),
-                "venue": ((data.get("primary_location") or {}).get("source") or {}).get("display_name", ""),
-                "url": data.get("id", ""),
-            }
-        return {"resolved": False, "id": raw,
-                "reason": "unrecognized identifier — expected arXiv id, DOI (10.*), or OpenAlex Wnnn"}
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return {"resolved": False, "id": raw, "reason": "identifier not found (HTTP 404)"}
-        return {"resolved": False, "id": raw, "reason": f"HTTP {exc.code} from registry"}
-    except Exception as exc:
-        return {"resolved": False, "id": raw,
-                "reason": f"lookup failed ({type(exc).__name__}: {exc}) — retry or mark UNVERIFIED"}
-
-
-# ---------------------------------------------------------------------------
 # manifest — single-writer, file-locked run state
 # ---------------------------------------------------------------------------
 
@@ -373,8 +293,8 @@ def manifest_append(workdir: str, section: str, entry: dict) -> dict:
     For checkpoints: the id and filename are ALLOCATED HERE (single-writer id
     authority) — pass "descriptor" and "phase"; never pass an id. New
     checkpoints always start verified=false; only manifest_update_checkpoint
-    with evidence can flip it. Citations with resolved!=true are recorded but
-    flagged — they may not enter the report.
+    with evidence can flip it. Citations come from the cite-check skill; one
+    with resolved!=true is recorded but flagged — it may not enter the report.
     """
     workdir = os.path.abspath(workdir)
     if section not in _LIST_SECTIONS:
@@ -399,8 +319,8 @@ def manifest_append(workdir: str, section: str, entry: dict) -> dict:
             entry.setdefault("status", "in-progress")
             manifest["next_id"] += 1
         if section == "citations" and entry.get("resolved") is not True:
-            notes.append("citation is NOT resolved — verify with resolve_citation "
-                         "before it may enter the report")
+            notes.append("citation is NOT resolved — identify it through the "
+                         "cite-check skill before it may enter the report")
         manifest[section].append(entry)
         _save_manifest(workdir, manifest)
     result = {"appended": entry, "section": section}
@@ -432,7 +352,7 @@ def manifest_update_checkpoint(workdir: str, checkpoint_id: str, status: str | N
 
     Setting verified=true REQUIRES evidence: a concrete pointer such as the
     verify_derivation summary, a check-script path + exit status, or a
-    resolve_citation result. This is the only way verified becomes true.
+    cite-check audit result. This is the only way verified becomes true.
     """
     workdir = os.path.abspath(workdir)
     if verified is True and not (evidence and len(evidence.strip()) >= 10):
@@ -566,7 +486,6 @@ def compile_report(workdir: str, name: str = "report", allow_unverified: bool = 
 TOOLS = {
     "ping": ping,
     "verify_derivation": verify_derivation,
-    "resolve_citation": resolve_citation,
     "manifest_init": manifest_init,
     "manifest_read": manifest_read,
     "manifest_append": manifest_append,
@@ -609,7 +528,6 @@ def _run_cli(argv):
     if isinstance(result, dict) and (result.get("error")
                                      or result.get("verified") is False
                                      or result.get("success") is False
-                                     or result.get("resolved") is False
                                      or result.get("ok") is False):
         sys.exit(1)
 

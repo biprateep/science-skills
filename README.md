@@ -133,8 +133,9 @@ perform process** — and features:
 - **Verified mathematics**: step-by-step derivations with dimensional/limiting-case
   sanity checks and independent symbolic + numeric (`sympy`) verification — not
   just well-formatted output.
-- **Grounded, fact-checked literature**: every citation resolves to a real
-  arXiv/DOI/OpenAlex id, plus an explicit novelty / prior-art verdict.
+- **Grounded literature**: a survey with an explicit novelty / prior-art
+  verdict; every citation goes through cite-check (real paper, official
+  BibTeX, claim supported, `audit` ok before the report compiles).
 - **Adversarial red-team**: an independent reviewer tries to break each result
   before it reaches the report.
 - **Reproducible computation & data analysis**: seeds, an environment locked
@@ -142,8 +143,13 @@ perform process** — and features:
   datasets.
 - **Single-writer subagent orchestration**: a resumable run manifest, an
   assumptions/limitations ledger, and LaTeX reporting that compiles to PDF.
+- **Composes the other skills, never copies them**: citations are
+  cite-check's, figures plot-style's, Python and its uv environment
+  code-style's, and report prose co-writer's. Each is loaded when its portion
+  of the run begins, so an update to any of them reaches co-scientist with no
+  edit to it.
 - **MCP Toolbox** (`skills/co-scientist/mcp/`): the enforcement-critical core —
-  step-chain CAS verification, citation resolution, file-locked manifest
+  step-chain CAS verification, file-locked manifest
   state, figure validation, and a gate-enforcing report compiler — implemented
   as an MCP server, so verdicts come from code the agent cannot narrate around.
   `scripts/install.sh` builds and registers it in every harness found on the
@@ -153,8 +159,8 @@ perform process** — and features:
   (`mcp/server.py call <tool> '<json>'`) for the current session.
 
 ### Cite-Check (`skills/cite-check`)
-Citation integrity for anything the agent writes with references, built on
-the co-scientist `resolve_citation` idea and hardened against the ways an LLM
+Citation integrity for anything the agent writes with references, grown out
+of co-scientist's former `resolve_citation` tool and hardened against the ways an LLM
 bibliography actually fails:
 - **Existence, properly tested**: every entry's own DOI / arXiv id / bibcode is
   resolved and its title, first author and year compared with the registry

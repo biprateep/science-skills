@@ -16,6 +16,9 @@ set -uo pipefail
 
 WORKDIR="${1:-.}"
 CKPT="${WORKDIR}/checkpoints"
+# The sibling skills co-scientist delegates to; their own checkers are run
+# below, so a change to any of them is picked up here with no edit.
+SKILLS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ERRORS=0
 WARNINGS=0
 
@@ -177,6 +180,58 @@ if [ -n "${TEX_FILE:-}" ] && [ -f "$TEX_FILE" ]; then
     [ -f "$PDF_FILE" ] && pass "PDF compiled: $(basename "$PDF_FILE")" || warn "PDF not found — report may not have compiled"
 else
     warn "No .tex report found (OK for non-report runs)"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Component skills — each one's own checker, never a copy of its rules
+# ---------------------------------------------------------------------------
+echo "--- Component Skills ---"
+PY_SCRIPTS=$(find "${WORKDIR}/scripts" -name "*.py" 2>/dev/null)
+CODE_CHECK="${SKILLS}/code-style/scripts/check_code_style.py"
+if [ -z "$PY_SCRIPTS" ]; then
+    echo "INFO: no scripts to check against code-style"
+elif [ -f "$CODE_CHECK" ]; then
+    if python3 "$CODE_CHECK" "${WORKDIR}/scripts" >/dev/null 2>&1; then
+        pass "scripts/ passes code-style's checker"
+    else
+        warn "scripts/ fails code-style's checker — run: python3 ${CODE_CHECK} ${WORKDIR}/scripts"
+    fi
+else
+    warn "code-style skill not found at ${SKILLS}/code-style"
+fi
+
+VIZ_FILES=$(find "${WORKDIR}/scripts" -name "viz_*.py" 2>/dev/null)
+PLOT_CHECK="${SKILLS}/plot-style/scripts/check_plot_style.py"
+if [ -z "$VIZ_FILES" ]; then
+    echo "INFO: no viz_*.py to check against plot-style"
+elif [ -f "$PLOT_CHECK" ]; then
+    # shellcheck disable=SC2086
+    if python3 "$PLOT_CHECK" $VIZ_FILES >/dev/null 2>&1; then
+        pass "viz_*.py pass plot-style's checker"
+    else
+        warn "viz_*.py fail plot-style's checker — run: python3 ${PLOT_CHECK} ${WORKDIR}/scripts/viz_*.py"
+    fi
+else
+    warn "plot-style skill not found at ${SKILLS}/plot-style"
+fi
+
+REPORT_TEX="${WORKDIR}/report.tex"
+CITE_PY="${SKILLS}/cite-check/mcp/.venv/bin/python"
+CITE_SERVER="${SKILLS}/cite-check/mcp/server.py"
+if [ -f "$REPORT_TEX" ] && grep -qE '^[^%]*\\(no)?cite' "$REPORT_TEX"; then
+    if [ -x "$CITE_PY" ] && [ -f "$CITE_SERVER" ]; then
+        if "$CITE_PY" "$CITE_SERVER" call audit \
+            "{\"tex_path\": \"$(cd "$WORKDIR" && pwd)/report.tex\", \"require_support\": true}" >/dev/null 2>&1; then
+            pass "cite-check audit ok on report.tex"
+        else
+            fail "cite-check audit not ok on report.tex — see ${WORKDIR}/.cite-check/audit.md"
+        fi
+    else
+        warn "report cites papers but cite-check's toolbox is not installed (${SKILLS}/cite-check/mcp/setup_mcp.sh)"
+    fi
+else
+    echo "INFO: report.tex cites nothing — cite-check audit not needed"
 fi
 echo ""
 

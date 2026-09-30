@@ -26,7 +26,10 @@
 % \usepackage{algorithm}
 % \usepackage{algpseudocode}
 
-% Figures are stored in the figures/ directory, relative to THIS file.
+% Figures are stored in the figures/ directory, relative to THIS file, and are
+% drawn under plot-style at this template's measured width (\textwidth =
+% 452.9679pt; protocols/visualization.md), so they are included at the width
+% they were drawn for and never rescaled.
 % IMPORTANT: copy this template to your working directory as report.tex and
 % compile it there (where figures/ lives) — do not edit/compile it in resources/.
 \graphicspath{{figures/}}
@@ -50,7 +53,7 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 % If a conceptual diagram helps motivate the problem, include it here:
 % \begin{figure}[H]
 %   \centering
-%   \includegraphics[width=0.7\textwidth]{fig_001_concept.png}
+%   \includegraphics[width=\textwidth]{fig_001_concept.png}
 %   \caption{Conceptual overview of the problem domain.}
 %   \label{fig:concept}
 % \end{figure}
@@ -60,7 +63,7 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 % Include comparative figures inline where they support the narrative:
 % \begin{figure}[H]
 %   \centering
-%   \includegraphics[width=0.7\textwidth]{fig_002_comparison.png}
+%   \includegraphics[width=\textwidth]{fig_002_comparison.png}
 %   \caption{Comparison of existing approaches.}
 %   \label{fig:lit-comparison}
 % \end{figure}
@@ -74,7 +77,7 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 % Embed visualizations inline where they illustrate a derivation step:
 % \begin{figure}[H]
 %   \centering
-%   \includegraphics[width=0.7\textwidth]{fig_003_derivation_plot.png}
+%   \includegraphics[width=\textwidth]{fig_003_derivation_plot.png}
 %   \caption{Visualization of [specific step or function] from the derivation.}
 %   \label{fig:derivation-viz}
 % \end{figure}
@@ -86,7 +89,7 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 % Include result figures inline:
 % \begin{figure}[H]
 %   \centering
-%   \includegraphics[width=0.7\textwidth]{fig_004_results.png}
+%   \includegraphics[width=\textwidth]{fig_004_results.png}
 %   \caption{Numerical verification of theoretical predictions.}
 %   \label{fig:results}
 % \end{figure}
@@ -98,7 +101,8 @@ This report summarizes the brainstorming, literature review, and mathematical pr
 % Do not omit this section, especially for negative results.
 
 % --- Bibliography (optional) ---
-% To enable: write your verified citations to report.bib and UNCOMMENT the
+% To enable: have cite-check write report.bib (never by hand; see
+% protocols/reporting.md §5) and UNCOMMENT the
 % \bibliography line below. compile_report.sh runs bibtex only when both
 % report.bib exists AND an active \bibliography{...} is present.
 \bibliographystyle{plain}

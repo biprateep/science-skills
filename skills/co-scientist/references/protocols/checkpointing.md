@@ -88,6 +88,9 @@ reconstruct state. Schema:
 }
 ```
 
+`citations` entries are copied from cite-check's results, never decided here;
+the field mapping is in `<skills>/cite-check/references/integration.md`.
+
 Do not invent timestamps if your harness forbids nondeterministic clock calls in
 this context; use a `run_id` provided by the user or derived from the goal.
 
@@ -135,27 +138,14 @@ section.
 Anything stochastic or computational must be reproducible:
 
 - Every generated script **sets and logs an explicit RNG seed**.
-- The environment is **recorded by uv**, not described. Before the first script
-  runs, make a working directory of its own a uv project:
-
-  ```
-  uv init --bare                                     # writes pyproject.toml
-  uv add -r <skill-dir>/resources/requirements.txt   # numpy, scipy, sympy, ...
-  ```
-
-  Add anything else a script needs with `uv add <package>`, and run every
-  script through the environment: `uv run python scripts/<name>.py`.
-  `pyproject.toml` and `uv.lock`, which pins every version, ship with the
-  project. Never `pip install` into it, and keep no `requirements.txt` beside
-  the lock.
-- A working directory inside an existing project (a `pyproject.toml` here or
-  above, a conda environment, a virtualenv) uses that project's environment
-  and records versions its own way; add packages to it only with the user's
-  agreement.
-- A script meant to run on its own, outside any project, declares its
-  dependencies inline instead (PEP 723): `uv add --script <file> <packages>`.
+- Every script is written, and the run's environment set up and used, under
+  the **code-style** skill: `<load-skill>` it before the first script runs and
+  follow its toolchain for this working directory (a directory of its own, a
+  directory inside an existing project, or a standalone script). co-scientist
+  adds only its dependency list, `<skill-dir>/resources/requirements.txt`,
+  into that environment (code-style's Interaction section names the command).
+  Whatever lockfile or environment record code-style produces ships with the
+  report.
 - Each run records its environment (Python version + key library versions) into
   the relevant checkpoint.
 - Record the exact command used to produce each figure/result in the manifest.
-- Scripts follow the code-style skill: modules imported, Google docstrings,
-  randomness from one seeded generator passed to whatever needs it.

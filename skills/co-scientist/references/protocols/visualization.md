@@ -5,11 +5,33 @@ Visualization is **encouraged where it genuinely aids understanding** — it is 
 mandatory, and a gratuitous plot of a purely symbolic result adds nothing. Create
 a figure when it makes a concept, comparison, or result easier to grasp.
 
+This protocol decides **whether** to make a figure, **what** it shows and
+**where** it goes. **How** a matplotlib figure looks, is sized and is saved
+belongs to the **plot-style** skill, and how its script is written to
+**code-style**: load both with `<load-skill>` before the first plotting script
+of a run and follow them in full (SKILL.md → Component Skills). Nothing below
+restates either.
+
+## Interface points (the only co-scientist decisions plot-style follows)
+
+- **Paths.** Script `scripts/viz_NNN_<descriptor>.py`, figure
+  `figures/fig_NNN_<descriptor>.png`, with `NNN` from the manifest. The report
+  template's `\graphicspath{{figures/}}` needs that directory; plot-style's own
+  Interaction section defers the directory to co-scientist.
+- **Report geometry.** `report.tex` is the bundled template (`article`, 11 pt,
+  A4, 1 in margins), not a journal class. Its measured widths are
+  `\textwidth` = `\columnwidth` = **452.9679 pt**. Register them as plot-style
+  says for a class it does not know, under the name `co-scientist-report`, and
+  size every report figure from them; include it at the matching width
+  (`width=\textwidth`, or the deliberate fraction it was drawn at) so LaTeX
+  never rescales it. If the template's class, font size, paper or margins
+  change, measure again and change this number.
+
 ## Tooling (via the Harness Adapter)
 
 - **matplotlib (default)** for all quantitative graphics: function plots, phase
   diagrams, histograms, scatter/contour, time series, model comparisons,
-  distribution fits. Write self-contained Python scripts (matplotlib + numpy).
+  distribution fits, made under plot-style.
 - **`<image-gen>`** ONLY for genuine images that cannot be drawn quantitatively
   (an artistic schematic, a physical-apparatus illustration). On harnesses with
   no `<image-gen>` (e.g. Claude Code), use the **fallback**: **TikZ** (compiles in
@@ -46,11 +68,14 @@ is drawn.
 
 ## Implementation Steps
 
-1. Write a self-contained script; **set and log an RNG seed** if anything is
-   stochastic (see `checkpointing.md` → Reproducibility).
+1. Write a self-contained script under plot-style and code-style; **set and
+   log an RNG seed** if anything is stochastic (see `checkpointing.md` →
+   Reproducibility).
 2. Save the script to `scripts/viz_NNN_<descriptor>.py` (id from the manifest).
 3. Run it via `<run-shell>`; save output to `figures/fig_NNN_<descriptor>.png`.
-4. **Return** the figure path + a caption to the orchestrator (single-writer
+   Run the checks plot-style and code-style require and keep their output.
+4. **Return** the figure path, a caption, and those check results to the
+   orchestrator (single-writer
    rule: the orchestrator records it in the manifest and places it in the
    checkpoint/report). Do not edit another agent's checkpoint.
 5. Place the figure **inline** where the concept is discussed — never in a

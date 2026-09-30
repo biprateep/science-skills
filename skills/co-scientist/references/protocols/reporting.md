@@ -13,10 +13,9 @@ read-only. Copy it to the working directory as `report.tex` and edit **that**:
 cp <skill-dir>/resources/paper_template.tex ./report.tex
 ```
 
-The run's environment record ships with the report: `pyproject.toml` and
-`uv.lock`, created before the first script ran. If they are missing (no script
-has run yet), create them now as `checkpointing.md` → Reproducibility says; do
-not copy a `requirements.txt` in beside them.
+The run's environment record ships with the report, as it was set up before
+the first script ran (`checkpointing.md` → Reproducibility). If no script has
+run yet, set it up now the same way.
 
 Because the template sets `\graphicspath{{figures/}}` (relative), compilation
 **must** happen in the working directory, where `figures/` lives — which is
@@ -38,14 +37,21 @@ the manifest** — writers never guess `fig_NNN` ids. Map checkpoints → sectio
   especially — for negative results)
 
 Figures go **inline** in the section that discusses them, via
-`\includegraphics`, with a caption explaining what it shows and why it matters.
+`\includegraphics` at the width they were drawn for (`visualization.md` →
+Report geometry), with a caption explaining what it shows and why it matters.
 
-## 3. Writing style — pedagogy over compression
+Each writer gets the cite keys already in `report.bib`, each with the claim it
+was added for, and cites nothing else; a sentence that needs a new citation
+comes back marked `[cite]`, and the orchestrator adds the paper through
+cite-check (§5) before the prose pass.
+
+## 3. Content — pedagogy over compression
 
 The report's reader is a scientifically literate person who has **not** followed
 this project. Write to teach, not to summarize. Length is not a constraint: a
 long, clear report beats a short, dense one. Every Section Writer must follow
-these rules (the orchestrator includes them in each writer's prompt):
+these rules (the orchestrator includes them in each writer's prompt). They fix
+**what** the report contains; how its sentences read is co-writer's (§3a).
 
 - **Problem setup, always, in full.** Before any result: what question is being
   asked and why it matters, what the physical/mathematical objects are, every
@@ -77,7 +83,21 @@ these rules (the orchestrator includes them in each writer's prompt):
   one or two plain-language sentences saying what the upcoming math will
   accomplish and why.
 
+## 3a. Prose — co-writer
+
+Once every section is spliced into `report.tex`, the prose goes through the
+**co-writer** skill, section by section: `<load-skill>` it and follow its
+process in full, including its own checks, cold read and log. Tell it the
+register is *journal*; everything else about how it works is its own. co-writer
+preserves every number, claim, hedge, equation, figure and citation, so the
+verified content of §3 survives; if it reports a `[NEEDS: …]` or a cut, resolve
+that with the user, not by editing around it. Do not add style rules of your
+own to its brief. If co-writer is not installed, say so once and keep the
+drafted prose.
 ## 4. Validate figure references, then compile
+
+If the report cites anything, cite-check's `audit` (§5) must already have
+returned `ok: true` on the final `report.tex`. Then:
 
 **Preferred:** call the `compile_report` MCP tool (CLI fallback:
 `mcp/.venv/bin/python mcp/server.py call compile_report '{"workdir": "..."}'`).
@@ -99,14 +119,28 @@ extension) — same compile behavior, but the verification gate is then on your
 honor: re-read the manifest and confirm every derivation checkpoint is verified
 before compiling.
 
-## 5. Bibliography (optional)
+## 5. Bibliography — cite-check
 
-The template ships with `\bibliography` commented out. If you have citations,
-write them to `report.bib` and **uncomment** `\bibliography{report}` in
-`report.tex`. The compile script runs `bibtex` only when both `report.bib` exists
-**and** `report.tex` contains an active `\bibliography{...}` — so an orphan
-`.bib` will not trigger spurious bibtex errors, and an active bibliography
-without a `.bib` is reported clearly.
+Every citation in the report is **cite-check**'s work. `<load-skill>` it and
+follow its caller contract, `<skills>/cite-check/references/integration.md`,
+which wins wherever this section seems to differ:
+
+- `report.bib` is written only by cite-check (from the Literature phase and
+  any `[cite]` gaps); nothing is typed into it.
+- The support check runs **once, on the final prose** — after co-writer
+  (§3a), since a reworded sentence needs a fresh verdict — and then cite-check's
+  `audit` on `report.tex` with `require_support: true` must return `ok: true`.
+  Relay its failures and warnings to the user as it reports them; fix a
+  failure the way cite-check says, never by lowering the bar.
+- Copy each cited paper's outcome into the manifest's `citations` section
+  (the field mapping is in the contract).
+
+The template ships with `\bibliography` commented out; with citations,
+**uncomment** `\bibliography{report}` in `report.tex`. The compile step runs
+`bibtex` only when both `report.bib` exists **and** `report.tex` contains an
+active `\bibliography{...}` — so an orphan `.bib` will not trigger spurious
+bibtex errors, and an active bibliography without a `.bib` is reported
+clearly.
 
 ## 6. Negative-result reports
 
