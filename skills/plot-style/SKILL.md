@@ -2,8 +2,8 @@
 name: plot-style
 description: >-
   Enforce the publication matplotlib aesthetic on every figure: journal
-  column/text-width sizing (AASTeX by default, per-journal registry), Nimbus
-  Roman serif with Computer Modern math at 9/10/12 pt on every piece of text,
+  column/text-width sizing (AASTeX by default, per-journal registry),
+  Computer Modern (text and math) at 9/10/12 pt on every piece of text,
   inward ticks on all four sides, frameless legends, matplotlib's own
   default palettes (the tab10 cycle as C0/C1/C2, viridis) unless the user
   names one, and tight 300 dpi PNG output. This is the DEFAULT for all
@@ -14,7 +14,7 @@ description: >-
   figure, publication quality, or journal column width.
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # Publication Plot Style
@@ -71,7 +71,7 @@ import plotstyle
 
 # rcParams + AASTeX geometry; use_style(journal="...") for another class.
 plotstyle.use_style()
-# Raises if the serif face did not resolve or an rcParam was overridden.
+# Raises if the face is not Computer Modern or an rcParam was overridden.
 plotstyle.verify_style()
 ```
 
@@ -87,10 +87,11 @@ TEXT_WIDTH = 513.11743 / 72.27
 SMALL_SIZE = 9  # in pts
 NORMAL_SIZE = 10
 BIG_SIZE = 12
-FONT_FAMILY = "Nimbus Roman No9 L"
+SERIF_FALLBACKS = ["CMU Serif", "Latin Modern Roman", "cmr10"]
 
 RC_PARAMS = {
-    "font.family": FONT_FAMILY,
+    "font.family": "serif",
+    "font.serif": SERIF_FALLBACKS,
     "font.size": NORMAL_SIZE,
     "axes.titlesize": NORMAL_SIZE,
     "axes.labelsize": NORMAL_SIZE,
@@ -104,6 +105,7 @@ RC_PARAMS = {
     "figure.facecolor": "w",
     "figure.dpi": 300,
     "mathtext.fontset": "cm",
+    "axes.formatter.use_mathtext": True,
 }
 plt.rcParams.update(RC_PARAMS)
 ```
@@ -117,17 +119,23 @@ default palettes, and adds `legend.title_fontsize` (10 pt) and
 `figure.titlesize` (12 pt) so legend titles and suptitles also land on the
 type scale.
 
-> **Font availability.** `Nimbus Roman No9 L` is the URW Times clone
-> matching the manuscript body text; newer `urw-base35` packages ship the
-> same face as plain `Nimbus Roman`. On such a machine (this one included)
-> asking for the exact classic name makes matplotlib fall back to **DejaVu
-> Sans**, and it says so only in a debug-level log line — the figure comes
-> out in the wrong face with no warning. The style sheet therefore requests
-> the generic `serif` family with the chain `Nimbus Roman No9 L` →
-> `Nimbus Roman` → `Times New Roman` → `Liberation Serif` → `DejaVu Serif`,
-> and `verify_style()` raises if the chain fell through to DejaVu. Use the
-> inline form only where the exact face is known to exist, and still call
-> `verify_style()` (or check `matplotlib.font_manager.findfont`) once.
+> **Font availability.** Every piece of text is **Computer Modern**, always:
+> LaTeX's own face, for text and math alike. No installed font is called
+> "Computer Modern" — asking for that name makes matplotlib fall back to
+> **DejaVu Sans**, and it says so only in a debug-level log line. The style
+> therefore requests the generic `serif` family with the chain `CMU Serif`
+> (Computer Modern Unicode) → `Latin Modern Roman` → `cmr10`. The first two
+> carry every glyph a figure needs. matplotlib does not scan the TeX tree, so
+> `use_style()` registers TeX Live's Latin Modern (found with `kpsewhich`)
+> when neither is visible — on any machine that compiles the paper, the
+> figure gets a complete Computer Modern. `cmr10`, which ships with
+> matplotlib, is the floor: still Computer Modern, but with no Unicode minus,
+> en dash, curly quotes or bold, which is why tick labels are typeset as
+> math (`axes.formatter.use_mathtext`). `verify_style()` raises if the face
+> is not Computer Modern and notes when it is `cmr10`. The inline block
+> cannot register fonts: on a machine without CMU Serif it lands on `cmr10`,
+> so still call `verify_style()` (or check `matplotlib.font_manager.findfont`)
+> once.
 
 ---
 
@@ -206,7 +214,7 @@ canvas with blank margins.
 <HARD-RULE>
 Every piece of text in the figure — tick labels, axis labels, titles,
 suptitles, legend entries and titles, colorbar labels, `ax.text` /
-`annotate` — is in the serif face at one of the three sizes: `SMALL_SIZE`
+`annotate` — is in Computer Modern at one of the three sizes: `SMALL_SIZE`
 (9) for ticks and crowded legends, `NORMAL_SIZE` (10) for everything else,
 `BIG_SIZE` (12) for panel titles. Math is Computer Modern via mathtext.
 </HARD-RULE>
@@ -303,8 +311,8 @@ if someone later asks for the PDF.
 Two checks, both cheap, both enforced by code rather than by re-reading:
 
 1. **At run time** — `verify_style()` right after `use_style()`. It compares
-   every rcParam against the house values and resolves the serif font,
-   raising if any param was overridden or the font fell through to DejaVu.
+   every rcParam against the house values and resolves the font, raising if
+   any param was overridden or the face is not Computer Modern.
 2. **On the script** — `python scripts/check_plot_style.py <script.py>`
    parses the file and reports invented figure sizes, vector output,
    `savefig` without the tight-bbox/dpi arguments, boxed legends,
@@ -342,9 +350,11 @@ Stop and fix if you catch any of these:
   journal widths and a named aspect.
 - **Bare matplotlib defaults** — DejaVu Sans, outward ticks on two sides, a
   boxed legend. The preamble is not optional.
-- **The right font name, the wrong font** — `font.family = "Nimbus Roman
-  No9 L"` on a machine that calls it `Nimbus Roman`, rendering DejaVu Sans
-  in silence. Use the fallback chain and `verify_style()`.
+- **The right font name, the wrong font** — `font.family = "Computer
+  Modern"`, a name no font file carries, rendering DejaVu Sans in silence.
+  Use the fallback chain and `verify_style()`.
+- **A Times or sans face** — Nimbus Roman, Times New Roman, Helvetica. The
+  house face is Computer Modern for all text, whatever the journal.
 - **Numeric font sizes** — `fontsize=14`, `title_fontsize=20`. Only
   `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE`, and only where the rules allow.
 - **Hand-picked colors** — `color="#1f77b4"`, `color="steelblue"`. Use `C0`.
@@ -374,7 +384,7 @@ Stop and fix if you catch any of these:
 ## Self-Check Before Finishing
 
 - [ ] Style applied via `plotstyle.use_style()` or the inline `RC_PARAMS` block, before any figure.
-- [ ] `verify_style()` passed (or `findfont` confirmed a Nimbus / Times face).
+- [ ] `verify_style()` passed (or `findfont` confirmed a Computer Modern face: CMU Serif, Latin Modern Roman or cmr10).
 - [ ] Every `figsize` derives from `COLUMN_WIDTH` / `TEXT_WIDTH` or `figsize()` / `grid_figsize()`; height is a fraction of width.
 - [ ] No numeric `fontsize`; only `SMALL_SIZE` / `NORMAL_SIZE` / `BIG_SIZE` where allowed.
 - [ ] Palette is matplotlib's default unless the user named one, and a named one is set once via `use_style(palette=…)` / `set_palette`.

@@ -49,18 +49,19 @@ SEED = 42
 # %% [markdown]
 # ## Apply the style
 #
-# One call, before any figure is created. Everything downstream — serif type
-# at 9/10/12 pt on every piece of text, CM math, inward ticks on four sides,
-# frameless legends, matplotlib's default palettes, tight 300 dpi PNG output
-# — follows from this. Nobody asked for a palette here, so none is set; a
-# stated one would go in this same call as `use_style(palette=..., cmap=...)`.
-# The verify call fails loudly if the serif face is missing, instead of
+# One call, before any figure is created. Everything downstream — Computer
+# Modern at 9/10/12 pt on every piece of text and in math, inward ticks on
+# four sides, frameless legends, matplotlib's default palettes, tight 300 dpi
+# PNG output — follows from this. Nobody asked for a palette here, so none is
+# set; a stated one would go in this same call as
+# `use_style(palette=..., cmap=...)`.
+# The verify call fails loudly if Computer Modern is missing, instead of
 # letting matplotlib substitute DejaVu Sans in silence.
 
 # %% Set and verify the style
 plotstyle.use_style()
 style = plotstyle.verify_style()
-print("serif font in use:", style["font"])
+print("font in use:", style["font"])
 print(
     "palette:",
     "matplotlib default" if style["default_palette"] else style["palette"],

@@ -10,7 +10,7 @@ import numpy as np
 import plotstyle
 
 plotstyle.use_style()  # AASTeX; use_style(journal="...") for another class
-plotstyle.verify_style()  # raises if the serif face did not resolve
+plotstyle.verify_style()  # raises if the face is not Computer Modern
 ```
 
 The helper is imported as a module and every name is reached through it

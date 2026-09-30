@@ -13,7 +13,7 @@ project's own package and import it from there. Typical usage example:
   import plotstyle
 
   plotstyle.use_style()  # AASTeX geometry, house rcParams.
-  plotstyle.verify_style()  # Optional: fails loudly if the serif is missing.
+  plotstyle.verify_style()  # Optional: fails loudly if not Computer Modern.
   fig, ax = plt.subplots(figsize=plotstyle.figsize("column"))
   ...
   plotstyle.save(fig, "./figs/name")
@@ -26,6 +26,8 @@ from collections.abc import Iterable, Sequence
 import dataclasses
 import os
 import pathlib
+import shutil
+import subprocess
 from typing import Any
 
 import cycler
@@ -197,20 +199,29 @@ SMALL_SIZE = 9  # tick labels; crowded legends
 NORMAL_SIZE = 10  # body: axis labels, legends, axes titles, free text
 BIG_SIZE = 12  # panel titles, suptitles
 
-# The URW Times clone that matches the manuscript body text. "Nimbus Roman
-# No9 L" is its classic name; newer urw-base35 packages ship the same face as
-# plain "Nimbus Roman". Asking matplotlib for the exact classic name on such a
-# machine silently falls back to DejaVu Sans, so the rcParams request the
-# generic "serif" family and let this chain resolve it. Tail entries are
-# Times-metric stand-ins for machines without any Nimbus at all.
-FONT_FAMILY = "Nimbus Roman No9 L"
+# Computer Modern for every piece of text, as in LaTeX's own body text; math
+# is Computer Modern through mathtext. CMU Serif (Computer Modern Unicode) and
+# Latin Modern Roman carry every glyph a figure needs; cmr10 ships with
+# matplotlib, so the chain always ends on a Computer Modern face, but it has
+# no Unicode minus, en dash, curly quotes or bold. There is no installed font
+# called "Computer Modern": asking for that name renders DejaVu Sans.
+FONT_FAMILY = "CMU Serif"
 SERIF_FALLBACKS = [
-    "Nimbus Roman No9 L",
-    "Nimbus Roman",
-    "Times New Roman",
-    "Liberation Serif",
-    "DejaVu Serif",
+    "CMU Serif",
+    "Latin Modern Roman",
+    "cmr10",
 ]
+# File-name prefixes of the faces verify_style() accepts.
+_COMPUTER_MODERN_FILES = ("cmu", "lmroman", "cmr10")
+# TeX Live's Latin Modern Roman. matplotlib does not scan the TeX tree, so
+# use_style() registers these, found with kpsewhich, when no complete
+# Computer Modern face is already visible to it.
+_LATIN_MODERN_FILES = (
+    "lmroman10-regular.otf",
+    "lmroman10-italic.otf",
+    "lmroman10-bold.otf",
+    "lmroman10-bolditalic.otf",
+)
 
 STYLE_FILE = pathlib.Path(__file__).with_name("paper.mplstyle")
 
@@ -236,6 +247,7 @@ RC_PARAMS: dict[Any, Any] = {
     "figure.facecolor": "w",
     "figure.dpi": 300,
     "mathtext.fontset": "cm",
+    "axes.formatter.use_mathtext": True,
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
     "savefig.format": "png",
@@ -303,6 +315,27 @@ def set_palette(
     )
 
 
+def _register_latin_modern() -> None:
+    """Make TeX Live's Latin Modern Roman visible to matplotlib, if needed.
+
+    Does nothing when CMU Serif or Latin Modern Roman is already known, or
+    when kpsewhich (TeX Live) is not on the path; the font chain then
+    resolves as it can, ending on the cmr10 matplotlib ships.
+    """
+    known = {entry.name for entry in font_manager.fontManager.ttflist}
+    if known & {"CMU Serif", "Latin Modern Roman"}:
+        return
+    kpsewhich = shutil.which("kpsewhich")
+    if kpsewhich is None:
+        return
+    for name in _LATIN_MODERN_FILES:
+        found = subprocess.run(
+            [kpsewhich, name], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        if found:
+            font_manager.fontManager.addfont(found)
+
+
 def use_style(
     style_file: str | os.PathLike[str] | None = None,
     journal: str | Journal = DEFAULT_JOURNAL,
@@ -328,6 +361,7 @@ def use_style(
       The journal now in effect.
     """
     global _active_journal
+    _register_latin_modern()
     path = pathlib.Path(style_file) if style_file is not None else STYLE_FILE
     if path.exists():
         plt.style.use(str(path))
@@ -338,8 +372,45 @@ def use_style(
     return _active_journal
 
 
+def _check_font() -> tuple[pathlib.Path, list[str], list[str]]:
+    """Resolve the text face and judge it against the Computer Modern rule.
+
+    Returns:
+      The path of the font matplotlib will use, the problems with it (it is
+      not a Computer Modern face) and the notes on it (it is cmr10, which is
+      Computer Modern but incomplete).
+    """
+    font_path = pathlib.Path(
+        font_manager.findfont(
+            font_manager.FontProperties(family=mpl.rcParams["font.serif"])
+        )
+    )
+    font_name = font_path.name.lower()
+    if not font_name.startswith(_COMPUTER_MODERN_FILES):
+        return (
+            font_path,
+            [
+                f"font resolved to {font_path.name}, not Computer Modern; "
+                "install CMU Serif (fonts-cmu) or TeX Live's lm package, "
+                "and clear ~/.cache/matplotlib"
+            ],
+            [],
+        )
+    if font_name.startswith("cmr10"):
+        return (
+            font_path,
+            [],
+            [
+                "cmr10 in use: text has no Unicode minus, en dash, curly "
+                "quotes or bold; install CMU Serif (fonts-cmu) or TeX "
+                "Live's lm package"
+            ],
+        )
+    return font_path, [], []
+
+
 def verify_style(strict: bool = True) -> dict[str, Any]:
-    """Check that the house rcParams are active and the serif face resolved.
+    """Check that the house rcParams are active and the face is Computer Modern.
 
     The palette is reported, not enforced — a user-stated one is legitimate.
 
@@ -350,12 +421,12 @@ def verify_style(strict: bool = True) -> dict[str, Any]:
       A dict with the keys "font" (the path of the font matplotlib will use),
       "palette" (the colours of the property cycle), "cmap" (the name of the
       default colormap), "default_palette" (whether both are matplotlib's
-      defaults) and "problems" (what is wrong; empty when nothing is).
+      defaults), "problems" (what is wrong; empty when nothing is) and
+      "notes" (what is allowed but limited, such as falling back to cmr10).
 
     Raises:
       RuntimeError: If strict and an rcParam differs from RC_PARAMS, or the
-        font chain fell through to a DejaVu face — which is what happens on
-        a machine without Nimbus Roman, and which matplotlib otherwise
+        font is not a Computer Modern face — which matplotlib otherwise
         reports only as a debug-level log line.
     """
     expected = mpl.RcParams(RC_PARAMS)  # Runs values through the validators.
@@ -364,17 +435,8 @@ def verify_style(strict: bool = True) -> dict[str, Any]:
         for key in RC_PARAMS
         if mpl.rcParams[key] != expected[key]
     ]
-    font_path = pathlib.Path(
-        font_manager.findfont(
-            font_manager.FontProperties(family=mpl.rcParams["font.serif"])
-        )
-    )
-    if "dejavu" in font_path.name.lower():
-        problems.append(
-            f"serif font resolved to {font_path.name}; install Nimbus Roman "
-            "(package urw-base35 / gsfonts / fonts-urw-base35) and clear "
-            "~/.cache/matplotlib"
-        )
+    font_path, font_problems, notes = _check_font()
+    problems += font_problems
     if strict and problems:
         raise RuntimeError(
             "plot style not in effect:\n  - " + "\n  - ".join(problems)
@@ -391,6 +453,7 @@ def verify_style(strict: bool = True) -> dict[str, Any]:
         "cmap": mpl.rcParams["image.cmap"],
         "default_palette": is_default,
         "problems": problems,
+        "notes": notes,
     }
 
 
