@@ -29,8 +29,10 @@ the tool can check.
 | **CONTRADICTS** | the paper says the opposite | ≥ 1 verbatim quote **and** a note |
 | **UNVERIFIABLE** | no text could be obtained (paywalled, no open-access copy, no PDF supplied) — **refused when full text is available** | a note |
 
-The **basis** (`fulltext` / `abstract` / `none`) is recorded from the text
-cache, not from the caller. A SUPPORTS judged from an abstract alone is a
+The **basis** (`fulltext` / `readme` / `abstract` / `none`) is recorded
+from the text cache, not from the caller. `readme` is a GitHub repository's
+README, description and `CITATION.cff` abstract: UNVERIFIABLE is allowed on
+it, because the code the README describes was not read. A SUPPORTS judged from an abstract alone is a
 warning in the audit, not a pass with full marks: fetch the PDF (`fetch_text`
 with `pdf_path=`) when the claim is specific (a number, a method detail, a
 sample size).
@@ -93,6 +95,15 @@ The orchestrator then calls `record_support` for each item; a refused record
 
 - **Software / data citations** ("we used `numpy` ⟨cite:harris2020⟩"): the
   claim is that the cited work is that software; the abstract settles it.
+- **A repository cited directly** ("sampled with `emcee` ⟨cite:emcee⟩",
+  key resolving to `github:dfm/emcee`): the judge reads the README. A
+  sentence that only names the tool and what it is for is SUPPORTS on a
+  README quote saying so. A sentence attributing a property to the code
+  ("GPU-accelerated", "uses a KD-tree", "implements method X") needs the
+  README or `CITATION.cff` abstract to say it; if they do not, it is
+  UNVERIFIABLE with a note, and the fix is a citation to the paper or
+  documentation that does. A sentence about a specific version is judged
+  only if the entry pins that version.
 - **"We follow the method of ⟨cite:x⟩"**: SUPPORTS if the paper presents that
   method; quote its description.
 - **Review or textbook cited for a general fact**: SUPPORTS if the fact is

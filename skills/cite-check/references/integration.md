@@ -28,6 +28,12 @@ write the sentence with \cite{<key>}
 support check for that instance (below) before the section is called done
 ```
 
+Software follows the same chain: a GitHub URL (or
+`search_citation(title=<package>, registries=["github"])`) →
+`bib_add(items=[{"identifier": "github.com/owner/repo", "key": …, "version": <tag used>}])`.
+When the result carries `preferred_citation`, add that paper too; the
+repository's authors asked for it.
+
 Never write a `.bib` entry by hand, never edit a fetched one beyond its key,
 never cite an identifier that did not come from `search_citation` /
 `resolve_citation` in this session. If `bib_add` reports
@@ -101,7 +107,8 @@ narrated into a pass.
 
 - `audit.ok == true` means: every cite key exists in the `.bib`; every cited
   entry's identifier resolves to a record whose title, first author and year
-  match; every citation instance has a support verdict that is not
+  match (for a GitHub repository: a public repository whose name or declared
+  title is the entry's); every citation instance has a support verdict that is not
   UNSUPPORTED / CONTRADICTS / missing / judged against a different paper.
 - Warnings are not failures but are the user's to see: PROBABLE and FOUND
   entries, PARTIAL and UNVERIFIABLE verdicts, SUPPORTS judged from an

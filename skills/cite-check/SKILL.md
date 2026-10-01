@@ -2,19 +2,20 @@
 name: cite-check
 description: >-
   Citation integrity for scientific writing: every citation must be a real
-  paper, every BibTeX entry must come from an official registry export (NASA
-  ADS, Crossref, DataCite, INSPIRE, arXiv — never hand-written), and every
-  cited paper must actually support the sentence that cites it, judged
-  against the paper's own text with verbatim evidence. Use whenever a
-  manuscript, report, proposal or notebook gains or keeps citations: "add a
-  citation for", "find the paper that", "is this reference real", "check /
-  verify / audit the citations", "does this paper support", "fix the .bib",
-  "cite-check". Other skills (co-writer, co-scientist) call this one instead
+  paper or a real public GitHub repository, every BibTeX entry must come from
+  an official registry export (NASA ADS, Crossref, DataCite, INSPIRE, arXiv;
+  for software, the repository's own CITATION.cff or GitHub record — never
+  hand-written), and every cited work must actually support the sentence that
+  cites it, judged against its own text with verbatim evidence. Use whenever
+  a manuscript, report, proposal or notebook gains or keeps citations: "add a
+  citation for", "find the paper that", "cite this code / repo / package",
+  "is this reference real", "check / verify / audit the citations", "does
+  this paper support", "fix the .bib", "cite-check". Other skills (co-writer, co-scientist) call this one instead
   of verifying citations themselves. NOT for literature discovery or
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.1.1"
+  version: "0.2.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -26,10 +27,16 @@ three with code rather than with confidence:
 
 1. **Existence** — the paper must exist, and the identifier in the `.bib`
    must resolve to *that* paper. A real DOI attached to an invented title is
-   the commonest fabrication and counts as one.
+   the commonest fabrication and counts as one. Software is held to the same
+   test: a GitHub URL must lead to a public repository whose name or
+   declared title is the entry's, and a cited version must exist as a tag,
+   branch or commit.
 2. **Provenance** — BibTeX entries are fetched from the registry that owns
    the record (ADS, Crossref, DataCite, INSPIRE, arXiv) and stamped with a
-   provenance comment. Nobody, human or model, types a `.bib` entry.
+   provenance comment. A repository with no DOI export gets an `@software`
+   entry laid out by the toolbox from its authors' `CITATION.cff`, or from
+   its GitHub record with the release or commit pinned. Nobody, human or
+   model, types a `.bib` entry.
 3. **Support** — for every citation instance, an independent judge reads
    the cited paper's text and returns a verdict backed by quotes that the
    tool checks are verbatim. A real paper cited for something it does not
@@ -65,8 +72,10 @@ and network access, file read/write, and — for the support check —
    `<skill-dir>/mcp/.venv/bin/python <skill-dir>/mcp/server.py call <tool> '<json-args>'`
    (exit 0 = pass; 1 = fail/blocked; JSON verdict on stdout).
 4. Call `ping`. No ADS token → say so once to the user (astronomy search
-   and ADS exports are off; Crossref/arXiv/OpenAlex/INSPIRE still work): the
-   installer asks for it, and `bash <skill-dir>/mcp/setup_mcp.sh --keys`
+   and ADS exports are off; Crossref/arXiv/OpenAlex/INSPIRE still work). No
+   GitHub token → repository checks still work, at 60 GitHub requests an
+   hour (about 15 repositories); mention it only if one runs out. The
+   installer asks for both, and `bash <skill-dir>/mcp/setup_mcp.sh --keys`
    asks again from a terminal, storing it in the OS keychain or a 0600 file
    (`references/registries.md` § Configuration). Never ask the user to
    paste a token into the chat, a config file, or a command line.
@@ -80,12 +89,12 @@ Never edit anything under `mcp/` during a task.
 | Tool | Does | Trust it for |
 |---|---|---|
 | `search_citation(title, author, year, hint, context, query)` | multi-registry search, duplicates merged, **ranked by cite-check's own scoring** (registry ranking is measurably wrong) | finding the real id of a paper you can describe; a `confidence: high` candidate |
-| `resolve_citation(identifier \| [ids])` | arXiv / DOI / bibcode / OpenAlex / INSPIRE → metadata + cross-linked ids; batched | existence of an id; nothing more |
-| `fetch_bibtex(identifier, key, prefer, journal_format, tex_path)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
+| `resolve_citation(identifier \| [ids])` | arXiv / DOI / bibcode / OpenAlex / INSPIRE / GitHub repository → metadata + cross-linked ids; batched. A repository also returns `repo`: archived / fork / moved, CITATION.cff, `preferred_citation` (the paper its authors ask for), software DOI, README identifiers, and `ref` for a URL naming a tag / branch / commit | existence of an id; nothing more |
+| `fetch_bibtex(identifier, key, prefer, journal_format, tex_path)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
-| `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids, compare title / first author / year; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
+| `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
 | `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
-| `fetch_text(identifier, pdf_path)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / abstract / none |
+| `fetch_text(identifier, pdf_path)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
 | `find_passages(identifier, [claims])` | abstract + top passages per claim by content-word overlap | what the judge reads first |
 | `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
 | `ledger_read(workdir)` | the manuscript's verdicts | resuming |
@@ -114,6 +123,20 @@ Pick the one that matches the request; all three end in `audit`.
    document uses).
 4. Support-check that instance (Workflow C) before the passage is called
    done. Batch when several citations were added.
+
+**Software.** A pasted GitHub URL goes straight to `resolve_citation`; a
+package you can only name is found with
+`search_citation(title=<name>, registries=["github"])` (opt-in, never a
+default registry). Then read the result's `repo` before citing:
+
+- `preferred_citation` set → the authors ask for that paper. Add it with
+  `bib_add` by its id, and cite the repository as well only if the
+  manuscript cites software separately (AAS journals ask for both).
+- `fork` → cite the upstream (`parent`) unless the fork is the work used.
+  `moved_from` → the old URL redirects; the entry gets the new one.
+- Name the version that was used: pass `key` and, after `bib_add`, the
+  entry carries the `version` (release tag, CITATION.cff version) or the
+  pinned commit the toolbox found. Do not type a different version in.
 
 ### B. Verify an existing manuscript
 
@@ -160,8 +183,10 @@ co-writer and co-scientist delegate all citation work here; the contract
 A BibTeX entry enters a `.bib` only through `bib_add` (or `fetch_bibtex`
 pasted unchanged except for its key). Never compose, complete, "fix up" or
 paraphrase an entry — not the title, not the authors, not the year, not the
-DOI. If no registry exports one, the work is not cited from this tool; say
-so.
+DOI, not a repository's version. If no registry exports one, the work is
+not cited from this tool; say so. (`source=citation-cff` and
+`source=github` entries are laid out by the toolbox from the repository's
+own files and record; they obey the same rule.)
 </HARD-GATE>
 
 <HARD-GATE>
@@ -205,6 +230,15 @@ A manuscript is not reported as citation-clean until `audit` returns
 - **Hand-typing months, journals, author lists** to make an export "look
   right". `fetch_bibtex` already normalises encoding; anything else changes
   the record.
+- **"The GitHub link opens."** A repository can be real and still be the
+  wrong citation: a fork, a renamed repository, a repository whose authors
+  ask for a paper instead, a different project with a similar name, or a
+  version that was never tagged. `verify_bib` checks each; a URL that loads
+  checks none of them.
+- **Citing the repository for what the code does.** `fetch_text` gives the
+  judge the README, not the source. A claim the documentation does not make
+  ("uses a KD-tree", "is GPU-accelerated") is UNVERIFIABLE from the
+  repository; cite the paper or the documentation page that says it.
 
 ---
 
@@ -213,8 +247,9 @@ A manuscript is not reported as citation-clean until `audit` returns
 Load on demand:
 
 - `references/registries.md` — each registry's coverage, endpoints, auth,
-  measured failure modes, matching thresholds, caching, configuration
-  (`ADS_API_TOKEN`, `CITE_CHECK_MAILTO`, `CITE_CHECK_CACHE`)
+  measured failure modes, matching thresholds, GitHub repositories,
+  caching, configuration (`ADS_API_TOKEN`, `GITHUB_TOKEN`,
+  `CITE_CHECK_MAILTO`, `CITE_CHECK_CACHE`)
 - `references/support.md` — the claim-support protocol: units, verdict
   rubric, quote rules, judge independence, judge prompt template, efficiency
 - `references/integration.md` — contract for co-writer / co-scientist and
@@ -222,7 +257,9 @@ Load on demand:
 - `mcp/server.py` — the toolbox; `mcp/setup_mcp.sh` — idempotent
   per-harness registration; `tests/verify_mcp.sh [--network]` — smoke tests
   on a fixture manuscript with one real-DOI-wrong-title entry, one
-  identifier-less real paper, and two fabrications
+  identifier-less real paper, and two fabrications, plus a software `.bib`
+  (a real repository, a paper filed under its repository's URL, a wrong
+  repository, an invented version, a deleted repository)
 
 ## Process Flow
 

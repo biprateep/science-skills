@@ -34,7 +34,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -52,7 +52,8 @@ MAX_PDF_BYTES = 40 * 1024 * 1024
 _HOST_INTERVAL = {
     "export.arxiv.org": 3.0, "arxiv.org": 1.0, "api.crossref.org": 0.15,
     "api.openalex.org": 0.15, "api.adsabs.harvard.edu": 0.25,
-    "inspirehep.net": 0.5, "api.datacite.org": 0.25,
+    "inspirehep.net": 0.5, "api.datacite.org": 0.25, "api.github.com": 0.25,
+    "raw.githubusercontent.com": 0.1,
 }
 _host_last: dict = {}
 _host_lock = threading.Lock()
@@ -87,6 +88,10 @@ KEYS = {
     "mailto": {"label": "contact e-mail for the Crossref/OpenAlex polite pools", "secret": False,
                "env": ("CITE_CHECK_MAILTO",), "legacy_files": (), "url": None,
                "enables": "faster, more reliable Crossref and OpenAlex answers (optional, not a key)"},
+    "github": {"label": "GitHub token (read-only, no scopes needed)", "secret": True,
+               "env": ("GITHUB_TOKEN", "GH_TOKEN"), "legacy_files": (),
+               "url": "https://github.com/settings/personal-access-tokens/new",
+               "enables": "GitHub repository checks at 5000 requests/hour instead of 60 (public repositories work without it)"},
 }
 _key_cache: dict = {"values": {}}
 
@@ -273,8 +278,8 @@ def key_store(name: str, value: str, test: bool = True) -> dict:
     if name == "mailto" and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
         return {"stored": False, "error": "that does not look like an e-mail address"}
     tested = None
-    if name == "ads" and test:
-        tested = _ads_test(value)
+    if name in ("ads", "github") and test:
+        tested = _ads_test(value) if name == "ads" else _github_test(value)
         if tested["ok"] is False:
             return {"stored": False, "error": tested["detail"], "tested": tested}
     if spec["secret"]:
@@ -542,6 +547,14 @@ _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.I)
 _DOI_ANY = re.compile(r"10\.\d{4,9}/[^\s\"'<>{}]+", re.I)
 _BIBCODE_RE = re.compile(r"^\d{4}[A-Za-z0-9&.]{14}[A-Za-z.:]$")
 _OPENALEX_RE = re.compile(r"^W\d{4,}$", re.I)
+_GITHUB_RE = re.compile(r"^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100})$")
+_GITHUB_ANY = re.compile(r"(?<!gist\.)github\.com[/:]([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100})", re.I)
+_GITHUB_REF = re.compile(r"github\.com/[^/\s]+/[^/\s]+/(?:tree|blob|commit|releases/tag)/([^/\s?#}]+)", re.I)
+# first path segments of github.com that are site pages, not repository owners
+_GITHUB_RESERVED = {"about", "apps", "collections", "contact", "customer-stories", "enterprise", "events",
+                    "explore", "features", "issues", "login", "marketplace", "new", "notifications", "orgs",
+                    "organizations", "pricing", "pulls", "search", "security", "settings", "site", "sponsors",
+                    "topics", "trending", "users"}
 
 
 def _strip_arxiv_version(s: str) -> str:
@@ -550,10 +563,10 @@ def _strip_arxiv_version(s: str) -> str:
 
 def _classify(raw: str) -> tuple:
     """Map any identifier spelling (bare, prefixed, or URL) to (kind, value).
-    kind ∈ arxiv | doi | bibcode | openalex | inspire | unknown."""
+    kind ∈ arxiv | doi | bibcode | openalex | inspire | github | unknown."""
     s = (raw or "").strip().strip("<>").rstrip(".,;)")
     s = re.sub(r"^(?:https?://)?(?:www\.)?", "", s, flags=re.I)
-    m = re.match(r"^(arxiv|doi|bibcode|ads|openalex|inspire):\s*(.+)$", s, re.I)
+    m = re.match(r"^(arxiv|doi|bibcode|ads|openalex|inspire|github|gh):\s*(.+)$", s, re.I)
     prefix, s = (m.group(1).lower(), m.group(2).strip()) if m else (None, s)
     url_rules = [
         (r"^arxiv\.org/(?:abs|pdf|html)/(.+?)(?:\.pdf)?/?$", "arxiv"),
@@ -561,6 +574,7 @@ def _classify(raw: str) -> tuple:
         (r"^ui\.adsabs\.harvard\.edu/abs/([^/]+)(?:/.*)?$", "bibcode"),
         (r"^(?:api\.)?openalex\.org/(?:works/)?(W\d+)$", "openalex"),
         (r"^inspirehep\.net/(?:literature|api/literature)/(\d+)", "inspire"),
+        (r"^(?:git@)?github\.com[/:]([^/\s]+/[^/\s#?]+)", "github"),
     ]
     for pat, kind in url_rules:
         m = re.match(pat, s, re.I)
@@ -569,6 +583,13 @@ def _classify(raw: str) -> tuple:
             break
     if prefix in ("ads",):
         prefix = "bibcode"
+    if prefix == "gh":
+        prefix = "github"
+    if prefix == "github":
+        m = _GITHUB_RE.match(re.sub(r"\.git$", "", s.split("#")[0].split("?")[0].rstrip("/"), flags=re.I))
+        if m and m.group(1).lower() not in _GITHUB_RESERVED and m.group(2) not in (".", ".."):
+            return "github", f"{m.group(1)}/{m.group(2)}".lower()
+        return "unknown", raw
     if prefix == "arxiv" or (prefix is None and _ARXIV_RE.match(s)):
         s = urllib.parse.unquote(s)
         return ("arxiv", _strip_arxiv_version(s)) if _ARXIV_RE.match(s) else ("unknown", raw)
@@ -590,7 +611,12 @@ def _classify(raw: str) -> tuple:
 
 def _canonical(rec: dict) -> str:
     """Stable identity for the ledger and caches: DOI first (survives the
-    preprint → journal transition), then arXiv, bibcode, OpenAlex, INSPIRE."""
+    preprint → journal transition), then arXiv, bibcode, OpenAlex, INSPIRE.
+    A GitHub repository is always github:owner/repo — its software DOI, when
+    it has one, is a field, so the DataCite record of that DOI never
+    overwrites the repository's cached record."""
+    if rec.get("github"):
+        return f"github:{rec['github']}"
     for k, tag in (("doi", "doi"), ("arxiv", "arXiv"), ("bibcode", "bibcode"),
                    ("openalex", "openalex"), ("inspire", "inspire")):
         if rec.get(k):
@@ -611,7 +637,7 @@ def _slug(s: str) -> str:
 def _record(**kw) -> dict:
     rec = {"registry": None, "title": "", "authors": [], "year": None, "venue": "",
            "doi": None, "arxiv": None, "bibcode": None, "openalex": None, "inspire": None,
-           "abstract": "", "type": "", "url": "", "citation_count": None, "pdf_urls": []}
+           "github": None, "abstract": "", "type": "", "url": "", "citation_count": None, "pdf_urls": []}
     rec.update({k: v for k, v in kw.items() if v is not None})
     if rec["doi"]:
         rec["doi"] = rec["doi"].lower()
@@ -620,6 +646,8 @@ def _record(**kw) -> dict:
             rec["arxiv"], rec["doi"] = rec["arxiv"] or _strip_arxiv_version(m.group(1)), None
     if rec["arxiv"]:
         rec["arxiv"] = _strip_arxiv_version(rec["arxiv"])
+    if rec["github"]:
+        rec["github"] = rec["github"].lower()
     return rec
 
 
@@ -999,16 +1027,345 @@ def _ads_export(bibcodes: list, journal_format: int = 2, max_author: int = 10,
     return out
 
 
+# --- GitHub (software) ---------------------------------------------------------
+# A public repository is a citable work of its own. Its record comes from the
+# GitHub REST API; what its authors declare about citing it comes from their
+# CITATION.cff (or CITATION.bib) and README. Nothing here is inferred: a
+# software DOI is adopted only when CITATION.cff declares it or the Zenodo
+# record behind a README badge names this repository.
+
+_GITHUB_API = "https://api.github.com"
+_GITHUB_RAW = "https://raw.githubusercontent.com"
+_ZENODO_DOI = re.compile(r"^10\.5281/zenodo\.\d+$")
+
+
+def _github_token() -> str:
+    return (key_value("github")[0] or "").strip()
+
+
+def _gh_api(path: str, accept: str | None = None, token: str | None = None) -> tuple:
+    """(status, body) from the GitHub REST API. A spent rate limit raises
+    instead of reading as "not found"."""
+    hdrs = {"Accept": accept or "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    tok = token if token is not None else _github_token()
+    if tok:
+        hdrs["Authorization"] = f"Bearer {tok}"
+    status, body = _http(_GITHUB_API + path, headers=hdrs, cache=token is None)
+    if status in (403, 429) and "rate limit" in (body or "").lower():
+        raise RuntimeError("GitHub API rate limit reached (60 requests/hour without a token) — store a "
+                           "token with `bash mcp/setup_mcp.sh --keys` or export GITHUB_TOKEN, or retry later")
+    return status, body
+
+
+def _github_test(token: str) -> dict:
+    """Live check of a token against GitHub (rate_limit costs no quota)."""
+    try:
+        status, body = _gh_api("/rate_limit", token=token)
+    except RuntimeError as exc:
+        return {"ok": None, "detail": f"could not reach GitHub ({exc}); stored untested"}
+    if status == 200:
+        try:
+            limit = json.loads(body)["resources"]["core"]["limit"]
+        except (ValueError, KeyError, TypeError):
+            limit = "?"
+        return {"ok": True, "detail": f"GitHub accepted the token ({limit} requests/hour)"}
+    if status == 401:
+        return {"ok": False, "detail": "GitHub rejected the token (HTTP 401)"}
+    return {"ok": None, "detail": f"GitHub answered HTTP {status}; stored untested"}
+
+
+def _gh_json(path: str, accept: str | None = None):
+    status, body = _gh_api(path, accept)
+    if status != 200:
+        return status, None
+    try:
+        return status, json.loads(body)
+    except ValueError:
+        return status, None
+
+
+def _cff_people(people) -> list:
+    """CITATION.cff authors → [(name, is_entity)]; persons as 'Family, Given'."""
+    out = []
+    for p in people or []:
+        if not isinstance(p, dict):
+            continue
+        fam = " ".join(str(p[k]).strip() for k in ("name-particle", "family-names") if p.get(k))
+        if fam:
+            given = " ".join(str(p[k]).strip() for k in ("given-names", "name-suffix") if p.get(k))
+            out.append((f"{fam}, {given}" if given else fam, False))
+        elif p.get("name"):
+            out.append((str(p["name"]).strip(), True))
+    return out
+
+
+def _cff_ids(block: dict) -> dict:
+    """DOI / arXiv id a CFF block declares: doi, identifiers[], url."""
+    ids = {}
+    vals = [block.get("doi")] + [i.get("value") for i in block.get("identifiers") or [] if isinstance(i, dict)]
+    vals += [block.get("url")]
+    for v in vals:
+        if not v:
+            continue
+        k, val = _classify(str(v))
+        if k in ("doi", "arxiv"):
+            ids.setdefault(k, val)
+    return ids
+
+
+def _cff_load(text: str) -> tuple:
+    try:
+        import yaml
+    except ImportError:
+        return None, "PyYAML is missing, so CITATION.cff was not read — re-run mcp/setup_mcp.sh"
+    try:
+        d = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        return None, f"CITATION.cff is not valid YAML ({type(exc).__name__})"
+    return (d, None) if isinstance(d, dict) else (None, "CITATION.cff has no top-level mapping")
+
+
+def _readme_ids(body: str) -> list:
+    """DOIs and arXiv ids a README links or mentions, in order, deduplicated."""
+    t = html.unescape(body or "")
+    found = []
+    for m in _DOI_ANY.finditer(t):
+        raw = re.sub(r"(?:/status|/badge)?\.(?:svg|png|jpe?g)$", "", m.group(0).split("?")[0].rstrip(".,;)]"), flags=re.I)
+        k, v = _classify(raw)
+        if k in ("doi", "arxiv"):
+            found.append(("doi:" if k == "doi" else "arXiv:") + v)
+    for m in re.finditer(r"(?:arxiv\.org/(?:abs|pdf|html)/|arxiv:\s*)(" + _ARXIV_CORE + r")", t, re.I):
+        found.append("arXiv:" + _strip_arxiv_version(m.group(1)))
+    return list(dict.fromkeys(found))[:12]
+
+
+def _zenodo_names_repo(doi: str, full_name: str) -> bool:
+    """Is this Zenodo DOI a software archive of this repository? (the
+    GitHub–Zenodo integration records the repository as a related URL)."""
+    status, data = _get_json(f"https://api.datacite.org/dois/{urllib.parse.quote(doi, safe='')}")
+    if status != 200 or not data:
+        return False
+    a = data.get("data", {}).get("attributes", {})
+    if (a.get("types") or {}).get("resourceTypeGeneral") != "Software":
+        return False
+    want = f"github.com/{full_name}".lower()
+    urls = [r.get("relatedIdentifier", "") for r in a.get("relatedIdentifiers") or []] + [a.get("url") or ""]
+    return any(re.search(re.escape(want) + r"(?:\.git)?(?:[/#?]|$)", (u or "").lower()) for u in urls)
+
+
+def _github_get(full: str):
+    """Repository record for owner/repo, or None when GitHub has no public
+    repository there. Follows renames; reports private repositories."""
+    status, r = _gh_json(f"/repos/{full}")
+    if status in (404, 451) or (status == 200 and not r):
+        return None
+    if status != 200:
+        raise RuntimeError(f"api.github.com: HTTP {status}")
+    if r.get("private"):
+        return {"error": f"github:{full} is a private repository — only public repositories can be cited",
+                "final": True}
+    full_name, owner = r["full_name"], r.get("owner") or {}
+    info = {"full_name": full_name, "html_url": r.get("html_url"), "description": r.get("description") or "",
+            "owner": owner.get("login"), "owner_type": owner.get("type"), "owner_name": None,
+            "archived": bool(r.get("archived")), "fork": bool(r.get("fork")),
+            "parent": (r.get("parent") or {}).get("full_name"), "stars": r.get("stargazers_count"),
+            "license": (r.get("license") or {}).get("spdx_id"), "default_branch": r.get("default_branch"),
+            "created": (r.get("created_at") or "")[:10], "pushed": (r.get("pushed_at") or "")[:10],
+            "homepage": r.get("homepage") or None, "topics": r.get("topics") or [],
+            "moved_from": full if full_name.lower() != full.lower() else None,
+            "citation_file": None, "cff": None, "preferred_citation": None, "readme_ids": [],
+            "software_doi_source": None, "notes": []}
+    title, authors, year, doi, abstract = r.get("name"), [], None, None, info["description"]
+
+    status, text = _http(f"{_GITHUB_RAW}/{full_name}/HEAD/CITATION.cff")
+    if status == 200 and text.strip():
+        info["citation_file"] = "CITATION.cff"
+        cff, problem = _cff_load(text)
+        if problem:
+            info["notes"].append(problem)
+        if cff:
+            people = _cff_people(cff.get("authors"))
+            ids = _cff_ids(cff)
+            info["cff"] = {"title": str(cff.get("title") or "").strip() or None, "authors": people,
+                           "version": str(cff["version"]) if cff.get("version") is not None else None,
+                           "date_released": str(cff.get("date-released") or "")[:10] or None,
+                           "doi": ids.get("doi"), "url": cff.get("repository-code") or cff.get("url"),
+                           "message": str(cff.get("message") or "").strip()[:300] or None}
+            title = info["cff"]["title"] or title
+            authors = [n for n, _ in people]
+            year = _year(info["cff"]["date_released"])
+            abstract = str(cff.get("abstract") or "").strip() or abstract
+            if ids.get("doi"):
+                doi, info["software_doi_source"] = ids["doi"], "CITATION.cff"
+            pc = cff.get("preferred-citation")
+            if isinstance(pc, dict):
+                info["preferred_citation"] = {
+                    "title": str(pc.get("title") or "").strip(), "authors": [n for n, _ in _cff_people(pc.get("authors"))][:6],
+                    "year": _year(pc.get("year") or pc.get("date-published")), "type": pc.get("type"),
+                    "ids": _cff_ids(pc), "source": "CITATION.cff preferred-citation"}
+    if not info["preferred_citation"]:
+        status, text = _http(f"{_GITHUB_RAW}/{full_name}/HEAD/CITATION.bib")
+        entries = _parse_bib(text)["entries"] if status == 200 else []
+        if entries:
+            e = entries[0]
+            info["citation_file"] = info["citation_file"] or "CITATION.bib"
+            info["preferred_citation"] = {
+                "title": re.sub(r"[{}]", "", e["fields"].get("title", "")).strip(),
+                "authors": _split_bib_authors(e["fields"].get("author", ""))[:6],
+                "year": _year(e["fields"].get("year")), "type": e["type"], "ids": _entry_ids(e),
+                "source": "CITATION.bib"}
+
+    status, readme = _gh_api(f"/repos/{full_name}/readme", accept="application/vnd.github.html+json")
+    if status == 200:
+        info["readme_ids"] = _readme_ids(readme)
+    if not doi:
+        for rid in info["readme_ids"]:
+            d = rid[4:] if rid.startswith("doi:") else ""
+            if _ZENODO_DOI.match(d) and _zenodo_names_repo(d, full_name):
+                doi, info["software_doi_source"] = d, "Zenodo archive linked from the README"
+                break
+    if not authors:
+        u_status, u = _gh_json(f"/users/{info['owner']}") if info["owner"] else (0, None)
+        info["owner_name"] = (u or {}).get("name") or None
+        authors = [info["owner_name"] or info["owner"]] if info["owner"] else []
+    if info["archived"]:
+        info["notes"].append("archived: the repository is read-only and no longer maintained")
+    if info["fork"]:
+        info["notes"].append(f"fork of {info['parent'] or 'another repository'} — cite the upstream "
+                             "unless this fork is the work being cited")
+    if info["moved_from"]:
+        info["notes"].append(f"moved: {info['moved_from']} now redirects to {full_name} — update the URL")
+    pc = info["preferred_citation"]
+    if pc and pc.get("title"):
+        target = next(iter(pc["ids"].values()), None)
+        info["notes"].append(f"the authors ask that '{pc['title'][:90]}' be cited ({pc['source']})"
+                             + (f" — add it too: bib_add(identifier='{target}')" if target else ""))
+    return _record(registry="github", title=title or full_name, authors=authors, year=year, venue="GitHub",
+                   doi=doi, github=full_name, abstract=abstract, type="software", url=info["html_url"],
+                   citation_count=r.get("stargazers_count"), repo=info)
+
+
+def _github_ref(full: str, ref: str) -> dict:
+    """Does `ref` (tag, branch or commit; 'v' prefix tolerated) exist in the
+    repository? found, the ref as it exists, its commit sha and date."""
+    ref = (ref or "").strip()
+    bare = re.sub(r"^v(?=\d)", "", ref, flags=re.I)
+    for cand in dict.fromkeys([ref, bare, "v" + bare]):
+        params = urllib.parse.urlencode({"sha": cand, "per_page": 1})
+        status, data = _gh_json(f"/repos/{full}/commits?{params}")
+        if status == 200 and isinstance(data, list) and data:
+            c = data[0]
+            return {"found": True, "ref": cand, "sha": c["sha"][:12],
+                    "date": ((c.get("commit") or {}).get("committer") or {}).get("date", "")[:10]}
+    return {"found": False, "ref": ref}
+
+
+def _gh_search_record(it: dict) -> dict:
+    owner = it.get("owner") or {}
+    return _record(registry="github", title=it.get("name", ""), authors=[owner.get("login")] if owner.get("login") else [],
+                   venue="GitHub", github=it.get("full_name"), abstract=it.get("description") or "",
+                   type="software", url=it.get("html_url", ""), citation_count=it.get("stargazers_count"),
+                   repo={"full_name": it.get("full_name"), "description": it.get("description") or "",
+                         "archived": bool(it.get("archived")), "fork": bool(it.get("fork")), "partial": True})
+
+
+def _github_search(title=None, author=None, words=None, year=None, per_page=10) -> list:
+    """Repository search by name/description — opt-in (registries=["github"])."""
+    q = title or " ".join(words or [])
+    if not q:
+        return []
+    params = urllib.parse.urlencode({"q": f"{q} in:name,description", "per_page": per_page})
+    status, data = _gh_json(f"/search/repositories?{params}")
+    if status != 200 or not data:
+        return []
+    return [_gh_search_record(it) for it in data.get("items") or []]
+
+
+def _bib_escape(s: str) -> str:
+    s = re.sub(r"[{}]", "", str(s or ""))
+    return re.sub(r"(?<!\\)([_%#$])", r"\\\1", s)
+
+
+def _github_pin(full: str, repo: dict, version: str | None) -> dict | None:
+    """The state an entry cites: the requested tag / branch / commit, else the
+    latest release, else the default branch's current commit. None when the
+    requested version does not exist."""
+    if not version:
+        status, rel = _gh_json(f"/repos/{full}/releases/latest")
+        if status == 200 and rel and rel.get("tag_name"):
+            return {"version": rel["tag_name"], "note": None,
+                    "year": (rel.get("published_at") or rel.get("created_at") or "")[:4]}
+    ref = _github_ref(full, version or repo.get("default_branch") or "HEAD")
+    if not ref["found"]:
+        return None
+    commit = f"Commit {ref['sha']} ({ref['date']})"
+    if version and not re.match(r"^[0-9a-f]{7,40}$", ref["ref"]):
+        return {"version": ref["ref"], "note": commit, "year": ref["date"][:4]}
+    return {"version": None, "note": commit, "year": ref["date"][:4]}
+
+
+def _github_bibtex(rec: dict) -> tuple:
+    """(bibtex, source) for a repository with no registry export: laid out
+    field for field from the authors' CITATION.cff (source citation-cff), else
+    from the GitHub record with the cited version — rec["pin"], else the
+    latest release, else the default branch's commit — pinned (source
+    github). Never from model memory."""
+    repo = rec.get("repo") or {}
+    full = repo.get("full_name") or rec["github"]
+    if repo.get("partial"):
+        full_rec = _github_get(full)
+        if not full_rec or full_rec.get("error"):
+            return None, "github"
+        rec, repo = dict(full_rec, pin=rec.get("pin")), full_rec["repo"]
+    cff, version = repo.get("cff"), rec.get("pin")
+    fields = []
+    if cff and cff.get("title") and cff.get("authors"):
+        source = "citation-cff"
+        pin = _github_pin(full, repo, version) if version else None
+        if version and not pin:
+            return None, source
+        fields += [("author", " and ".join(("{%s}" % _bib_escape(n)) if ent else _bib_escape(n)
+                                           for n, ent in cff["authors"])),
+                   ("title", "{%s}" % _bib_escape(cff["title"]))]
+        if pin:
+            fields += [("version", _bib_escape(pin["version"] or "")), ("note", pin["note"])]
+        elif cff.get("version"):
+            fields.append(("version", _bib_escape(cff["version"])))
+        if cff.get("doi"):
+            fields.append(("doi", cff["doi"]))
+        fields.append(("url", cff.get("url") or repo.get("html_url")))
+        year = pin["year"] if pin else (cff.get("date_released") or "")[:4]
+        fields.append(("year", year) if year else ("note", f"Accessed {_today()}"))
+    else:
+        source = "github"
+        pin = _github_pin(full, repo, version)
+        if not pin:
+            return None, source
+        owner = repo.get("owner_name") or repo.get("owner") or full.split("/")[0]
+        entity = repo.get("owner_type") == "Organization" or not repo.get("owner_name")
+        fields += [("author", ("{%s}" % _bib_escape(owner)) if entity else _bib_escape(owner)),
+                   ("title", "{%s}" % _bib_escape(full.split("/")[1])),
+                   ("version", _bib_escape(pin["version"] or "")), ("note", pin["note"])]
+        if rec.get("doi"):
+            fields.append(("doi", rec["doi"]))
+        fields += [("publisher", "GitHub"), ("url", repo.get("html_url") or f"https://github.com/{full}"),
+                   ("year", pin["year"])]
+    body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields if v)
+    return f"@software{{{_slug(full.replace('/', '_'))},\n{body}\n}}", source
+
+
 # ---------------------------------------------------------------------------
 # resolve — identifier → bibliographic record from the registry that owns it
 # ---------------------------------------------------------------------------
 
-_AUTHORITY = {"ads": 5, "crossref": 4, "datacite": 4, "inspire": 3, "openalex": 2, "arxiv": 1}
-_ID_KEYS = ("doi", "arxiv", "bibcode", "openalex", "inspire")
+_AUTHORITY = {"ads": 5, "crossref": 4, "datacite": 4, "inspire": 3, "github": 2, "openalex": 2, "arxiv": 1}
+_ID_KEYS = ("doi", "arxiv", "bibcode", "openalex", "inspire", "github")
 
 
 def _record_cache_put(rec: dict) -> None:
     cid = _canonical(rec)
+    if cid and (rec.get("repo") or {}).get("partial") and _record_cache_get(cid):
+        return              # a search hit must not replace the repository's full record
     if cid:
         with open(_cache_file("records", _slug(cid) + ".json"), "w") as fh:
             json.dump(rec, fh)
@@ -1052,6 +1409,13 @@ def _merge_records(base: dict, extra: dict) -> dict:
 
 
 def _public(rec: dict, raw: str, kind: str) -> dict:
+    out = _public_core(rec, raw, kind)
+    if rec.get("repo"):
+        out["repo"] = rec["repo"]
+    return out
+
+
+def _public_core(rec: dict, raw: str, kind: str) -> dict:
     return {"resolved": True, "input": raw, "kind": kind, "id": _canonical(rec),
             "ids": {k: rec[k] for k in _ID_KEYS if rec.get(k)},
             "title": rec.get("title", ""), "authors": (rec.get("authors") or [])[:12],
@@ -1071,6 +1435,7 @@ def _resolve_many(identifiers: list) -> list:
     dois = sorted({v for k, v in kinds if k == "doi"})
     bibcodes = sorted({v for k, v in kinds if k == "bibcode"})
     others = sorted({(k, v) for k, v in kinds if k in ("openalex", "inspire")})
+    repos = sorted({v for k, v in kinds if k == "github"})
 
     arxiv_found = _arxiv_lookup(arxiv_ids) if arxiv_ids else {}
 
@@ -1087,9 +1452,16 @@ def _resolve_many(identifiers: list) -> list:
         except RuntimeError as exc:
             return kv, {"error": str(exc)}
 
+    def by_repo(v):
+        try:
+            return v, _github_get(v)
+        except RuntimeError as exc:
+            return v, {"error": str(exc)}
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         doi_found = dict(ex.map(by_doi, dois))
         other_found = dict(ex.map(by_other, others))
+        repo_found = dict(ex.map(by_repo, repos))
 
     ads, ads_error = {}, None
     if _ads_token():
@@ -1116,24 +1488,37 @@ def _resolve_many(identifiers: list) -> list:
         elif kind in ("openalex", "inspire"):
             rec = other_found.get((kind, value))
             reason = f"{kind} returned no record for {value}"
+        elif kind == "github":
+            rec = repo_found.get(value)
+            reason = (f"no public GitHub repository at github.com/{value} (deleted, private, or renamed "
+                      "without a redirect)")
         else:
             reason = ("unrecognized identifier — expected an arXiv id, DOI (10.*), ADS bibcode, "
-                      "OpenAlex Wnnn, or inspire:nnn")
+                      "OpenAlex Wnnn, inspire:nnn, or a GitHub repository (github.com/owner/repo)")
+        failed = False
         if isinstance(rec, dict) and rec.get("error"):
-            reason, rec = rec["error"], None
+            reason, rec, failed = rec["error"], None, not rec.get("final")
         if not rec:
-            results.append({"resolved": False, "input": raw, "kind": kind, "reason": reason})
+            results.append(dict({"resolved": False, "input": raw, "kind": kind, "reason": reason},
+                                **({"lookup_error": True} if failed else {})))
             continue
         rec = dict(rec)
         rec.setdefault("registries", [rec["registry"]])
-        for key in (rec.get("arxiv"), rec.get("doi"), rec.get("bibcode")):
+        for key in ((rec.get("arxiv"), rec.get("doi"), rec.get("bibcode")) if kind != "github" else ()):
             hit = ads.get((key or "").lower())
             if hit and hit is not rec:
                 rec = _merge_records(rec, hit)
                 break
         _record_cache_put(rec)
         _alias_put(kind, value, _canonical(rec))
-        results.append(_public(rec, raw, kind))
+        pub = _public(rec, raw, kind)
+        m = _GITHUB_REF.search(raw) if kind == "github" else None
+        if m:
+            try:
+                pub["ref"] = _github_ref(rec["repo"]["full_name"], urllib.parse.unquote(m.group(1)))
+            except RuntimeError as exc:
+                pub["ref"] = {"found": None, "ref": m.group(1), "error": str(exc)}
+        results.append(pub)
     return results
 
 
@@ -1141,10 +1526,15 @@ def resolve_citation(identifier) -> dict:
     """Resolve an identifier (or a list of them) to real bibliographic metadata.
 
     Accepts arXiv ids, DOIs, ADS bibcodes, OpenAlex W-ids, inspire:nnn, in bare,
-    prefixed or URL form. resolved=false with a reason when the registry has no
-    such record. A resolved result is existence only — verify_bib / search
-    compare titles, authors and years to catch real ids attached to the wrong
-    paper.
+    prefixed or URL form, and public GitHub repositories (github.com/owner/repo,
+    github:owner/repo, git@github.com:owner/repo.git). resolved=false with a
+    reason when the registry has no such record. A resolved result is
+    existence only — verify_bib / search compare titles, authors and years to
+    catch real ids attached to the wrong paper. A repository result carries
+    `repo`: archived / fork / moved flags, its CITATION.cff, the paper its
+    authors ask to be cited (`preferred_citation`), its software DOI, the
+    identifiers its README mentions, and `ref` when the URL names a tag,
+    branch or commit (checked to exist).
     """
     many = isinstance(identifier, list)
     idents = [str(x) for x in (identifier if many else [identifier])]
@@ -1223,6 +1613,9 @@ def _identity_keys(rec: dict) -> list:
         keys.append("doi:" + rec["doi"].lower())
     if rec.get("bibcode"):
         keys.append("bibcode:" + rec["bibcode"])
+    if rec.get("github"):
+        keys.append("github:" + rec["github"])
+        return keys          # repositories share names freely; only the full name identifies one
     t = _norm_title(rec.get("title", ""))
     fa = _surname(rec["authors"][0]) if rec.get("authors") else ""
     if t and fa:
@@ -1314,7 +1707,9 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
     Give as much as you know: `title` (best), `author` (first-author surname),
     `year`, a rough cite key as `hint` ("Vaswani2017", "planck2016cosmological"),
     and/or the sentence being written as `context`. `query` is free text, or a
-    bare identifier (then this is just a resolve). Candidates are ranked by
+    bare identifier or GitHub URL (then this is just a resolve). Software:
+    registries=["github"] searches repository names and descriptions (opt-in;
+    the default registries are the bibliographic ones). Candidates are ranked by
     cite-check's own title/author/year/context scoring — registry ranking is
     not trusted. Nothing here is verified: pick a candidate, then fetch_bibtex
     / bib_add it by its `id`.
@@ -1342,7 +1737,7 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
     if not _ads_token():
         enabled = [r for r in enabled if r != "ads"]
     fns = {"ads": _ads_search, "arxiv": _arxiv_search, "crossref": _crossref_search,
-           "openalex": _openalex_search, "inspire": _inspire_search}
+           "openalex": _openalex_search, "inspire": _inspire_search, "github": _github_search}
     kwargs = dict(title=title, author=author, words=words or None, year=year)
 
     def run(name):
@@ -1528,10 +1923,37 @@ def _entry_ids(entry: dict) -> dict:
         bc = urllib.parse.unquote(m.group(1))
     if bc and _BIBCODE_RE.match(bc):
         ids["bibcode"] = bc
+    srcs = ["url", "howpublished", "repository", "code"]          # the entry's locator, not a "code at…" remark
+    if entry["type"] in _SOFTWARE_TYPES:
+        srcs.append("note")
+    for k in srcs:
+        m = _GITHUB_ANY.search(f.get(k, ""))
+        if m:
+            kind, val = _classify("github.com/" + m.group(1) + "/" + m.group(2))
+            if kind == "github":
+                ids["github"] = val
+                break
     return ids
 
 
-_DEFAULT_PREFER = ["ads", "crossref", "datacite", "inspire", "arxiv"]
+_SOFTWARE_TYPES = {"software", "softwareversion", "softwaremodule", "codefragment", "misc", "online",
+                   "electronic", "www", "manual", "unpublished"}
+
+
+def _entry_ref(entry: dict) -> str | None:
+    """The version a repository entry cites: its version field, or the
+    tag / branch / commit in its GitHub URL."""
+    f = entry["fields"]
+    if f.get("version", "").strip():
+        return re.sub(r"[{}]", "", f["version"]).strip()
+    for k in ("url", "howpublished", "repository", "note"):
+        m = _GITHUB_REF.search(f.get(k, ""))
+        if m:
+            return urllib.parse.unquote(m.group(1))
+    return None
+
+
+_DEFAULT_PREFER = ["ads", "crossref", "datacite", "inspire", "arxiv", "github"]
 _MACRO_CLASSES = re.compile(r"\\documentclass(?:\[[^\]]*\])?\{(?:aastex\w*|aasjournal\w*|mnras|emulateapj|apj\w*|aa)\}")
 
 
@@ -1545,10 +1967,16 @@ def _journal_format_for(tex_path: str | None) -> int:
 
 
 def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author: int = 10) -> dict:
-    """BibTeX from a registry's own export, in `prefer` order. Never synthesised."""
+    """BibTeX from a registry's own export, in `prefer` order. Never
+    synthesised — the one exception is a GitHub repository with no DOI
+    export, laid out field for field by _github_bibtex from its authors'
+    CITATION.cff or its GitHub record."""
     tried = []
-    for src in (prefer or _DEFAULT_PREFER):
-        bib = None
+    order = prefer or _DEFAULT_PREFER
+    if rec.get("github") and rec.get("pin"):
+        order = ["github"]          # a DOI export would cite the latest version, not the one asked for
+    for src in order:
+        bib, label = None, src
         try:
             if src == "ads":
                 if not _ads_token():
@@ -1585,13 +2013,16 @@ def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author
             elif src == "arxiv" and rec.get("arxiv"):
                 status, body = _http(f"https://arxiv.org/bibtex/{rec['arxiv']}")
                 bib = body if status == 200 and body.lstrip().startswith("@") else None
+            elif src == "github" and rec.get("github"):
+                bib, label = _github_bibtex(rec)
             else:
                 continue
         except RuntimeError as exc:
             tried.append(f"{src}: {exc}")
             continue
         if not bib:
-            tried.append(f"{src}: no export")
+            tried.append(f"{src}: version '{rec['pin']}' is not a tag, branch or commit of {rec['github']}"
+                         if src == "github" and rec.get("pin") else f"{src}: no export")
             continue
         parsed = _parse_bib(bib)["entries"]
         if not parsed:
@@ -1599,10 +2030,11 @@ def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author
             continue
         entry = parsed[0]
         sim = _title_sim(rec.get("title", ""), entry["fields"].get("title", ""))
-        if rec.get("title") and entry["fields"].get("title") and sim < 0.6:
+        if rec.get("title") and entry["fields"].get("title") and sim < 0.6 and not (
+                rec.get("github") and _names_repo(entry["fields"]["title"], rec["github"])):
             tried.append(f"{src}: export title mismatch ({sim})")
             continue
-        return {"bibtex": _sanitize_bibtex(entry, rec), "source": src, "title_similarity": sim, "tried": tried}
+        return {"bibtex": _sanitize_bibtex(entry, rec), "source": label, "title_similarity": sim, "tried": tried}
     return {"bibtex": None, "source": None, "tried": tried}
 
 
@@ -1647,7 +2079,8 @@ def _rewrite_key(bibtex: str, key: str) -> str:
 
 def _prov_comment(rec: dict, source: str) -> str:
     title = re.sub(r"[{}@\n\"]", " ", rec.get("title", ""))[:100].strip()
-    body = f'cite-check: source={source}; id={_canonical(rec)}; fetched={_today()}; title="{title}"'
+    pin = f"; version={rec['pin']}" if rec.get("github") and rec.get("pin") else ""
+    body = f'cite-check: source={source}; id={_canonical(rec)}{pin}; fetched={_today()}; title="{title}"'
     return "@comment{" + body.replace("@", "(at)") + "}"
 
 
@@ -1661,12 +2094,25 @@ def _default_key(rec: dict, existing: set) -> str:
     return key
 
 
+def _with_pin(rec: dict, identifier: str, version: str | None) -> dict:
+    """A repository record pinned to the version asked for (argument, or the
+    tag / branch / commit in the identifier's URL)."""
+    if not rec.get("github"):
+        return rec
+    m = _GITHUB_REF.search(str(identifier or ""))
+    pin = (version or "").strip() or (urllib.parse.unquote(m.group(1)) if m else None)
+    return dict(rec, pin=pin) if pin else rec
+
+
 def fetch_bibtex(identifier: str, key: str | None = None, prefer: list | None = None,
                  journal_format: int | None = None, tex_path: str | None = None,
-                 max_author: int = 10) -> dict:
+                 max_author: int = 10, version: str | None = None) -> dict:
     """Official BibTeX for one identifier, from ADS / Crossref / DataCite /
-    INSPIRE / arXiv (first that has it, in `prefer` order). `key` renames the
-    entry. journal_format (ADS): 1 macros, 2 abbreviations, 3 full names —
+    INSPIRE / arXiv (first that has it, in `prefer` order); a GitHub repository
+    with no DOI export gets an @software entry laid out from its CITATION.cff
+    (source citation-cff) or its GitHub record with the release or commit
+    pinned (source github). `version` (or a /tree/<ref> URL) pins the tag,
+    branch or commit that was used; it must exist. `key` renames the entry. journal_format (ADS): 1 macros, 2 abbreviations, 3 full names —
     auto-detected from tex_path's documentclass when omitted. bibtex=null means
     no registry exports one: do not hand-write it.
     """
@@ -1674,6 +2120,7 @@ def fetch_bibtex(identifier: str, key: str | None = None, prefer: list | None = 
     if rec is None:
         r = resolve_citation(identifier)
         return {"bibtex": None, "resolved": False, "reason": r.get("reason") or r.get("error")}
+    rec = _with_pin(rec, identifier, version)
     jf = int(journal_format) if journal_format else _journal_format_for(tex_path)
     got = _official_bibtex(rec, prefer, jf, max_author)
     if not got["bibtex"]:
@@ -1681,15 +2128,34 @@ def fetch_bibtex(identifier: str, key: str | None = None, prefer: list | None = 
                 "reason": ("no registry offers a BibTeX export for this record — do not hand-write "
                            "one; cite a version that has a DOI or arXiv id, or record the gap")}
     bib = _rewrite_key(got["bibtex"], key) if key else got["bibtex"]
-    return {"bibtex": bib, "key": _parse_bib(bib)["entries"][0]["key"], "source": got["source"],
-            "id": _canonical(rec), "ids": {k: rec[k] for k in _ID_KEYS if rec.get(k)},
-            "title": rec["title"], "provenance": _prov_comment(rec, got["source"]), "tried": got["tried"]}
+    return dict({"bibtex": bib, "key": _parse_bib(bib)["entries"][0]["key"], "source": got["source"],
+                 "id": _canonical(rec), "ids": {k: rec[k] for k in _ID_KEYS if rec.get(k)},
+                 "title": rec["title"], "provenance": _prov_comment(rec, got["source"]), "tried": got["tried"]},
+                **_repo_advice(rec))
+
+
+def _repo_advice(rec: dict) -> dict:
+    """For a repository: what its record says the writer should know."""
+    repo = rec.get("repo") or {}
+    out = {}
+    if repo.get("notes"):
+        out["repo_notes"] = repo["notes"]
+    pc = repo.get("preferred_citation")
+    if pc and pc.get("ids"):
+        out["preferred_citation"] = next(iter(pc["ids"].values()))
+    elif repo.get("readme_ids"):
+        out["readme_ids"] = repo["readme_ids"]
+        out.setdefault("repo_notes", []).append(
+            "no CITATION file; the README links these identifiers — if one is the paper the authors ask "
+            "to be cited, resolve and add it too")
+    return out
 
 
 def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_format: int | None = None,
             tex_path: str | None = None, replace: bool = False, max_author: int = 10) -> dict:
     """Add official entries to a .bib. items: [{"identifier": …, "key": …}] (key
-    optional → Surname2017). Each entry is written with a provenance comment.
+    optional → Surname2017; "version" pins a GitHub repository's tag, branch
+    or commit). Each entry is written with a provenance comment.
     Duplicates (same DOI/arXiv/bibcode already present) are reported, not
     added; an existing key is left alone unless replace=true, which swaps a
     hand-written entry for the official one under the same key.
@@ -1704,7 +2170,10 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
     parsed = _parse_bib(text)
     by_id = {}
     for e in parsed["entries"]:
-        for k, v in _entry_ids(e).items():
+        ids = _entry_ids(e)
+        if any(ids.get(k) for k in ("doi", "arxiv", "bibcode")):
+            ids.pop("github", None)       # a paper that links its code is not the code
+        for k, v in ids.items():
             by_id.setdefault(f"{k}:{v.lower()}", e["key"])
     jf = int(journal_format) if journal_format else _journal_format_for(tex_path)
     results, additions, replacements = [], [], {}
@@ -1717,7 +2186,8 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
         if rec is None:
             results.append({"identifier": ident, "key": want, "status": "unresolved"})
             continue
-        dup = next((by_id[f"{k}:{rec[k].lower()}"] for k in ("doi", "arxiv", "bibcode")
+        rec = _with_pin(rec, ident, item.get("version"))
+        dup = next((by_id[f"{k}:{rec[k].lower()}"] for k in ("doi", "arxiv", "bibcode", "github")
                     if rec.get(k) and f"{k}:{rec[k].lower()}" in by_id), None)
         if dup and dup != want and not replace:
             results.append({"identifier": ident, "key": want, "status": "duplicate", "existing_key": dup,
@@ -1726,7 +2196,7 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
         key = want or dup or _default_key(rec, taken)
         if key in parsed["keys"] and not replace:
             have = _entry_ids(parsed["keys"][key])
-            same = any(have.get(k) and rec.get(k) and have[k].lower() == rec[k].lower() for k in ("doi", "arxiv", "bibcode"))
+            same = any(have.get(k) and rec.get(k) and have[k].lower() == rec[k].lower() for k in ("doi", "arxiv", "bibcode", "github"))
             results.append({"identifier": ident, "key": key, "status": "exists" if same else "key-conflict",
                             "note": None if same else f"key {key} already holds a different work; pick another key or replace=true"})
             continue
@@ -1738,11 +2208,11 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
         status = "replaced" if key in parsed["keys"] else "added"
         (replacements.__setitem__(key, block) if status == "replaced" else additions.append((key, block)))
         taken.add(key)
-        for k in ("doi", "arxiv", "bibcode"):
+        for k in ("doi", "arxiv", "bibcode", "github"):
             if rec.get(k):
                 by_id[f"{k}:{rec[k].lower()}"] = key
-        results.append({"identifier": ident, "key": key, "status": status, "source": got["source"],
-                        "id": _canonical(rec), "title": rec["title"]})
+        results.append(dict({"identifier": ident, "key": key, "status": status, "source": got["source"],
+                             "id": _canonical(rec), "title": rec["title"]}, **_repo_advice(rec)))
     if replacements or additions:
         new = text
         for e in sorted(parsed["entries"], key=lambda e: -e["start"]):
@@ -1798,6 +2268,95 @@ def _compare(entry: dict, pub: dict, via: str) -> dict:
             "provenance": entry["provenance"]}
 
 
+def _names_repo(title: str, full: str) -> bool:
+    """Does the title name the repository as a whole word run ('corner.py:
+    Scatterplot matrices…' names dfm/corner.py)?"""
+    name = _norm_title(full.split("/")[-1])
+    return len(name) >= 3 and f" {name} " in f" {_norm_title(title)} "
+
+
+def _compare_repo(entry: dict, pub: dict) -> dict:
+    """Entry fields vs the GitHub repository its URL points at. The title must
+    be the repository's own (CITATION.cff title, name, name and description,
+    or a title that names it); an entry titled as the paper the repository
+    asks to be cited is FOUND — that paper is what the entry should be. A
+    cited version must exist as a tag, branch or commit."""
+    f, repo = entry["fields"], pub.get("repo") or {}
+    full = repo.get("full_name") or pub["ids"]["github"]
+    title, authors, year = f.get("title", ""), _split_bib_authors(f.get("author", "")), _year(f.get("year"))
+    name, desc = full.split("/")[1], repo.get("description") or ""
+    own = [t for t in (pub["title"], name, full, desc, f"{name}: {desc}", f"{pub['title']}: {desc}") if t]
+    sim = max(_title_sim(title, t) for t in own) if title else None
+    people = list(pub.get("authors") or []) + [x for x in (repo.get("owner_name"), repo.get("owner")) if x]
+    am = _author_match(authors, people)
+    out = {"key": entry["key"], "via": f"github:{pub['ids']['github']}", "id": pub["id"], "ids": pub["ids"],
+           "title_similarity": sim, "first_author_match": am["first"], "year_bib": year,
+           "year_registry": pub.get("year"), "registry_title": pub["title"],
+           "notes": list(repo.get("notes") or []), "provenance": entry["provenance"]}
+    if sim is None:
+        out["status"] = "PROBABLE"
+        out["notes"].append("entry has no title — the repository exists but nothing can be compared")
+    elif sim >= 0.9:
+        out["status"] = "VERIFIED"
+    else:
+        paper = _repo_paper_match(title, repo)
+        if paper:
+            return dict(out, status=paper["status"], id=paper.get("id", out["id"]), ids=paper.get("ids", out["ids"]),
+                        title_similarity=paper["similarity"], registry_title=paper["title"],
+                        notes=[paper["note"]] + out["notes"])
+        if _names_repo(title, full):
+            out["status"] = "VERIFIED"
+            out["notes"].append(f"title names the repository; its own title is '{pub['title'][:80]}'")
+        elif sim >= 0.75:
+            out["status"] = "PROBABLE"
+            out["notes"].append(f"title similarity only {sim}: the repository is '{full}' — '{desc[:80]}'")
+        else:
+            out["status"] = "MISMATCH"
+            out["notes"] = [f"the URL points at a different work: github.com/{full} — '{desc[:80]}' "
+                                f"(similarity {sim})"]
+            return out
+    if am["first"] is False and am["any"] is False:
+        out["status"] = "PROBABLE"
+        out["notes"].append(f"authors differ: bib '{authors[0]}' vs repository '{people[0]}'")
+    ref = _entry_ref(entry)
+    if ref:
+        try:
+            out["ref"] = _github_ref(full, ref)
+        except RuntimeError as exc:
+            out["ref"] = {"found": None, "ref": ref}
+            out["notes"].append(f"cited version '{ref}' not checked: {exc}")
+        if out["ref"]["found"] is False:
+            out["status"] = "PROBABLE"
+            out["notes"].append(f"cited version '{ref}' is not a tag, branch or commit of {full}")
+    return out
+
+
+def _repo_paper_match(title: str, repo: dict) -> dict | None:
+    """Is an entry pointing at a repository really the paper that repository
+    asks to be cited (CITATION.cff / CITATION.bib) or links from its README?"""
+    pc = repo.get("preferred_citation") or {}
+    declared = [("doi:" if k == "doi" else "arXiv:") + v for k, v in (pc.get("ids") or {}).items()]
+    candidates = list(dict.fromkeys(declared + list(repo.get("readme_ids") or [])[:6]))
+    try:
+        resolved = _resolve_many(candidates) if candidates else []
+    except RuntimeError:
+        resolved = []
+    for r in resolved:
+        if r.get("resolved"):
+            s = _title_sim(title, r["title"])
+            if s >= 0.9:
+                where = pc.get("source") if r["input"] in declared else "linked from the README"
+                return {"status": "FOUND", "id": r["id"], "ids": r["ids"], "similarity": s, "title": r["title"],
+                        "note": f"entry is the paper '{r['title'][:80]}' ({where}), not the repository — replace "
+                                f"it with the official entry: bib_add(items=[{{'identifier': '{r['id']}', "
+                                "'key': …}], replace=true)"}
+    if pc.get("title") and _title_sim(title, pc["title"]) >= 0.9:
+        return {"status": "PROBABLE", "similarity": _title_sim(title, pc["title"]), "title": pc["title"],
+                "note": f"entry is the paper the repository asks to be cited ({pc.get('source')}), which declares "
+                        f"no DOI or arXiv id — find it with search_citation(title='{pc['title'][:80]}')"}
+    return None
+
+
 def _search_entry(entry: dict) -> dict:
     f = entry["fields"]
     title, authors, year = f.get("title", ""), _split_bib_authors(f.get("author", "")), _year(f.get("year"))
@@ -1827,11 +2386,14 @@ def _search_entry(entry: dict) -> dict:
 def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = None,
                search_unresolved: bool = True) -> dict:
     """Existence check of every entry (or `keys`): resolve the entry's own
-    DOI / arXiv id / bibcode and compare title, first author and year with the
-    registry record. Entries without any identifier are searched by title,
-    author and year. Statuses: VERIFIED, FOUND (by search — replace with the
+    DOI / arXiv id / bibcode — or, for software, the GitHub repository in its
+    url / howpublished / repository field — and compare title, first author
+    and year with the registry record (a repository entry's cited version
+    must exist as a tag, branch or commit). Entries without any identifier
+    are searched by title, author and year. Statuses: VERIFIED, FOUND (by search — replace with the
     official entry), PROBABLE (look), MISMATCH (real id, different paper),
-    NOT_FOUND, UNRESOLVED. ok=true only when every entry is VERIFIED or FOUND.
+    NOT_FOUND, UNRESOLVED (no identifier, or the lookup failed). ok=true only
+    when every entry is VERIFIED or FOUND.
     """
     bib_path = os.path.abspath(bib_path)
     if not os.path.exists(bib_path):
@@ -1847,6 +2409,12 @@ def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = N
         order = [(k, ids[k]) for k in ("doi", "arxiv") if ids.get(k)]
         if ids.get("bibcode") and _ads_token():
             order.append(("bibcode", ids["bibcode"]))
+        prov_id = (e["provenance"] or {}).get("id", "")
+        if prov_id.startswith("github:") and _classify(prov_id)[0] == "github":
+            ids["github"] = _classify(prov_id)[1]      # bib_add filed it as the repository (e.g. its DataCite export)
+            order.insert(0, ("github", ids["github"]))
+        elif ids.get("github"):
+            order.append(("github", ids["github"]))
         plan.append((e, order))
     all_ids = list(dict.fromkeys(f"{k}:{v}" for _, order in plan for k, v in order))
     try:
@@ -1859,15 +2427,27 @@ def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = N
         for k, v in order:
             r = resolved.get(f"{k}:{v}")
             if r and r.get("resolved"):
-                result = _compare(e, r, f"{k}:{v}")
+                result = _compare_repo(e, r) if k == "github" else _compare(e, r, f"{k}:{v}")
                 break
             bad.append(f"{k}:{v} — {(r or {}).get('reason', 'no result')}")
+        if result and result["status"] == "MISMATCH" and result["via"].startswith("github:") and search_unresolved:
+            found = _search_entry(e)
+            if found["status"] in ("FOUND", "PROBABLE") and e["type"] not in _SOFTWARE_TYPES:
+                # an article whose url is its code: the paper is what is cited
+                found["notes"].insert(0, f"its GitHub URL points at {result['ids']['github']}, which is not this work")
+                result = found
+            elif found["status"] in ("FOUND", "PROBABLE"):
+                # a software entry with the wrong repository is the real-DOI-wrong-title case: still a failure
+                result["notes"].append(f"a registry record with this title exists ({found['id']}) — fix the URL, "
+                                       f"or bib_add(items=[{{'identifier': '{found['id']}', 'key': '{e['key']}'}}], replace=true)")
         if result:
             result["notes"] += [f"stale identifier in entry: {b}" for b in bad]
             out.append(result)
         elif order:
-            out.append({"key": e["key"], "status": "NOT_FOUND", "via": None, "notes": bad,
-                        "provenance": e["provenance"]})
+            failed = all((resolved.get(f"{k}:{v}") or {}).get("lookup_error") for k, v in order)
+            out.append({"key": e["key"], "status": "UNRESOLVED" if failed else "NOT_FOUND", "via": None,
+                        "notes": bad + (["the lookup itself failed — retry before calling this a fabrication"]
+                                        if failed else []), "provenance": e["provenance"]})
         else:
             to_search.append(e)
     if to_search and search_unresolved:
@@ -2171,7 +2751,11 @@ def _load_text_meta(cid: str) -> dict | None:
 
 def _obtain_text(rec: dict, cid: str) -> tuple:
     """(text, basis, source) — arXiv HTML, arXiv PDF, an open-access PDF the
-    registries point at, else the abstract, else nothing."""
+    registries point at, else the abstract, else nothing. A GitHub repository
+    yields its README with its description and CITATION.cff abstract (basis
+    readme)."""
+    if rec.get("github"):
+        return _github_text(rec)
     if rec.get("doi") and (not rec.get("arxiv") or not rec.get("abstract") or not rec.get("pdf_urls")):
         try:                                            # OpenAlex knows OA copies and abstracts
             oa = _openalex_get("https://doi.org/" + rec["doi"])
@@ -2205,13 +2789,28 @@ def _obtain_text(rec: dict, cid: str) -> tuple:
     return "", "none", None
 
 
+def _github_text(rec: dict) -> tuple:
+    repo = rec.get("repo") or {}
+    full = repo.get("full_name") or rec["github"]
+    head = "\n\n".join(x for x in dict.fromkeys([rec.get("title", ""), repo.get("description") or "",
+                                                  rec.get("abstract") or ""]) if x)
+    status, body = _gh_api(f"/repos/{full}/readme", accept="application/vnd.github.html+json")
+    readme = _tidy_text(_html_to_text(body)) if status == 200 else ""
+    if len(readme) > 200:
+        return head + "\n\n" + readme, "readme", f"github-readme:{full}"
+    if head.strip():
+        return head, "abstract", f"github:{full}"
+    return "", "none", None
+
+
 def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | None = None,
                refresh: bool = False, max_chars: int = 0) -> dict:
     """Get the cited paper's text for support checking and cache it: arXiv
     HTML → arXiv PDF → open-access PDF → abstract only. For paywalled papers
     pass pdf_path (or text_path) to ingest your own copy. Returns basis
-    (fulltext | abstract | none), source, chars, the cache path, and the
-    abstract; max_chars>0 inlines that much text.
+    (fulltext | readme | abstract | none), source, chars, the cache path, and
+    the abstract; max_chars>0 inlines that much text. A GitHub repository's
+    text is its README, description and CITATION.cff abstract (basis readme).
     """
     rec = _full_record(identifier)
     if rec is None:
@@ -2253,7 +2852,11 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
     if out["basis"] == "none":
         out["note"] = "no text obtainable — pass pdf_path= with your copy of the paper, or judge UNVERIFIABLE"
     elif out["basis"] == "abstract":
-        out["note"] = "abstract only (paywalled, no open-access copy found) — pass pdf_path= for a full-text check"
+        out["note"] = ("description only (the repository has no README)" if rec.get("github") else
+                       "abstract only (paywalled, no open-access copy found) — pass pdf_path= for a full-text check")
+    elif out["basis"] == "readme":
+        out["note"] = ("repository README, description and CITATION.cff abstract — the code itself is not read; a "
+                       "claim about what the code does that its documentation does not state is UNVERIFIABLE")
     return out
 
 
@@ -2581,6 +3184,7 @@ def ping() -> dict:
     """Liveness and capability check: token, PDF extractor, cache location."""
     info = {"ok": True, "server": "cite-check", "version": VERSION, "python": sys.version.split()[0],
             "ads_token": bool(_ads_token()), "ads_token_source": key_value("ads")[1],
+            "github_token": bool(_github_token()), "github_token_source": key_value("github")[1],
             "keyring": _keyring_backend() or "file", "config_dir": _config_dir(),
             "pdftotext": bool(shutil.which("pdftotext")), "cache_dir": CACHE_DIR, "mailto": _mailto() or None}
     if _key_cache.get("warnings"):
@@ -2590,6 +3194,12 @@ def ping() -> dict:
         info["pypdf"] = pypdf.__version__
     except ImportError:
         info["pypdf"] = None
+    try:
+        import yaml
+        info["pyyaml"] = yaml.__version__
+    except ImportError:
+        info["pyyaml"] = None
+        info["yaml_warning"] = "PyYAML missing — GitHub repositories' CITATION.cff files are not read"
     try:
         import importlib.metadata as md
         info["mcp"] = md.version("mcp")
@@ -2667,11 +3277,11 @@ def _run_keys(argv):
         if r.get("tested"):
             line += f"; {r['tested']['detail']}"
         print(line)
-    elif sub == "test" and len(argv) > 1 and argv[1] == "ads":
-        tok = _ads_token()
+    elif sub == "test" and len(argv) > 1 and argv[1] in ("ads", "github"):
+        tok = _ads_token() if argv[1] == "ads" else _github_token()
         if not tok:
-            sys.exit("no ADS token configured")
-        r = _ads_test(tok)
+            sys.exit(f"no {argv[1]} token configured")
+        r = _ads_test(tok) if argv[1] == "ads" else _github_test(tok)
         print(r["detail"])
         sys.exit(0 if r["ok"] else 1)
     elif sub == "delete" and len(argv) > 1:
@@ -2680,7 +3290,7 @@ def _run_keys(argv):
             r = key_delete(n)
             print(f"{n}: " + (f"removed from {', '.join(r['removed_from'])}" if r["deleted"] else r.get("error") or "nothing stored"))
     else:
-        sys.exit("usage: server.py keys names|backend|fields <name>|list [--json]|set <name> [--no-test]|test ads|delete <name>|--all")
+        sys.exit("usage: server.py keys names|backend|fields <name>|list [--json]|set <name> [--no-test]|test ads|github|delete <name>|--all")
 
 
 def _run_cli(argv):
@@ -2690,7 +3300,7 @@ def _run_cli(argv):
         names = "\n  ".join(TOOLS)
         sys.exit(f"usage: server.py                      (MCP stdio server)\n"
                  f"       server.py call <tool> '<json-args>'\n"
-                 f"       server.py keys list|set <name>|delete <name>|test ads   (API keys)\n\ntools:\n  {names}")
+                 f"       server.py keys list|set <name>|delete <name>|test ads|github   (API keys)\n\ntools:\n  {names}")
     if len(argv) < 2 or argv[1] not in TOOLS:
         sys.exit(f"unknown tool {argv[1] if len(argv) > 1 else '(none)'!r} — one of: {', '.join(TOOLS)}")
     try:

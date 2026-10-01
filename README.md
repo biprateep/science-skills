@@ -47,7 +47,9 @@ this machine does not have:
    `bash skills/co-scientist/mcp/setup_mcp.sh` on its own later.
 
 3. **Asks for registry API keys** that a toolbox can use (cite-check: a NASA
-   ADS token, and a contact e-mail for the Crossref/OpenAlex polite pools).
+   ADS token, a contact e-mail for the Crossref/OpenAlex polite pools, and
+   an optional GitHub token that lifts the repository-check limit from 60
+   to 5000 requests an hour).
    Typing is not echoed; a token is tested against the registry before it is
    kept; secrets go to the OS keychain (macOS Keychain or Linux Secret
    Service) when there is one and otherwise to a 0600 file under
@@ -170,6 +172,13 @@ bibliography actually fails:
 - **Official BibTeX only**: entries are fetched from NASA ADS, Crossref,
   DataCite, INSPIRE or arXiv exports, stamped with a provenance comment, and
   inserted by the tool; nothing is hand-written.
+- **Public GitHub repositories as citations**: a repository URL resolves to
+  a software record built from its `CITATION.cff` (title, authors, software
+  DOI, the paper its authors ask to be cited) and README. `verify_bib`
+  catches a wrong repository, a paper filed under its code's URL, a fork, a
+  renamed repository and a version that was never tagged. A repository with
+  no DOI export gets an `@software` entry laid out from its own metadata,
+  with the version or commit pinned. Support is judged against the README.
 - **Search that does not trust the registries**: candidates from ADS, arXiv,
   Crossref, OpenAlex and INSPIRE are merged and re-ranked locally (Crossref and
   OpenAlex both rank a fraudulent republication of *Attention Is All You Need*

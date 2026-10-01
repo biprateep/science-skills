@@ -7,7 +7,8 @@
 # Offline checks parse the fixture manuscript, verify quote matching and the
 # ledger rules, and run the audit without registry lookups. --network adds
 # live resolution, search, official BibTeX export, verify_bib and a full
-# audit; ADS checks run only when a token is configured.
+# audit; ADS checks run only when a token is configured, GitHub checks only
+# when enough of the hourly GitHub API quota is left.
 # Uses mcp/.venv if present, else system python3. The cache is redirected to
 # a temporary directory so tests never touch ~/.cache/cite-check.
 # ==============================================================================
@@ -23,7 +24,8 @@ export CITE_CHECK_CACHE="$W/cache"
 XDG_CONFIG_HOME_REAL="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_CONFIG_HOME="$W/config"      # key store under test, never the real one
 export CITE_CHECK_KEYRING=file
-unset ADS_API_TOKEN ADS_DEV_KEY ADS_TOKEN CITE_CHECK_MAILTO
+GITHUB_TOKEN_REAL="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+unset ADS_API_TOKEN ADS_DEV_KEY ADS_TOKEN CITE_CHECK_MAILTO GITHUB_TOKEN GH_TOKEN
 cp "$HERE"/fixtures/* "$W/"
 
 PASS=0; FAIL=0
@@ -70,6 +72,31 @@ check "keys: delete all" 0 "$PY" "$SERVER" keys delete --all
 check "keys: nothing left on disk" 0 bash -c "[ ! -e \"$W/config/cite-check/keys/ads\" ]"
 check "ping: no key again" 0 "$PY" "$SERVER" call ping '{}'
 expect 'r["ads_token"] is False' "ping: token gone after delete"
+
+# --- GitHub identifiers (offline) ------------------------------------------------
+check "github: identifier spellings" 0 "$PY" - "$SERVER" <<'PYEOF'
+import sys, os
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import server as S
+want = {"https://github.com/dfm/emcee": ("github", "dfm/emcee"),
+        "github.com/dfm/corner.py": ("github", "dfm/corner.py"),
+        "git@github.com:astropy/astropy.git": ("github", "astropy/astropy"),
+        "github:NumPy/NumPy": ("github", "numpy/numpy"),
+        "https://github.com/dfm/emcee/tree/v3.1.4": ("github", "dfm/emcee"),
+        "https://github.com/orgs/astropy": ("unknown", "https://github.com/orgs/astropy"),
+        "https://github.com/dfm": ("unknown", "https://github.com/dfm"),
+        "hep-th/9711200": ("arxiv", "hep-th/9711200")}
+bad = {k: S._classify(k) for k, v in want.items() if S._classify(k) != v}
+assert not bad, bad
+assert S._canonical(S._record(github="Dfm/Emcee", doi="10.5281/zenodo.1")) == "github:dfm/emcee"
+assert S._names_repo("corner.py: Scatterplot matrices in Python", "dfm/corner.py")
+assert not S._names_repo("Astropy", "numpy/numpy")
+assert S._readme_ids('<a href="https://doi.org/10.21105/joss.00024"><img src="https://joss.theoj.org/papers/10.21105/joss.00024/status.svg?style=flat"></a> arXiv:1202.3665v2') == ["doi:10.21105/joss.00024", "arXiv:1202.3665"]
+bib = S._parse_bib(open(os.path.join(os.path.dirname(sys.argv[1]), "..", "tests", "fixtures", "software.bib")).read())["keys"]
+assert S._entry_ids(bib["corner"]) == {"github": "dfm/corner.py"} and S._entry_ref(bib["corner"]) == "v2.2.1"
+assert S._entry_ids(bib["emceepaper"]) == {"github": "dfm/emcee"}
+assert S._bib_escape("my_tool 100% #1") == r"my\_tool 100\% \#1"
+PYEOF
 
 check "extract: fixture parses" 0 "$PY" "$SERVER" call extract_cites "{\"tex_path\": \"$W/sample.tex\"}"
 expect 'r["n_instances"] == 9 and r["n_keys"] == 6' "extract: 9 instances over 6 keys (follows \\input, skips comments)"
@@ -162,6 +189,38 @@ expect 'any(f["type"] == "support" and f["key"] == "einstein1935" for f in r["fa
 expect 'sum(1 for f in r["failures"] if f["type"] == "support-missing") == 6' "audit: unjudged instances are failures"
 expect 'r["support_counts"].get("SUPPORTS") == 1' "audit: SUPPORTS verdict counted"
 check "audit: no-support mode still fails on existence" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"require_support\": false}"
+
+# --- GitHub repositories (live; ~20 GitHub API requests on a cold cache) -------
+GH_LEFT="$(GITHUB_TOKEN="$GITHUB_TOKEN_REAL" "$PY" - "$SERVER" <<'PYEOF' 2>/dev/null
+import sys, os, json
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+import server as S
+st, body = S._gh_api("/rate_limit", token=S._github_token())
+print(json.loads(body)["resources"]["core"]["remaining"] if st == 200 else 0)
+PYEOF
+)"
+if [ "${GH_LEFT:-0}" -ge 30 ]; then
+    [ -n "$GITHUB_TOKEN_REAL" ] && export GITHUB_TOKEN="$GITHUB_TOKEN_REAL"
+    check "github: resolve repositories" 1 "$PY" "$SERVER" call resolve_citation '{"identifier": ["https://github.com/astropy/astropy", "github.com/dfm/emcee/tree/v3.1.4", "https://github.com/biprateep/no-such-repo-zzz"]}'
+    expect 'r["results"][0]["repo"]["citation_file"] == "CITATION.cff" and r["results"][0]["ids"]["doi"] == "10.5281/zenodo.4670728" and r["results"][0]["repo"]["preferred_citation"]["ids"]["doi"] == "10.3847/1538-4357/ac7c74"' "github: CITATION.cff read — software DOI and preferred paper"
+    expect 'r["results"][1]["ref"]["found"] is True and "arXiv:1202.3665" in r["results"][1]["repo"]["readme_ids"]' "github: tag in URL checked, README paper link found"
+    expect 'r["results"][2]["resolved"] is False' "github: deleted repository does not resolve"
+    check "github: verify_bib software fixture" 1 "$PY" "$SERVER" call verify_bib "{\"bib_path\": \"$W/software.bib\"}"
+    expect 'dict((e["key"], e["status"]) for e in r["entries"]) == {"astropy": "VERIFIED", "emceepaper": "FOUND", "corner": "VERIFIED", "wrongrepo": "MISMATCH", "fakeversion": "PROBABLE", "gonerepo": "NOT_FOUND", "cornerjoss": "FOUND", "transformercode": "FOUND"}' "github: VERIFIED / paper-under-repo-URL FOUND / wrong repo MISMATCH / invented version PROBABLE / deleted NOT_FOUND"
+    expect 'next(e for e in r["entries"] if e["key"] == "emceepaper")["id"] == "doi:10.1086/670067" and next(e for e in r["entries"] if e["key"] == "transformercode")["id"] == "arXiv:1706.03762"' "github: FOUND entries point at the paper"
+    check "github: pinned @software entry" 0 "$PY" "$SERVER" call fetch_bibtex '{"identifier": "https://github.com/dfm/emcee/tree/v3.1.4", "key": "emcee"}'
+    expect 'r["source"] == "github" and "version = {v3.1.4}" in r["bibtex"] and "Commit e1db6a282346" in r["bibtex"] and "version=v3.1.4" in r["provenance"]' "github: version, commit and provenance pinned"
+    check "github: invented version has no entry" 1 "$PY" "$SERVER" call fetch_bibtex '{"identifier": "github:dfm/emcee", "version": "v97.3.1"}'
+    check "github: README is the support text" 0 "$PY" "$SERVER" call fetch_text '{"identifier": "github:dfm/emcee"}'
+    expect 'r["basis"] == "readme" and r["source"] == "github-readme:dfm/emcee"' "github: basis readme"
+    check "github: UNVERIFIABLE allowed on a README" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"emcee\", \"identifier\": \"github:dfm/emcee\", \"claim\": \"emcee runs on GPUs.\", \"verdict\": \"UNVERIFIABLE\", \"note\": \"the README says nothing about hardware; the code was not read\"}"
+    check "github: bib_add files the DOI export under the repository" 0 "$PY" "$SERVER" call bib_add "{\"bib_path\": \"$W/sw.bib\", \"items\": [{\"identifier\": \"github:astropy/astropy\", \"key\": \"astropy\"}, {\"identifier\": \"10.5281/zenodo.4670728\"}]}"
+    expect 'r["results"][0]["preferred_citation"] == "10.3847/1538-4357/ac7c74" and r["results"][1]["status"] == "duplicate"' "github: preferred paper surfaced; software DOI recognised as a duplicate"
+    check "github: search is opt-in and finds the repository" 0 "$PY" "$SERVER" call search_citation '{"title": "corner.py", "registries": ["github"]}'
+    expect 'r["candidates"][0]["id"] == "github:dfm/corner.py" and r["candidates"][0]["confidence"] == "high"' "github: search ranks the real repository first"
+else
+    echo "SKIP  GitHub checks (only ${GH_LEFT:-0} GitHub API requests left this hour; a token raises the limit)"
+fi
 
 check "keys: bogus ADS token rejected live and not stored" 1 bash -c "printf 'ZZZZnotarealtoken000000000000000000000000' | \"$PY\" \"$SERVER\" keys set ads"
 check "keys: nothing stored after rejection" 0 bash -c "[ ! -e \"$W/config/cite-check/keys/ads\" ]"
