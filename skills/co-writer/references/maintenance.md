@@ -43,6 +43,7 @@ registered the first time something is logged for it. It reads:
 | the paper's git history, commit by commit | the file as it stood (Overleaf syncs land here) |
 | snapshots of the working tree, at each `log` and each harvest | uncommitted states |
 | Claude Code, `~/.claude/projects/*/*.jsonl` | Edit/Write/MultiEdit on the `.tex`, prose in Bash splices, Read results, the author's turns |
+| Codex, `${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*.jsonl` and `archived_sessions/` | `apply_patch` hunks on the `.tex` (cut back to the lines they change), prose in shell splices, `exec_command` output that prints it (direct or from a code-mode `exec` script), the author's turns; sessions Codex imported from Claude Code are skipped |
 | Antigravity, `~/.gemini/antigravity/conversations/*.db` | `replace_file_content` / `write_to_file` edits (the new text and the text it replaced), `view_file` results, the author's turns |
 
 A session is included if it mentions the paper's repository path; which

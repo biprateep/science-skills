@@ -17,7 +17,7 @@ description: >-
   emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice
@@ -151,7 +151,8 @@ provenance and claim support are computed by the **cite-check** skill
 there applies here with no change to this file. Before the first citation
 action in a session read its contract,
 `<skills>/cite-check/references/integration.md`: it says how to reach the
-tools (listed by the harness as `mcp__cite-check__*`, or run its
+tools (listed by the harness as `mcp__cite-check__*` — in Claude Code
+perhaps by name only, deferred tools to load first, not absent — or run its
 `mcp/setup_mcp.sh` once and use the identical CLI for the session, `ping`
 once for the ADS token) and it wins wherever this section differs.
 
@@ -250,7 +251,7 @@ What a model reaching for "good academic prose" will do, and must not:
 The profile improves from use through the loop in
 [references/maintenance.md](references/maintenance.md). Nothing runs on its
 own: when the author says "co-writer update", `bash <skill>/scripts/update.sh`
-harvests the logs, the paper's git history and the Claude Code and
+harvests the logs, the paper's git history and the Claude Code, Codex and
 Antigravity transcripts into pairs of what an agent delivered and what the
 author kept, and an agent digests the new ones into a proposal, following
 [references/digest.md](references/digest.md). The profile changes only when

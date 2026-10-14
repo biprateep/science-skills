@@ -7,10 +7,11 @@ ever have: it knows what every sentence was meant to do. So the litmus question
 — would he have written this? — is never answered by the writer. It goes to a
 reader that never saw the composition.
 
-**Who.** A separate agent: Claude Code `Agent` (general-purpose); Antigravity, a
-spawned agent; a harness with neither, a later pass in a fresh context with the
-text in front of you and nothing else, recorded in the session log as
-`cold_read: no`. Section and draft mode: always. A single paragraph: when an
+**Who.** A separate agent: Claude Code `Agent` (general-purpose); Codex
+`spawn_agent` with `fork_turns: "none"`, then `wait_agent`; Antigravity
+`invoke_subagent` with `TypeName: "self"`; a harness with none, a later pass in
+a fresh context with the text in front of you and nothing else, recorded in the
+session log as `cold_read: no`. Section and draft mode: always. A single paragraph: when an
 agent is available.
 
 **What it gets.** The output, the profile, the slot and the register. Never the
