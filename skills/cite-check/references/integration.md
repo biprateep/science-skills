@@ -8,7 +8,9 @@ must do, must not do, and may rely on.
 ## Tool access
 
 1. If the harness lists the tools (Claude Code: `mcp__cite-check__*`; other
-   harnesses: server `cite-check`), call them directly.
+   harnesses: server `cite-check`), call them directly. Claude Code may list
+   them by name only, as deferred tools; load them (`ToolSearch`,
+   `select:mcp__cite-check__ping`) — that is not the same as absent.
 2. Otherwise run `bash <skills>/cite-check/mcp/setup_mcp.sh` once (idempotent;
    registers the server for the next session) and for the current session use
    CLI mode, which is the same code:

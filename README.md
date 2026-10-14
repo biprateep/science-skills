@@ -43,7 +43,8 @@ this machine does not have:
 2. **Builds and registers the MCP toolboxes** that skills ship (co-scientist's
    and cite-check's): one `.venv` per toolbox, then an entry in Claude Code
    (`--scope user`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
-   (`mcp_config.json`). This step needs the network and takes a minute — pass
+   (`~/.gemini/config/mcp_config.json`, read by the app, the IDE and the `agy`
+   CLI alike). This step needs the network and takes a minute — pass
    `--skip-mcp` to leave it out, or run
    `bash skills/co-scientist/mcp/setup_mcp.sh` on its own later.
 
@@ -88,8 +89,9 @@ It leaves the clone itself in place; delete that by hand if you want it gone.
 A directory under `skills/` is installed only if it contains a `SKILL.md`;
 work-in-progress folders are reported and skipped.
 
-**Skills and MCP servers load at the next session start**, so restart the
-harness before looking for them. To confirm the install took:
+**MCP servers load at the next session start**, and so do skills in Codex and
+Antigravity, so start a new session before looking for them (Claude Code also
+picks up skill edits inside a running session). To confirm the install took:
 
 ```sh
 ls -l ~/.claude/skills                     # one symlink per skill into this repo
@@ -144,7 +146,8 @@ The pull alone makes edits to existing skills live. The rerun covers what a
 pull cannot: it links skills that are new since the last run into Claude Code,
 removes the links of skills renamed or deleted upstream, reinstalls each MCP
 toolbox's requirements, and repeats the tool check. Antigravity and Codex
-scan `skills/` and need nothing. As always, restart the harness to load the changes.
+scan `skills/` and need nothing. As always, start a new session to load the
+changes.
 
 ## Featured Skills
 

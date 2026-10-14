@@ -15,7 +15,7 @@ description: >-
   debugging — answer those directly without this workflow.
 license: MIT
 metadata:
-  version: "0.7.1"
+  version: "0.7.2"
 ---
 
 # Co-Scientist: Scientific Research Partner
@@ -55,12 +55,12 @@ Fallback.
 | Capability            | Claude Code                                    | OpenAI Codex CLI                   | Google Antigravity                      | Fallback (any harness)                 |
 |-----------------------|------------------------------------------------|------------------------------------|-----------------------------------------|----------------------------------------|
 | `<web-search>`        | `WebSearch` tool                               | `web_search` (when enabled)        | `search_web`                            | `<web-fetch>` on a search endpoint     |
-| `<web-fetch>`         | `WebFetch` tool                                | `<run-shell>` + `curl` (sandbox ‡) | `search_web` on a URL / browser tool    | `<run-shell>` + `curl` (needs network) |
-| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `<web-fetch>` on the APIs†         | `literature-search-arxiv` / `-openalex` | `<web-search>` + `<web-fetch>`         |
-| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | spawn with `TypeName: self` / `research` | do the work inline (no subagent)      |
+| `<web-fetch>`         | `WebFetch` tool                                | `<run-shell>` + `curl` (sandbox ‡) | `read_url_content`                      | `<run-shell>` + `curl` (needs network) |
+| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `<web-fetch>` on the APIs†         | `<web-fetch>` on the APIs†              | `<web-search>` + `<web-fetch>`         |
+| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | `invoke_subagent`, `TypeName: "self"`   | do the work inline (no subagent)      |
 | `<image-gen>`         | *(none — use Fallback)*                         | *(none — use Fallback)*            | `generate_image`                        | matplotlib / TikZ / Mermaid            |
-| `<run-shell>`         | `Bash` tool                                    | `exec_command` (sandbox ‡)         | shell/terminal tool                     | — (required)                           |
-| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | `apply_patch` / shell              | file read/write tools                   | — (required)                           |
+| `<run-shell>`         | `Bash` tool                                    | `exec_command` (sandbox ‡)         | `run_command`                           | — (required)                           |
+| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | `apply_patch` / shell              | `view_file` / `write_to_file` / `replace_file_content` | — (required)                           |
 | `<load-skill>`        | `Skill` tool, by name                          | `<read-file>` `<skills>/<name>/SKILL.md` | skill auto-loaded, else read its `SKILL.md` | `<read-file>` `<skills>/<name>/SKILL.md`, whole |
 
 † arXiv API: `http://export.arxiv.org/api/query?search_query=...`
@@ -114,7 +114,10 @@ mode):**
 
 1. **Detect.** Look for the tools in your own tool list (Claude Code:
    `mcp__co-scientist__*`; other harnesses list them under server
-   `co-scientist`). If present → use them directly; done.
+   `co-scientist`). Claude Code may list MCP tools by name only, as deferred
+   tools: load them first (`ToolSearch`, `select:mcp__co-scientist__ping`) —
+   a deferred tool is present, not absent. If present → use them directly;
+   done.
 2. **If absent, register.** Run
    `bash <skill-dir>/mcp/setup_mcp.sh` via `<run-shell>`. It is idempotent:
    creates `mcp/.venv`, installs deps, smoke-tests, and registers the server in

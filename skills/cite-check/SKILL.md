@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.2.1"
+  version: "0.2.2"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -58,9 +58,9 @@ and network access, file read/write, and — for the support check —
 | Capability | Claude Code | OpenAI Codex CLI | Google Antigravity | Fallback |
 |---|---|---|---|---|
 | toolbox tools | `mcp__cite-check__*` | server `cite-check` | server `cite-check` | CLI mode (below) |
-| `<spawn-subagent>` (the judge) | `Agent`, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | spawn `TypeName: self` | judge in a separate later pass, passages in front of you |
-| `<run-shell>` | `Bash` | `exec_command` | terminal tool | — (required) |
-| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit` | `apply_patch` / shell | file tools | — (required) |
+| `<spawn-subagent>` (the judge) | `Agent`, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | `invoke_subagent`, `TypeName: "self"` | judge in a separate later pass, passages in front of you |
+| `<run-shell>` | `Bash` | `exec_command` | `run_command` | — (required) |
+| `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit` | `apply_patch` / shell | `view_file` / `write_to_file` / `replace_file_content` | — (required) |
 
 On Codex, `<run-shell>` runs in a sandbox with no network by default, so CLI
 mode cannot reach the registries there; the MCP tools run outside it. If CLI
@@ -69,7 +69,10 @@ asks the user) — a registry that could not be reached is never a pass.
 
 **Bootstrap (once per session, before the first citation task):**
 
-1. Look for the tools in your tool list. Present → use them.
+1. Look for the tools in your tool list. Present → use them. Claude Code
+   may list them by name only, as deferred tools: load them first
+   (`ToolSearch`, `select:mcp__cite-check__ping`) before deciding they are
+   absent.
 2. Absent → run `bash <skill-dir>/mcp/setup_mcp.sh` via `<run-shell>`
    (idempotent: builds `mcp/.venv`, smoke-tests, registers the server in
    every harness found; tools appear at the **next** session start).
