@@ -151,7 +151,8 @@ provenance and claim support are computed by the **cite-check** skill
 there applies here with no change to this file. Before the first citation
 action in a session read its contract,
 `<skills>/cite-check/references/integration.md`: it says how to reach the
-tools (listed by the harness as `mcp__cite-check__*`, or run its
+tools (listed by the harness as `mcp__cite-check__*` — in Claude Code
+perhaps by name only, deferred tools to load first, not absent — or run its
 `mcp/setup_mcp.sh` once and use the identical CLI for the session, `ping`
 once for the ADS token) and it wins wherever this section differs.
 
