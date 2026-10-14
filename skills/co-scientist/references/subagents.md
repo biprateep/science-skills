@@ -11,8 +11,8 @@ your harness, do the work inline following the same protocol.
    `Agent` tool, `subagent_type: general-purpose`, passing the role prompt as the
    task. On Codex: `spawn_agent` with the role prompt as the message and
    `fork_turns: "none"` (no orchestrator context), then `wait_agent` for its
-   answer. On Antigravity: spawn with the listed `TypeName`. Specialization
-   comes entirely from the prompt text below.
+   answer. On Antigravity: `invoke_subagent` with the listed `TypeName`.
+   Specialization comes entirely from the prompt text below.
 2. **Single writer.** The orchestrator pre-allocates every `NNN` from the manifest
    and passes **fully-resolved literal filenames** into the prompt. Subagents
    **return their content + any produced figure paths**; the **orchestrator
@@ -42,7 +42,7 @@ that filename. If blocked on a decision only the user can make, return
 
 ## Literature subagent
 
-- **TypeName (Antigravity):** `research` · **Claude Code:** `general-purpose`
+- **TypeName (Antigravity):** `self` · **Claude Code:** `general-purpose`
 - **Role:** Literature Surveyor
 - **Prompt template:**
   > "Survey the literature on [TOPIC] relevant to [HYPOTHESIS] using

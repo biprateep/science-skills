@@ -255,17 +255,31 @@ fi
 # ==============================================================================
 # 3c. Google Antigravity
 # ==============================================================================
-# Antigravity has moved this file between releases, so try every known home and
-# take the first that exists. An empty file counts: the installer creates one.
+# Every Antigravity surface (the app, the IDE and the agy CLI) reads the global
+# ~/.gemini/config/mcp_config.json; the per-surface copies under ~/.gemini/
+# antigravity*/ are left over from earlier releases. scripts/install.sh creates
+# ~/.gemini/config when it finds Antigravity, so the file is created there if
+# missing. Without that directory, fall back to an older home that exists.
+AG_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}"
 AG_CFG=""
-for cand in "${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}/mcp_config.json" \
-            "$HOME/.gemini/antigravity/mcp_config.json" \
-            "$HOME/.antigravity/mcp_config.json"; do
-    if [ -f "$cand" ]; then AG_CFG="$cand"; break; fi
-done
+if [ -d "$AG_DIR" ]; then
+    AG_CFG="$AG_DIR/mcp_config.json"
+    if [ ! -f "$AG_CFG" ] && [ "$MODE" = install ] && [ "$DRY_RUN" = 0 ]; then
+        : > "$AG_CFG"   # empty is fine: the writer below treats it as {}
+    fi
+    # Keep it if it exists, or if a dry-run install only narrates creating it.
+    if [ ! -f "$AG_CFG" ] && ! { [ "$MODE" = install ] && [ "$DRY_RUN" = 1 ]; }; then
+        AG_CFG=""
+    fi
+else
+    for cand in "$HOME/.gemini/antigravity/mcp_config.json" \
+                "$HOME/.antigravity/mcp_config.json"; do
+        if [ -f "$cand" ]; then AG_CFG="$cand"; break; fi
+    done
+fi
 
 if [ -z "$AG_CFG" ]; then
-    echo "  antigravity: no mcp_config.json found — skipped (add via its MCP settings UI once, then rerun)"
+    echo "  antigravity: no mcp_config.json found — skipped"
 elif [ "$DRY_RUN" = 1 ]; then
     echo "  [dry-run] would $MODE 'cite-check' in $AG_CFG"
 elif ! AG_PY="$(host_python)"; then
