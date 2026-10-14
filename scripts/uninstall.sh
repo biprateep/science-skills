@@ -10,6 +10,7 @@
 # Removes, from every harness found on this machine:
 #   - the Claude Code symlinks in ~/.claude/skills/<name>
 #   - this repo's directory entry in ~/.gemini/config/skills.json
+#   - the Codex symlink ~/.agents/skills/science-skills
 #   - each skill's MCP server registration (Claude Code, Codex, Antigravity)
 #     and its mcp/.venv (stored API keys are kept unless --purge-keys)
 #
@@ -26,7 +27,7 @@ for arg in ${@+"$@"}; do
     case "$arg" in
         # Answer --help here: forwarding it would print the installer's header,
         # which describes installing.
-        -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     esac
 done
 

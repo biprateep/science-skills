@@ -10,13 +10,13 @@ This repository contains a collection of AI agent skills tailored for scientific
 
 ## Agent Compatibility
 
-Every skill here is **harness-agnostic**: a single `SKILL.md` runs on
-**Claude Code**, **Google Antigravity** and other harnesses. The two that ship
-an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness Adapter* — a
-capability map at the top of the skill that the agent resolves to its own
-tools at runtime, with a CLI fallback that runs the same code. The others
-(`code-style`, `co-writer`, `jupytext`, `plot-style`) need only file access and
-a shell with Python 3 (`code-style` runs its checks through
+Every skill here is **harness-agnostic**: a single `SKILL.md` runs on **Claude
+Code**, **OpenAI Codex**, **Google Antigravity** and other harnesses. The two
+that ship an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness
+Adapter* — a capability map at the top of the skill that the agent resolves to
+its own tools at runtime, with a CLI fallback that runs the same code. The
+others (`code-style`, `co-writer`, `jupytext`, `plot-style`) need only file
+access and a shell with Python 3 (`code-style` runs its checks through
 [uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
 to further frameworks by adding a column to a map.
 
@@ -38,6 +38,7 @@ this machine does not have:
    | :--- | :--- | :--- |
    | **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
    | **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
+   | **OpenAI Codex** | one symlink `~/.agents/skills/science-skills` → `skills/` | automatically |
 
 2. **Builds and registers the MCP toolboxes** that skills ship (co-scientist's
    and cite-check's): one `.venv` per toolbox, then an entry in Claude Code
@@ -65,11 +66,12 @@ this machine does not have:
    any that is missing. It installs neither itself; without them the skills
    still load, only `code-style`'s checks cannot run.
 
-No skill file is copied — both harnesses read this working tree, so a `git pull`
+No skill file is copied — every harness reads this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
 never touches unrelated skills, MCP servers or config entries, and understands
-`--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR` or
-`GEMINI_CONFIG_DIR` to target a non-default install location.
+`--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR`,
+`GEMINI_CONFIG_DIR`, `CODEX_HOME` or `AGENTS_SKILLS_DIR` to target a non-default
+install location.
 
 To undo all of it — symlinks, config entries, MCP registrations and the
 toolbox venvs — run the matching uninstaller, which takes the same flags
@@ -92,20 +94,42 @@ harness before looking for them. To confirm the install took:
 ```sh
 ls -l ~/.claude/skills                     # one symlink per skill into this repo
 claude mcp list | grep -E 'co-scientist|cite-check'   # ✔ Connected
+codex mcp list | grep -E 'co-scientist|cite-check'    # enabled
 ```
 
 In a fresh Claude Code session, `/co-scientist`, `/cite-check`, `/co-writer`,
-`/code-style`, `/jupytext` and `/plot-style` should appear; in Antigravity the
-skills show up in the skills menu.
+`/code-style`, `/jupytext` and `/plot-style` should appear; in Codex they are
+listed to the agent and can be named in a prompt (`$co-scientist`, …); in
+Antigravity the skills show up in the skills menu.
 
 cite-check uses NASA ADS when a token was entered at install time (astronomy
 search and ADS BibTeX exports); `bash skills/cite-check/mcp/setup_mcp.sh --keys`
 adds or changes it, and `python skills/cite-check/mcp/server.py keys list`
 shows what is configured — see `skills/cite-check/references/registries.md`.
 
-For other harnesses (OpenAI Codex, Cursor, …) place or reference the skill
+For other harnesses (Cursor, …) place or reference the skill
 folder wherever that agent discovers instructions — the Harness Adapter maps the
 capabilities.
+
+### Codex sandbox
+
+Codex runs the agent's shell commands in a sandbox that, by default, has no
+network and cannot write outside the workspace. The MCP toolboxes run outside
+it and are unaffected, but uv cannot write its cache there, so every `uvx ruff`,
+`uv run mypy` or `uv add` (code-style, co-scientist) — and any registry call
+made outside a toolbox — stops for your approval. That works; it is just slow.
+To let uv run inside the sandbox, add uv's two directories (`uv cache dir`
+prints the first) as writable roots in `~/.codex/config.toml`:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = ["/home/you/.cache/uv", "/home/you/.local/share/uv"]
+# network_access = true   # also lets uv download and curl fetch without asking
+```
+
+Cached tools then run with no prompt; a first download or a new dependency
+still needs the network, either by approval or by `network_access`. Each widens
+what Codex may do unattended, so the installer leaves this choice to you.
 
 ### Updating
 
@@ -119,8 +143,8 @@ bash science-skills/scripts/install.sh
 The pull alone makes edits to existing skills live. The rerun covers what a
 pull cannot: it links skills that are new since the last run into Claude Code,
 removes the links of skills renamed or deleted upstream, reinstalls each MCP
-toolbox's requirements, and repeats the tool check. Antigravity scans
-`skills/` and needs nothing. As always, restart the harness to load the changes.
+toolbox's requirements, and repeats the tool check. Antigravity and Codex
+scan `skills/` and need nothing. As always, restart the harness to load the changes.
 
 ## Featured Skills
 

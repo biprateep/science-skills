@@ -23,7 +23,7 @@
 #     questions are skipped automatically; run --keys later from a terminal.
 # 3. Registers the server in every harness found on this machine:
 #      Claude Code        -> `claude mcp add --scope user`
-#      OpenAI Codex       -> ~/.codex/config.toml   ([mcp_servers.cite_check])
+#      OpenAI Codex       -> ~/.codex/config.toml   ([mcp_servers.cite-check])
 #      Google Antigravity -> mcp_config.json        ("mcpServers"."cite-check")
 #    Existing registrations and unrelated config entries are left untouched.
 #
@@ -200,32 +200,52 @@ fi
 # ==============================================================================
 # 3b. OpenAI Codex
 # ==============================================================================
-CODEX_CFG="$HOME/.codex/config.toml"
+# Registered as "cite-check", the name Claude Code and Antigravity use, so the tools
+# are mcp__cite-check__* in every harness. Earlier versions wrote
+# [mcp_servers.cite_check]; a table of that name that runs this server is ours, and
+# install removes it so the toolbox never starts twice in one session.
+CODEX_CFG="${CODEX_HOME:-$HOME/.codex}/config.toml"
+CODEX_NEW='^\[mcp_servers\."?cite-check"?\]'
+CODEX_OLD='^\[mcp_servers\."?cite_check"?\]'
+CODEX_ANY='^\[mcp_servers\."?cite[_-]check"?\]'
+
+codex_drop() {  # codex_drop <header-regex> — drop matching tables that run $SERVER
+    HDR="$1" SRV="$SERVER" awk '
+        function flush() { if (!index(buf, ENVIRON["SRV"])) printf "%s", buf; buf = ""; mine = 0 }
+        /^[ \t]*\[/ { if (mine) flush(); if ($0 ~ ENVIRON["HDR"]) mine = 1 }
+        mine        { buf = buf $0 "\n"; next }
+                    { print }
+        END         { if (mine) flush() }
+    ' "$CODEX_CFG" > "$CODEX_CFG.tmp" && mv "$CODEX_CFG.tmp" "$CODEX_CFG"
+}
+
 if command -v codex >/dev/null 2>&1 || [ -f "$CODEX_CFG" ]; then
     if [ "$MODE" = install ]; then
-        [ -f "$CODEX_CFG" ] || run mkdir -p "$HOME/.codex"
-        [ -f "$CODEX_CFG" ] || run touch "$CODEX_CFG"
-        if [ -f "$CODEX_CFG" ] && grep -Eq '^\[mcp_servers\.cite[_-]check\]' "$CODEX_CFG"; then
+        if [ -f "$CODEX_CFG" ] && grep -Eq "$CODEX_OLD" "$CODEX_CFG"; then
+            if [ "$DRY_RUN" = 1 ]; then
+                echo "  [dry-run] would remove the old [mcp_servers.cite_check] from $CODEX_CFG"
+            else
+                codex_drop "$CODEX_OLD"
+                echo "  codex: removed the old [mcp_servers.cite_check] entry"
+            fi
+        fi
+        if [ -f "$CODEX_CFG" ] && grep -Eq "$CODEX_NEW" "$CODEX_CFG"; then
             echo "  codex: already registered"
         elif [ "$DRY_RUN" = 1 ]; then
-            echo "  [dry-run] would add [mcp_servers.cite_check] to $CODEX_CFG"
+            echo "  [dry-run] would add [mcp_servers.cite-check] to $CODEX_CFG"
         else
+            mkdir -p "$(dirname "$CODEX_CFG")"
             # A new [table] appended at EOF is valid TOML regardless of what precedes it.
-            printf '\n[mcp_servers.cite_check]\ncommand = "%s"\nargs = ["%s"]\n' \
+            printf '\n[mcp_servers.cite-check]\ncommand = "%s"\nargs = ["%s"]\n' \
                 "$PY" "$SERVER" >> "$CODEX_CFG"
             echo "  codex: registered in $CODEX_CFG"
         fi
-    elif [ ! -f "$CODEX_CFG" ] || ! grep -Eq '^\[mcp_servers\.cite[_-]check\]' "$CODEX_CFG"; then
+    elif [ ! -f "$CODEX_CFG" ] || ! grep -Eq "$CODEX_ANY" "$CODEX_CFG"; then
         echo "  codex: not registered"
     elif [ "$DRY_RUN" = 1 ]; then
-        echo "  [dry-run] would remove [mcp_servers.cite_check] from $CODEX_CFG"
+        echo "  [dry-run] would remove [mcp_servers.cite-check] from $CODEX_CFG"
     else
-        # Drop our table and its keys, up to the next table header or EOF.
-        awk '
-            /^\[mcp_servers\.cite[_-]check\]/ { drop = 1; next }
-            drop && /^\[/                       { drop = 0 }
-            !drop                               { print }
-        ' "$CODEX_CFG" > "$CODEX_CFG.tmp" && mv "$CODEX_CFG.tmp" "$CODEX_CFG"
+        codex_drop "$CODEX_ANY"
         echo "  codex: deregistered from $CODEX_CFG"
     fi
 else

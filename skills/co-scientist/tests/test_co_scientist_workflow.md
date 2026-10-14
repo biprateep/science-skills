@@ -38,9 +38,11 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
   `.claude/skills/co-scientist/` (project), or ship it in a plugin.
 - **Google Antigravity:** its skill/agent discovery path (e.g. `.agents/` or the
   configured plugin location).
-- **Any other harness (OpenAI Codex, Cursor, …):** place the skill folder where
-  the agent discovers instructions (e.g. reference it from `AGENTS.md`), or
-  paste `SKILL.md` as context — the Harness Adapter maps the capabilities.
+- **OpenAI Codex:** `~/.agents/skills/` (personal; `scripts/install.sh`
+  links the whole `skills/` folder there) or `.agents/skills/` (project).
+- **Any other harness (Cursor, …):** place the skill folder where the agent
+  discovers instructions (e.g. reference it from `AGENTS.md`), or paste
+  `SKILL.md` as context — the Harness Adapter maps the capabilities.
 
 **Launch an autonomous run with the test prompt:**
 
@@ -49,6 +51,8 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
   `claude -p "<test prompt>"`.
 - **Google Antigravity:** start an autonomous run (e.g. `/goal`) with the test
   prompt.
+- **OpenAI Codex:** start a session in a clean working directory and paste
+  the test prompt, or run headless: `codex exec "<test prompt>"`.
 - **Any other harness:** start a session in a clean working directory with the
   skill loaded and paste the test prompt.
 

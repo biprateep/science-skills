@@ -9,8 +9,10 @@ your harness, do the work inline following the same protocol.
 
 1. **Spawn** via `<spawn-subagent>` (Harness Adapter). On Claude Code:
    `Agent` tool, `subagent_type: general-purpose`, passing the role prompt as the
-   task. On Antigravity: spawn with the listed `TypeName`. Specialization comes
-   entirely from the prompt text below.
+   task. On Codex: `spawn_agent` with the role prompt as the message and
+   `fork_turns: "none"` (no orchestrator context), then `wait_agent` for its
+   answer. On Antigravity: spawn with the listed `TypeName`. Specialization
+   comes entirely from the prompt text below.
 2. **Single writer.** The orchestrator pre-allocates every `NNN` from the manifest
    and passes **fully-resolved literal filenames** into the prompt. Subagents
    **return their content + any produced figure paths**; the **orchestrator
