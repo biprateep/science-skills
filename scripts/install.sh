@@ -16,6 +16,8 @@
 #                   (no directory-registry exists; rerun to pick up new skills)
 #   Antigravity  -> one directory entry in ~/.gemini/config/skills.json
 #                   (scans skills/ — new skills appear with no rerun)
+#   OpenAI Codex -> one symlink  ~/.agents/skills/science-skills -> skills/
+#                   (scanned recursively — new skills appear with no rerun)
 #
 # Step 2 runs every skills/*/mcp/setup_mcp.sh, which builds that skill's Python
 # venv and registers its MCP server with each harness. This needs the network
@@ -31,7 +33,7 @@
 # and python3. A missing one is reported with how to install it; this script
 # installs neither.
 #
-# No skill file is copied: both harnesses read the repo working tree, so a
+# No skill file is copied: every harness reads the repo working tree, so a
 # `git pull` publishes skill edits immediately. Unrelated links and config
 # entries are left untouched.
 #
@@ -40,7 +42,9 @@
 # upstream, reinstalls each toolbox's requirements and repeats the tool check.
 #
 # Overrides: CLAUDE_CONFIG_DIR (default ~/.claude), GEMINI_CONFIG_DIR
-# (default ~/.gemini/config). Set either to a path to target a custom install.
+# (default ~/.gemini/config), CODEX_HOME (default ~/.codex) and
+# AGENTS_SKILLS_DIR (default ~/.agents/skills, where Codex finds user skills).
+# Set any of them to a path to target a custom install.
 # ==============================================================================
 set -euo pipefail
 
@@ -49,6 +53,9 @@ SKILLS_DIR="$REPO_ROOT/skills"
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 AG_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}"
+CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+AGENTS_DIR="${AGENTS_SKILLS_DIR:-$HOME/.agents/skills}"
+CODEX_FOUND=0
 
 MODE=install
 DRY_RUN=0
@@ -245,6 +252,38 @@ else
 fi
 
 # ==============================================================================
+# OpenAI Codex — one directory symlink in ~/.agents/skills
+# ==============================================================================
+# Codex scans ~/.agents/skills recursively and follows symlinks, so a single
+# link to skills/ registers every skill, today's and future ones. Codex's
+# legacy ~/.codex/skills root would work too, but would list each skill twice
+# alongside this one.
+echo ""
+echo "-- OpenAI Codex"
+if [ -d "$CODEX_DIR" ] || command -v codex >/dev/null 2>&1; then
+    CODEX_FOUND=1
+    link="$AGENTS_DIR/science-skills"
+    if [ "$MODE" = install ]; then
+        if [ -e "$link" ] && ! [ -L "$link" ]; then
+            echo "    SKIPPED — a real directory already exists at $link" >&2
+        elif [ "$(readlink "$link" 2>/dev/null)" = "$SKILLS_DIR" ]; then
+            echo "    already linked: $link"
+        else
+            [ -d "$AGENTS_DIR" ] || run mkdir -p "$AGENTS_DIR"
+            run ln -sfn "$SKILLS_DIR" "$link"
+            echo "    $(said linked link) $link -> $SKILLS_DIR"
+        fi
+    elif [ "$(readlink "$link" 2>/dev/null)" = "$SKILLS_DIR" ]; then
+        run rm -f "$link"
+        echo "    $(said removed remove) $link"
+    else
+        echo "    no link for this repo at $link"
+    fi
+else
+    echo "    not found — skipped (no $CODEX_DIR, no 'codex' on PATH)"
+fi
+
+# ==============================================================================
 # MCP toolboxes — each skill that ships one sets it up itself
 # ==============================================================================
 # A skill's tools are part of the skill: installing one without the other leaves
@@ -312,6 +351,17 @@ if [ "$MODE" = install ]; then
         echo "    python3: NOT FOUND — the skills' scripts need Python 3.10+"
         MISSING_TOOLS+=(python3)
     fi
+    # Codex runs shell commands in a sandbox that, by default, has no network
+    # and cannot write uv's cache, so every uv call (and every registry call
+    # made outside the MCP toolboxes) stops for approval. Widening the sandbox
+    # is the user's decision; this only says how.
+    CODEX_CFG="$CODEX_DIR/config.toml"
+    if [ "$CODEX_FOUND" = 1 ] && command -v uv >/dev/null 2>&1 \
+            && ! grep -qs "$(uv cache dir 2>/dev/null)" "$CODEX_CFG"; then
+        echo "    codex sandbox: uv cannot write its cache there, so Codex will ask before"
+        echo "      each uv command. To let uv run inside the sandbox, see README.md,"
+        echo "      \"Codex sandbox\"."
+    fi
 fi
 
 # ==============================================================================
@@ -324,7 +374,8 @@ elif [ "$MODE" = uninstall ]; then
 else
     echo "Done. Skills load at the NEXT session start of each harness."
     echo "To update this machine later:  git pull && bash scripts/install.sh"
-    echo "(new skills get linked into Claude Code; Antigravity finds them by itself)."
+    echo "(new skills get linked into Claude Code; Antigravity and Codex find them by"
+    echo "themselves)."
     echo "Registry API keys (cite-check) can be entered or changed any time with:"
     echo "  bash skills/cite-check/mcp/setup_mcp.sh --keys"
 fi

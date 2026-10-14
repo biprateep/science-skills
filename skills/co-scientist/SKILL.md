@@ -15,7 +15,7 @@ description: >-
   debugging — answer those directly without this workflow.
 license: MIT
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
 ---
 
 # Co-Scientist: Scientific Research Partner
@@ -55,11 +55,11 @@ Fallback.
 | Capability            | Claude Code                                    | OpenAI Codex CLI                   | Google Antigravity                      | Fallback (any harness)                 |
 |-----------------------|------------------------------------------------|------------------------------------|-----------------------------------------|----------------------------------------|
 | `<web-search>`        | `WebSearch` tool                               | `web_search` (when enabled)        | `search_web`                            | `<web-fetch>` on a search endpoint     |
-| `<web-fetch>`         | `WebFetch` tool                                | `<run-shell>` + `curl`             | `search_web` on a URL / browser tool    | `<run-shell>` + `curl` (needs network) |
-| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `<run-shell>` + `curl` on the APIs† | `literature-search-arxiv` / `-openalex` | `<web-search>` + `<web-fetch>`         |
-| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | *(none — use Fallback)*            | spawn with `TypeName: self` / `research` | do the work inline (no subagent)      |
+| `<web-fetch>`         | `WebFetch` tool                                | `<run-shell>` + `curl` (sandbox ‡) | `search_web` on a URL / browser tool    | `<run-shell>` + `curl` (needs network) |
+| `<literature-search>` | `<web-fetch>` arXiv API + OpenAlex API†        | `<web-fetch>` on the APIs†         | `literature-search-arxiv` / `-openalex` | `<web-search>` + `<web-fetch>`         |
+| `<spawn-subagent>`    | `Agent` tool, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | spawn with `TypeName: self` / `research` | do the work inline (no subagent)      |
 | `<image-gen>`         | *(none — use Fallback)*                         | *(none — use Fallback)*            | `generate_image`                        | matplotlib / TikZ / Mermaid            |
-| `<run-shell>`         | `Bash` tool                                    | `shell`                            | shell/terminal tool                     | — (required)                           |
+| `<run-shell>`         | `Bash` tool                                    | `exec_command` (sandbox ‡)         | shell/terminal tool                     | — (required)                           |
 | `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit`             | `apply_patch` / shell              | file read/write tools                   | — (required)                           |
 | `<load-skill>`        | `Skill` tool, by name                          | `<read-file>` `<skills>/<name>/SKILL.md` | skill auto-loaded, else read its `SKILL.md` | `<read-file>` `<skills>/<name>/SKILL.md`, whole |
 
@@ -67,6 +67,14 @@ Fallback.
   OpenAlex API: `https://api.openalex.org/works?search=...`
   These are for *finding* papers. Confirming that a paper exists and says what
   it is cited for is cite-check's (Component Skills).
+
+‡ Codex runs `<run-shell>` in a sandbox that by default has no network and
+  cannot write outside the workspace — uv's cache included, so `uv run`,
+  `uv add` and `uvx` fail there. The MCP toolboxes run outside the sandbox:
+  prefer their tools to CLI mode. When a uv, curl or registry command fails
+  with a network or read-only-file-system error, rerun it with escalated
+  permissions (Codex asks the user); never record a check as passed because
+  its command could not run.
 
 `<skills>` is the directory that holds this skill's siblings: the parent of
 `<skill-dir>`.

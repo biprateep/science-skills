@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -57,10 +57,15 @@ and network access, file read/write, and — for the support check —
 
 | Capability | Claude Code | OpenAI Codex CLI | Google Antigravity | Fallback |
 |---|---|---|---|---|
-| toolbox tools | `mcp__cite-check__*` | server `cite_check` | server `cite-check` | CLI mode (below) |
-| `<spawn-subagent>` (the judge) | `Agent`, `subagent_type: general-purpose` | *(none — Fallback)* | spawn `TypeName: self` | judge in a separate later pass, passages in front of you |
-| `<run-shell>` | `Bash` | `shell` | terminal tool | — (required) |
+| toolbox tools | `mcp__cite-check__*` | server `cite-check` | server `cite-check` | CLI mode (below) |
+| `<spawn-subagent>` (the judge) | `Agent`, `subagent_type: general-purpose` | `spawn_agent`, `fork_turns: "none"`; then `wait_agent` | spawn `TypeName: self` | judge in a separate later pass, passages in front of you |
+| `<run-shell>` | `Bash` | `exec_command` | terminal tool | — (required) |
 | `<read-file>` / `<write-file>` | `Read` / `Write` / `Edit` | `apply_patch` / shell | file tools | — (required) |
+
+On Codex, `<run-shell>` runs in a sandbox with no network by default, so CLI
+mode cannot reach the registries there; the MCP tools run outside it. If CLI
+mode is all there is, rerun the failing call with escalated permissions (Codex
+asks the user) — a registry that could not be reached is never a pass.
 
 **Bootstrap (once per session, before the first citation task):**
 
