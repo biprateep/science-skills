@@ -23,7 +23,7 @@ The input and output are the two files already written for `check_fixed.py`
 ```bash
 python3 <skill>/scripts/cowriter.py log \
   --file <path of the .tex the text belongs to> \
-  --agent claude-code|antigravity|other \
+  --agent claude-code|codex|antigravity|other \
   --slot abstract|intro-opener|gap|methods|definition|equation|results|interpretation|limitation|close|caption|appendix|mixed \
   --register journal|workshop \
   --cold-read yes|no|n/a \
@@ -85,6 +85,6 @@ A session note has `slot: session` and a Note of three lines: `Asked:`,
 
 `cowriter.py harvest` (run by "co-writer update"; see
 [maintenance.md](maintenance.md)) reads these entries together with the
-paper's git history and both agents' transcripts. It works without a log
+paper's git history and every agent's transcripts. It works without a log
 entry too, but an entry with the exact output, the slot and the author's
 Note is what makes a pair reliable.

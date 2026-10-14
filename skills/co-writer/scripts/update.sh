@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # co-writer's update, run when the author asks for it ("co-writer update"):
-# harvest the logs, the paper's git history and both agents' transcripts;
+# harvest the logs, the paper's git history and every agent's transcripts;
 # if there are edits no digest has seen, write a packet, have an agent
 # digest it into a proposal, and file the proposal for the author to rule on
 # in "co-writer review". The profile is never changed here.

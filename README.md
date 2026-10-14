@@ -217,8 +217,8 @@ changing only how it is said. Key features:
 - **Improves from use**: every agent logs every rewrite through one script,
   `scripts/cowriter.py`, into one store, `~/.co-writer/`. When the author
   says "co-writer update", `scripts/update.sh` harvests those logs, the
-  paper's git history and the Claude Code and Antigravity transcripts into
-  pairs of what an agent delivered and what the author kept, and has an
+  paper's git history and the Claude Code, Codex and Antigravity transcripts
+  into pairs of what an agent delivered and what the author kept, and has an
   agent digest the new ones into a proposal. The
   profile changes only when the author rules on it ("co-writer review"). A
   fixed six-input `eval/` set scores each profile version by how much the

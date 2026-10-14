@@ -17,7 +17,7 @@ description: >-
   emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice
@@ -250,7 +250,7 @@ What a model reaching for "good academic prose" will do, and must not:
 The profile improves from use through the loop in
 [references/maintenance.md](references/maintenance.md). Nothing runs on its
 own: when the author says "co-writer update", `bash <skill>/scripts/update.sh`
-harvests the logs, the paper's git history and the Claude Code and
+harvests the logs, the paper's git history and the Claude Code, Codex and
 Antigravity transcripts into pairs of what an agent delivered and what the
 author kept, and an agent digests the new ones into a proposal, following
 [references/digest.md](references/digest.md). The profile changes only when

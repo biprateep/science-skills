@@ -31,11 +31,12 @@ Subcommands::
 
 ``log`` and ``session`` are the only way an entry is written; agents call
 them instead of writing the file. ``harvest`` reads the co-writer logs, the
-paper's git history, the Claude Code transcripts under ``~/.claude/projects``
-and the Antigravity conversations under ``~/.gemini/antigravity`` (SQLite
-with protobuf payloads, decoded without a schema), and joins them into
-records of what the author wrote, what an agent delivered, and what the
-author kept. ``packet`` collects the records a digest has not yet seen, and
+paper's git history, the Claude Code transcripts under ``~/.claude/projects``,
+the Codex rollouts under ``$CODEX_HOME`` (default ``~/.codex``) and the
+Antigravity conversations under ``~/.gemini/antigravity`` (SQLite with
+protobuf payloads, decoded without a schema), and joins them into records
+of what the author wrote, what an agent delivered, and what the author
+kept. ``packet`` collects the records a digest has not yet seen, and
 ``file`` records the proposal the digest wrote from them.
 
 Standard library only.
@@ -45,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import bisect
 from collections.abc import Iterable, Iterator, Sequence
 import dataclasses
 import datetime
@@ -62,6 +64,9 @@ from typing import Any
 SKILL_DIR = pathlib.Path(__file__).resolve().parent.parent
 PROFILE = SKILL_DIR / "references" / "voice-profile.md"
 CLAUDE_PROJECTS = pathlib.Path.home() / ".claude" / "projects"
+CODEX_HOME = pathlib.Path(
+    os.environ.get("CODEX_HOME", pathlib.Path.home() / ".codex")
+).expanduser()
 ANTIGRAVITY_CONVERSATIONS = (
     pathlib.Path.home() / ".gemini" / "antigravity" / "conversations"
 )
@@ -82,7 +87,7 @@ SLOTS = (
     "mixed",
 )
 REGISTERS = ("journal", "workshop")
-AGENTS = ("claude-code", "antigravity", "other")
+AGENTS = ("claude-code", "codex", "antigravity", "other")
 FRONTMATTER_KEYS = (
     "id",
     "date",
@@ -601,8 +606,8 @@ class Event:
             (text the author typed into the chat), or ``message`` (any
             other author turn, kept for its words).
         text: The text; for observe events, the whole or partial file.
-        source: Where it came from, e.g. ``git:1a2b3c4 subject`` or
-            ``antigravity:<conversation>#<step>``.
+        source: Where it came from, e.g. ``git:1a2b3c4 subject``,
+            ``codex:<session>#<line>`` or ``antigravity:<conversation>#<step>``.
         agent: The agent for deliver events, else empty.
         profile_version: For deliveries from a log entry, the version.
         slot: For deliveries from a log entry, its slot.
@@ -1279,6 +1284,529 @@ def _antigravity_edit(
             )
 
 
+# OpenAI Codex ---------------------------------------------------------------
+
+
+def events_from_codex(
+    root: pathlib.Path, cache: dict[str, Any]
+) -> Iterator[Event]:
+    """Yields the events in every Codex session that touches ``root``.
+
+    Rollouts are JSONL files under ``$CODEX_HOME/sessions/YYYY/MM/DD`` and
+    ``$CODEX_HOME/archived_sessions``, one ``{timestamp, type, payload}``
+    per line. The lines used, found by inspection: ``session_meta`` and
+    ``turn_context`` carry the working directory; a ``response_item`` is a
+    message (``role`` user or assistant), a tool call (``function_call``
+    with JSON ``arguments``, ``custom_tool_call`` with free-form ``input``)
+    or a tool result (``function_call_output``, ``custom_tool_call_output``)
+    matched to its call by ``call_id``. Files change through ``apply_patch``
+    and are read through ``exec_command``, called directly or, in code
+    mode, from a JavaScript ``exec`` script. Sessions Codex imported from
+    Claude Code are skipped: ``events_from_claude`` reads the originals.
+
+    Args:
+        root: The paper's repository root.
+        cache: ``state.json``'s per-source cache, updated in place.
+
+    Yields:
+        Deliveries (apply_patch hunks and added files for a .tex under
+        ``root``, prose in commands that write one, the agent's messages),
+        observations (commands that print the .tex), pastes (long author
+        turns) and messages (every other author turn).
+    """
+    paths = [
+        *sorted(CODEX_HOME.glob("sessions/*/*/*/rollout-*.jsonl")),
+        *sorted(CODEX_HOME.glob("archived_sessions/**/rollout-*.jsonl")),
+    ]
+    needle = str(root)
+    imported = _codex_imported()
+    for path in paths:
+        if path.stem[-36:] in imported:
+            continue
+        key = f"codex:{path}:{needle}"
+        stat = path.stat()
+        signature = [stat.st_size, int(stat.st_mtime)]
+        cached = cache.get(key)
+        if cached and cached["signature"] == signature:
+            events = [Event(**event) for event in cached["events"]]
+        else:
+            events = list(_scan_codex_session(path, needle))
+            cache[key] = {
+                "signature": signature,
+                "events": [dataclasses.asdict(e) for e in events],
+            }
+        yield from events
+
+
+def _codex_imported() -> set[str]:
+    """Returns the ids of the sessions Codex imported from other agents."""
+    try:
+        imports = _read_json(
+            CODEX_HOME / "external_agent_session_imports.json", {}
+        )
+    except (OSError, json.JSONDecodeError):
+        return set()
+    records = imports.get("records") if isinstance(imports, dict) else None
+    return {
+        record["imported_thread_id"]
+        for record in records or []
+        if isinstance(record, dict) and record.get("imported_thread_id")
+    }
+
+
+def _scan_codex_session(path: pathlib.Path, needle: str) -> Iterator[Event]:
+    """Yields a rollout's events, if the session read or wrote the paper."""
+    with path.open("rb") as f:
+        if needle.encode() not in f.read():
+            return
+    # The session id is a UUIDv7, whose leading digits are a timestamp
+    # shared by sessions started in the same minute; the last eight are
+    # random.
+    session = path.stem[-8:]
+    events: list[Event] = []
+    shell = _CodexShell()
+    with path.open(encoding="utf-8", errors="replace") as f:
+        for number, line in enumerate(f):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                events.extend(
+                    _codex_record(
+                        record, needle, f"codex:{session}#{number}", shell
+                    )
+                )
+    if any(
+        e.kind == "observe" or (e.kind == "deliver" and e.flag != "chat")
+        for e in events
+    ):
+        yield from events
+
+
+@dataclasses.dataclass
+class _CodexShell:
+    """What a rollout implies about its session, line by line.
+
+    Attributes:
+        cwd: The working directory of the current turn.
+        reads: Tool calls whose result shows the paper, by call id: for each
+            command the call runs, in order, whether it prints only part of
+            the file, or None if it does not print the file.
+    """
+
+    cwd: str = ""
+    reads: dict[str, list[bool | None]] = dataclasses.field(
+        default_factory=dict
+    )
+
+
+# One apply_patch envelope, and the header that opens each file in it.
+_PATCH = re.compile(r"^\*\*\* Begin Patch$.*?^\*\*\* End Patch$", re.S | re.M)
+_PATCH_FILE = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$")
+# A command that prints a .tex: the whole file only for a bare cat or nl.
+_CODEX_READ = re.compile(r"\b(cat|sed|head|tail|awk|nl)\b[^|;&]*\.tex\b")
+_CODEX_WHOLE = re.compile(
+    r"^\s*(?:cd \S+ && )?(?:cat(?: -n)?|nl(?: -ba)?) \S+\.tex\s*$"
+)
+# What Codex prints before a command's output, and before a truncated one.
+_CODEX_HEADER = re.compile(r"\A(?:[^\n]*\n){0,6}?Output:\n")
+_CODEX_TRUNCATED = re.compile(r"\ATotal output lines: \d+\n\n")
+_CODEX_SHELLS = (
+    "exec_command",
+    "shell",
+    "shell_command",
+    "container.exec",
+    "local_shell",
+)
+
+
+def _codex_record(
+    record: dict[str, Any],
+    needle: str,
+    source: str,
+    shell: _CodexShell,
+) -> Iterator[Event]:
+    """Yields the events in one rollout line.
+
+    Args:
+        record: One parsed line of a rollout.
+        needle: The paper's repository root, as a string.
+        source: The source label for the events.
+        shell: The session's inferred state; updated in place.
+
+    Yields:
+        Deliveries, observations, pastes and messages.
+    """
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return
+    if record.get("type") in ("session_meta", "turn_context"):
+        shell.cwd = payload.get("cwd") or shell.cwd
+        return
+    if record.get("type") != "response_item" or not record.get("timestamp"):
+        return
+    stamp = _utc_to_local(record["timestamp"])
+    kind = payload.get("type")
+    if kind == "message":
+        yield from _codex_message(payload, stamp, source)
+    elif kind in ("function_call", "custom_tool_call", "local_shell_call"):
+        yield from _codex_call(payload, needle, stamp, source, shell)
+    elif kind in ("function_call_output", "custom_tool_call_output"):
+        flags = shell.reads.pop(payload.get("call_id", ""), [])
+        outputs = _codex_outputs(payload.get("output"))
+        if len(flags) != len(outputs):
+            return
+        for partial, (text, truncated) in zip(flags, outputs, strict=True):
+            if partial is not None:
+                yield Event(
+                    stamp,
+                    "observe",
+                    text,
+                    source,
+                    partial=partial or truncated,
+                )
+
+
+def _codex_message(
+    payload: dict[str, Any], stamp: str, source: str
+) -> Iterator[Event]:
+    """Yields an assistant message as chat and an author turn by its size."""
+    texts = [
+        item.get("text", "")
+        for item in payload.get("content") or []
+        if isinstance(item, dict)
+        and item.get("type") in ("input_text", "output_text")
+    ]
+    if payload.get("role") == "assistant":
+        for text in filter(None, texts):
+            yield Event(stamp, "deliver", text, source, "codex", flag="chat")
+        return
+    text = "\n".join(texts)
+    if (
+        payload.get("role") == "user"
+        and _is_author_turn(text)
+        and not text.startswith("# AGENTS.md instructions")
+    ):
+        kind = "paste" if len(text) > 400 else "message"
+        yield Event(stamp, kind, text, source)
+
+
+def _codex_call(
+    payload: dict[str, Any],
+    needle: str,
+    stamp: str,
+    source: str,
+    shell: _CodexShell,
+) -> Iterator[Event]:
+    """Yields the edits a tool call makes and notes the reads it starts."""
+    name = payload.get("name", "")
+    arguments: dict[str, Any]
+    if payload.get("type") == "local_shell_call":
+        action = payload.get("action") or {}
+        name = "local_shell"
+        arguments = {
+            "command": action.get("command"),
+            "workdir": action.get("working_directory"),
+        }
+    elif payload.get("type") == "custom_tool_call":
+        arguments = {"input": payload.get("input", "")}
+    else:
+        try:
+            arguments = json.loads(payload.get("arguments") or "{}")
+        except json.JSONDecodeError:
+            return
+        if not isinstance(arguments, dict):
+            return
+    patches: list[str] = []
+    commands: list[tuple[str, str]] = []
+    if name == "apply_patch":
+        patches.append(arguments.get("input", ""))
+    elif name == "exec":
+        commands, patches = _codex_script(arguments.get("input", ""))
+    elif name in _CODEX_SHELLS:
+        commands.append(
+            (_codex_command(arguments), arguments.get("workdir") or "")
+        )
+    for patch in patches:
+        yield from _codex_patch(patch, shell.cwd, needle, stamp, source)
+    flags = []
+    for command, workdir in commands:
+        events, partial = _codex_exec(
+            command, workdir or shell.cwd, needle, stamp, source
+        )
+        yield from events
+        flags.append(partial)
+    if any(partial is not None for partial in flags):
+        shell.reads[payload.get("call_id", "")] = flags
+
+
+def _codex_command(arguments: dict[str, Any]) -> str:
+    """Returns the shell text of a command, given as a string or argv."""
+    command = arguments.get("cmd") or arguments.get("command") or ""
+    if isinstance(command, list):
+        script = len(command) >= 3 and command[-2] in ("-c", "-lc")
+        if script or command[:1] == ["apply_patch"]:
+            command = command[-1]
+        else:
+            command = " ".join(map(str, command))
+    return command if isinstance(command, str) else ""
+
+
+def _codex_exec(
+    command: str, workdir: str, needle: str, stamp: str, source: str
+) -> tuple[list[Event], bool | None]:
+    """Returns the edits a shell command makes, and whether it reads.
+
+    Args:
+        command: The command, as shell text.
+        workdir: The directory it runs in.
+        needle: The paper's repository root, as a string.
+        stamp: The time of the call.
+        source: The source label for the events.
+
+    Returns:
+        Deliveries for the patches and prose the command writes into a .tex
+        under ``needle``; and None if the command does not print the paper,
+        else whether it prints only part of it.
+    """
+    directories = [
+        d for d in re.findall(r"\bcd\s+(\S+)", command) if d.startswith("/")
+    ]
+    directory = directories[-1] if directories else workdir
+    events: list[Event] = []
+    for patch in _PATCH.findall(command):
+        events.extend(_codex_patch(patch, directory, needle, stamp, source))
+    if not (directory.startswith(needle) or needle in command):
+        return events, None
+    if re.search(r"\.tex\b", command):
+        events.extend(
+            Event(stamp, "deliver", after, source, "codex", before=before)
+            for before, after in _bash_tex_edits(command)
+        )
+    if not _CODEX_READ.search(command) or re.search(
+        r"<<|>\s*\S+\.tex", command
+    ):
+        return events, None
+    return events, not _CODEX_WHOLE.match(command)
+
+
+def _codex_patch(
+    patch: str, cwd: str, needle: str, stamp: str, source: str
+) -> Iterator[Event]:
+    """Yields each hunk of a patch to a .tex under ``needle`` as a delivery."""
+    for path, before, after in _patch_hunks(patch):
+        target = os.path.normpath(os.path.join(cwd, path))
+        if after and target.startswith(needle) and target.endswith(".tex"):
+            yield Event(stamp, "deliver", after, source, "codex", before=before)
+
+
+def _patch_hunks(patch: str) -> list[tuple[str, str, str]]:
+    """Returns (path, before, after) for each hunk of an apply_patch patch.
+
+    An added file is one hunk with nothing before it. An updated file gives
+    one hunk per ``@@`` section, cut back by ``_trim_hunk``. A deleted file
+    gives none.
+
+    Args:
+        patch: The patch, ``*** Begin Patch`` to ``*** End Patch``.
+
+    Returns:
+        The hunks, in order, each path as written in the patch.
+    """
+    hunks = []
+    path = ""
+    lines: list[tuple[str, str]] = []
+    for line in [*patch.splitlines(), "*** End Patch"]:
+        if line == "*** End of File":
+            continue
+        if line.startswith(("*** ", "@@")):
+            hunk = _trim_hunk(lines) if path else None
+            if hunk is not None:
+                hunks.append((path, *hunk))
+            lines = []
+            header = _PATCH_FILE.match(line)
+            if header:
+                path = "" if header.group(1) == "Delete" else header.group(2)
+        elif line[:1] in ("", " ", "-", "+"):
+            lines.append((line[:1] or " ", line[1:]))
+    return hunks
+
+
+def _trim_hunk(lines: list[tuple[str, str]]) -> tuple[str, str] | None:
+    """Returns a hunk's (before, after), cut back to the lines it changes.
+
+    A hunk carries unchanged lines around its change, and a LaTeX line is
+    often a whole paragraph: kept, they would make the paragraphs next to
+    an edit look delivered. They are dropped, except that removed text too
+    short to be found again in the file keeps the nearest of them,
+    alternately above and below, until it is ``MIN_WORDS`` long. A pure
+    insertion keeps none: new text, nothing known about what it replaced.
+
+    Args:
+        lines: The hunk's lines as (marker, text), marker one of `` -+``.
+
+    Returns:
+        The text before and after, or None if the hunk changes nothing.
+    """
+    changed = [i for i, (marker, _) in enumerate(lines) if marker != " "]
+    if not changed:
+        return None
+    first, last = changed[0], changed[-1] + 1
+    core, above, below = lines[first:last], lines[:first], lines[last:]
+    removes = any(marker == "-" for marker, _ in core)
+    take_above = True
+    while (
+        removes
+        and (above or below)
+        and len(_hunk_side(core, "-").split()) < MIN_WORDS
+    ):
+        if above and (take_above or not below):
+            core.insert(0, above.pop())
+        else:
+            core.append(below.pop(0))
+        take_above = not take_above
+    before, after = _hunk_side(core, "-"), _hunk_side(core, "+")
+    return None if before == after else (before, after)
+
+
+def _hunk_side(lines: list[tuple[str, str]], marker: str) -> str:
+    return "\n".join(text for mark, text in lines if mark in (" ", marker))
+
+
+def _codex_outputs(output: Any) -> list[tuple[str, bool]]:
+    """Returns the command outputs in a tool result, in order.
+
+    Args:
+        output: A result's ``output``: a string for a direct call (in older
+            rollouts, a JSON object holding it), or for a code-mode script a
+            list with one text item per ``text()`` call, in which each
+            ``exec_command`` result is a JSON object.
+
+    Returns:
+        Each output, its header and line numbers removed, with whether
+        Codex truncated it.
+    """
+    if isinstance(output, list):
+        found = []
+        for item in output:
+            try:
+                value = json.loads(item.get("text", ""))
+            except (AttributeError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and isinstance(value.get("output"), str):
+                found.append(value["output"])
+        return [_codex_body(text) for text in found]
+    if not isinstance(output, str):
+        return []
+    try:
+        value = json.loads(output)
+    except json.JSONDecodeError:
+        value = None
+    if isinstance(value, dict) and isinstance(value.get("output"), str):
+        output = value["output"]
+    return [_codex_body(_CODEX_HEADER.sub("", output, count=1))]
+
+
+def _codex_body(text: str) -> tuple[str, bool]:
+    truncated = bool(_CODEX_TRUNCATED.match(text)) or (
+        "tokens truncated" in text
+    )
+    return _clean_view(_CODEX_TRUNCATED.sub("", text, count=1)), truncated
+
+
+# Code mode: tools are JavaScript functions, ``tools.exec_command({...})``.
+_JS_TOOL = re.compile(r"\btools\.(\w+)\s*\(")
+_JS_KEY = re.compile(r"""["']?(\w+)["']?\s*:\s*\Z""")
+_JS_ESCAPES = {
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+    "0": "\0",
+    "\n": "",
+}
+
+
+def _codex_script(source: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Returns the commands and patches in a code-mode ``exec`` script.
+
+    A command is the ``cmd`` literal of a ``tools.exec_command`` call, with
+    its ``workdir`` literal if any; a patch is an apply_patch envelope in
+    any literal, whichever function it is passed to.
+
+    Args:
+        source: The script.
+
+    Returns:
+        (command, workdir) for each ``exec_command`` call, in order, and the
+        patches.
+    """
+    calls = list(_JS_TOOL.finditer(source))
+    starts = [call.start() for call in calls]
+    commands: dict[int, dict[str, str]] = {
+        index: {"cmd": "", "workdir": ""}
+        for index, call in enumerate(calls)
+        if call.group(1) == "exec_command"
+    }
+    patches = []
+    for offset, value in _js_strings(source):
+        patches.extend(_PATCH.findall(value))
+        owner = bisect.bisect(starts, offset) - 1
+        key = _JS_KEY.search(source, max(0, offset - 40), offset)
+        if owner in commands and key and key.group(1) in ("cmd", "workdir"):
+            commands[owner][key.group(1)] = value
+    return [(c["cmd"], c["workdir"]) for c in commands.values()], patches
+
+
+def _js_strings(source: str) -> Iterator[tuple[int, str]]:
+    """Yields (offset, value) for each string literal in JavaScript source.
+
+    Quoted and template literals alike; a template's ``${...}`` is kept as
+    written. Comments and regular expressions are not recognized, so a
+    quote inside one misaligns the literals after it.
+    """
+    i = 0
+    while i < len(source):
+        quote = source[i]
+        if quote not in "\"'`":
+            i += 1
+            continue
+        start, i = i, i + 1
+        chars = []
+        while i < len(source) and source[i] != quote:
+            if source[i] == "\\" and i + 1 < len(source):
+                char, i = _js_escape(source, i + 1)
+            else:
+                char, i = source[i], i + 1
+            chars.append(char)
+        value = "".join(chars).encode("utf-16", "surrogatepass")
+        yield start, value.decode("utf-16", "replace")
+        i += 1
+
+
+def _js_escape(source: str, i: int) -> tuple[str, int]:
+    """Decodes the escape whose backslash is at ``source[i - 1]``.
+
+    Returns:
+        The character and the index after the escape.
+    """
+    char, end, digits = source[i], i + 1, ""
+    if char == "x":
+        digits, end = source[i + 1 : i + 3], i + 3
+    elif source.startswith("u{", i) and "}" in source[i : i + 9]:
+        close = source.index("}", i)
+        digits, end = source[i + 2 : close], close + 1
+    elif char == "u":
+        digits, end = source[i + 1 : i + 5], i + 5
+    try:
+        return chr(int(digits, 16)), end
+    except ValueError:
+        return _JS_ESCAPES.get(char, char), i + 1
+
+
 # ---------------------------------------------------------------------------
 # Joining events into records.
 # ---------------------------------------------------------------------------
@@ -1776,6 +2304,7 @@ def harvest_paper(
         snapshot(paper, root, relative)
     events.extend(events_from_snapshots(paper))
     events.extend(events_from_claude(root, cache))
+    events.extend(events_from_codex(root, cache))
     events.extend(events_from_antigravity(root, cache))
     return build_records(paper, events)
 
