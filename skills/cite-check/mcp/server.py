@@ -751,6 +751,7 @@ def _arxiv_parse(body: str) -> list:
         cat = e.find("x:primary_category", _ATOM)
         out.append(_record(
             registry="arxiv", title=title, arxiv=aid,
+            arxiv_api_version=(m.group(1) if re.search(r"v[1-9]\d*$", m.group(1), re.I) else None),
             authors=[a.findtext("a:name", "", _ATOM) for a in e.findall("a:author", _ATOM)],
             year=_year(e.findtext("a:published", "", _ATOM)),
             doi=(e.findtext("x:doi", "", _ATOM) or None),
@@ -788,6 +789,8 @@ def _arxiv_lookup(ids: list) -> dict:
             continue
         for rec in _arxiv_parse(body):
             found[rec["arxiv"].lower()] = rec
+            if rec.get("arxiv_api_version"):
+                found[rec["arxiv_api_version"].lower()] = rec
     return found
 
 
@@ -1716,7 +1719,22 @@ def _resolve_many(identifiers: list) -> list:
                 break
         _record_cache_put(rec)
         _alias_put(kind, value, _canonical(rec))
-        pub = _public(rec, raw, kind)
+        public_record = rec
+        if kind == "arxiv" and re.search(_ARXIV_CORE + r"v\d+", raw, re.I):
+            try:
+                public_record = _with_pin(rec, raw, None)
+            except (RuntimeError, ValueError) as exc:
+                result = {"resolved": False, "input": raw, "kind": kind,
+                          "reason": str(exc), "outcome": "not-found"}
+                if isinstance(exc, RuntimeError):
+                    result.update(lookup_error=True, outcome=getattr(
+                        exc, "outcome", "unavailable"
+                    ))
+                results.append(result)
+                continue
+        pub = _public(public_record, raw, kind)
+        if public_record.get("arxiv_version"):
+            pub["requested_version"] = public_record["arxiv_version"]
         m = _GITHUB_REF.search(raw) if kind == "github" else None
         if m:
             try:
@@ -2273,6 +2291,12 @@ def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author
             tried.append(f"{src}: unparsable export")
             continue
         entry = parsed[0]
+        if rec.get("arxiv_version") and _entry_arxiv_version(entry) != rec["arxiv_version"]:
+            tried.append(
+                f"{src}: official export omits the requested version "
+                f"{rec['arxiv_version']} — refusing to drop the pin"
+            )
+            continue
         sim = _title_sim(rec.get("title", ""), entry["fields"].get("title", ""))
         if rec.get("title") and entry["fields"].get("title") and sim < 0.6 and not (
                 rec.get("github") and _names_repo(entry["fields"]["title"], rec["github"])):
@@ -2346,12 +2370,26 @@ def _with_pin(rec: dict, identifier: str, version: str | None) -> dict:
         match = re.search(_ARXIV_CORE + r"v\d+", str(identifier), re.I)
         requested = version or (match.group(0) if match else None)
         if requested:
-            if re.fullmatch(r"v\d+", requested, re.I):
+            if re.fullmatch(r"v[1-9]\d*", requested, re.I):
                 requested = rec["arxiv"] + requested
-            if (not _ARXIV_RE.fullmatch(requested)
-                    or _strip_arxiv_version(requested) != rec["arxiv"]):
-                raise ValueError("invalid arXiv version")
-            return dict(rec, arxiv_version=requested)
+            if (not re.fullmatch(_ARXIV_CORE + r"v[1-9]\d*", requested, re.I)
+                    or _strip_arxiv_version(requested).lower() != rec["arxiv"].lower()):
+                raise ValueError("arXiv version must name the work and a positive vN suffix")
+            found = _arxiv_lookup([requested])
+            historical = found.get(requested.lower())
+            if historical is None:
+                if found:
+                    raise RegistryLookupError("arxiv", "malformed-response", 200)
+                raise ValueError(f"arXiv version does not exist: {requested}")
+            actual = historical.get("arxiv_api_version")
+            if not actual or actual.lower() != requested.lower():
+                raise RegistryLookupError("arxiv", "malformed-response", 200)
+            pinned = dict(historical, arxiv_version=actual)
+            # Work aliases remain stable; title/abstract/authors are historical.
+            for key in _ID_KEYS:
+                if not pinned.get(key) and rec.get(key):
+                    pinned[key] = rec[key]
+            return pinned
     if not rec.get("github"):
         return rec
     match = _GITHUB_REF.search(str(identifier or ""))
@@ -2390,7 +2428,11 @@ def fetch_bibtex(identifier: str, key: str | None = None, prefer: list[str] | No
     if rec is None:
         r = resolve_citation(identifier)
         return {"bibtex": None, "resolved": False, "reason": r.get("reason") or r.get("error")}
-    rec = _with_pin(rec, identifier, version)
+    try:
+        rec = _with_pin(rec, identifier, version)
+    except (RuntimeError, ValueError) as exc:
+        return {"bibtex": None, "resolved": False, "reason": str(exc),
+                "lookup_error": isinstance(exc, RuntimeError)}
     jf = int(journal_format) if journal_format else _journal_format_for(tex_path)
     got = _official_bibtex(rec, prefer, jf, max_author)
     if not got["bibtex"]:
@@ -2491,7 +2533,12 @@ def bib_add(bib_path: str, items: list[BibliographyItem | str], prefer: list[str
         if rec is None:
             results.append({"identifier": ident, "key": want, "status": "unresolved"})
             continue
-        rec = _with_pin(rec, ident, item.get("version"))
+        try:
+            rec = _with_pin(rec, ident, item.get("version"))
+        except (RuntimeError, ValueError) as exc:
+            results.append({"identifier": ident, "key": want,
+                            "status": "unresolved", "note": str(exc)})
+            continue
         dup = next((by_id[f"{k}:{rec[k].lower()}"] for k in ("doi", "arxiv", "bibcode", "github")
                     if rec.get(k) and f"{k}:{rec[k].lower()}" in by_id), None)
         if dup and dup != want and not replace:
@@ -2549,6 +2596,37 @@ def bib_add(bib_path: str, items: list[BibliographyItem | str], prefer: list[str
 
 _OK_STATUS = {"VERIFIED", "FOUND"}
 
+
+
+def _entry_arxiv_version(entry: dict) -> str | None:
+    """Return a version named in the entry's identifier-bearing fields."""
+    fields = entry["fields"]
+    for key in ("eprint", "arxiv", "url", "doi"):
+        match = re.search(_ARXIV_CORE + r"v\d+", fields.get(key, ""), re.I)
+        if match:
+            return match.group(0)
+    return None
+
+
+def _compare_arxiv_version(entry: dict, pub: dict, version: str) -> dict:
+    """Compare against the exact arXiv edition, never the latest metadata."""
+    record = dict(pub["ids"])
+    record.setdefault("arxiv", _entry_ids(entry).get("arxiv"))
+    try:
+        historical = _with_pin(record, "arxiv:" + version, version)
+    except (RuntimeError, ValueError) as exc:
+        return {
+            "key": entry["key"],
+            "status": "UNRESOLVED" if isinstance(exc, RuntimeError) else "NOT_FOUND",
+            "via": "arxiv:" + version, "id": pub["id"], "ids": pub["ids"],
+            "notes": [str(exc)], "provenance": entry["provenance"],
+        }
+    result = _compare(
+        entry, _public(historical, "arxiv:" + version, "arxiv"),
+        "arxiv:" + version,
+    )
+    result["arxiv_version"] = historical["arxiv_version"]
+    return result
 
 def _compare(entry: dict, pub: dict, via: str) -> dict:
     """Entry fields vs the registry record: the actual existence test."""
@@ -2756,7 +2834,11 @@ def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | Non
         for k, v in order:
             r = resolved.get(f"{k}:{v}")
             if r and r.get("resolved"):
-                result = _compare_repo(e, r) if k == "github" else _compare(e, r, f"{k}:{v}")
+                version = _entry_arxiv_version(e)
+                if version and k != "github":
+                    result = _compare_arxiv_version(e, r, version)
+                else:
+                    result = _compare_repo(e, r) if k == "github" else _compare(e, r, f"{k}:{v}")
                 break
             bad.append(f"{k}:{v} — {(r or {}).get('reason', 'no result')}")
         if result and result["status"] == "MISMATCH" and result["via"].startswith("github:") and search_unresolved:
@@ -3649,9 +3731,9 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
         source_version = (L.get("source_identity") or {}).get("version")
         if expected_ref and not expected_version:
             expected_version = expected_ref
-        arxiv_match = re.search(_ARXIV_CORE + r"v\d+", str(entry.get("fields", {})), re.I)
-        if arxiv_match:
-            expected_version = arxiv_match.group(0)
+        arxiv_version = _entry_arxiv_version(entry) if entry else None
+        if arxiv_version:
+            expected_version = arxiv_version
         if (not L.get("source_identity")
                 or (expected_version and source_version != expected_version)
                 or L["source_identity"] != current_source
