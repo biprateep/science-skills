@@ -319,6 +319,14 @@ Two checks, both cheap, both enforced by code rather than by re-reading:
    hand-picked colours, third-party palettes, numeric font sizes,
    pyplot-state calls and `tight_layout`. Nonzero exit means a rule was broken; `--strict` also
    fails on warnings. Run it on every plotting script before presenting it.
+   If the user explicitly requests vector output or a custom palette, pass
+   `--allow-vector` or `--allow-palette` respectively. These narrow exceptions
+   leave geometry, fonts, legends, and output-resolution checks enabled.
+   The checker recognizes `plotstyle` imports (including aliases), the
+   supplied `paper.mplstyle`, and the literal inline preamble above. It checks
+   explicit overrides even after the style is applied. Static analysis cannot
+   prove executed control flow or inspect arbitrary dynamic settings; retain
+   the independent runtime `verify_style()` check.
 
 ---
 
