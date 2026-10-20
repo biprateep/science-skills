@@ -66,14 +66,237 @@
           "expected": false
         },
         {
-          "id": "verbatim-evidence",
+          "id": "evidence-anchors",
           "kind": "command",
           "dimension": "task_success",
           "critical": true,
           "argv": [
             "{python}",
             "{repo}/skills/cite-check/evals/grade.py",
-            "{response_file}"
+            "{response_file}",
+            "evidence-boundaries"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    },
+    {
+      "id": "quantitative-controls",
+      "description": "Controlled numeric, sign, negation, and causal-strength errors paired with true controls; supplied synthetic evidence only.",
+      "prompt": "quantitative-controls/prompt.md",
+      "inputs": "quantitative-controls/input",
+      "reference": "quantitative-controls/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "offline",
+        "controlled",
+        "citation-integrity"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "q22",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q22/verdict",
+          "expected": "unsupported"
+        },
+        {
+          "id": "q17",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q17/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "q31",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q31/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "q09",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q09/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "q04",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q04/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "q06",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q06/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "q25",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q25/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "q12",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/q12/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "synthetic-provenance",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/identity_status",
+          "expected": "fixture_only"
+        },
+        {
+          "id": "no-invented-bibliography",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/bibliography_created",
+          "expected": false
+        },
+        {
+          "id": "evidence-anchors",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/cite-check/evals/grade.py",
+            "{response_file}",
+            "quantitative-controls"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    },
+    {
+      "id": "identity-version-access",
+      "description": "Controlled source-title and version mismatches, stale results, matching controls, unavailable text, and unresolved source records; not live identity verification.",
+      "prompt": "identity-version-access/prompt.md",
+      "inputs": "identity-version-access/input",
+      "reference": "identity-version-access/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "offline",
+        "controlled",
+        "citation-integrity"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "a19",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a19/verdict",
+          "expected": "unverifiable"
+        },
+        {
+          "id": "a16",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a16/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "a08",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a08/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "a13",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a13/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "a05",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a05/verdict",
+          "expected": "unverifiable"
+        },
+        {
+          "id": "a27",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a27/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "a24",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a24/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "a02",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/a02/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "synthetic-provenance",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/identity_status",
+          "expected": "fixture_only"
+        },
+        {
+          "id": "no-invented-bibliography",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/bibliography_created",
+          "expected": false
+        },
+        {
+          "id": "evidence-anchors",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/cite-check/evals/grade.py",
+            "{response_file}",
+            "identity-version-access"
           ],
           "timeout_s": 15
         }

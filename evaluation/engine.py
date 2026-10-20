@@ -242,6 +242,9 @@ def _run_case(
             (directory / "runner-output.txt").write_text(
                 outcome.output, encoding="utf-8"
             )
+            (directory / "runner-stderr.txt").write_text(
+                outcome.stderr, encoding="utf-8"
+            )
             if outcome.status != "ok":
                 result.update(
                     status=outcome.status

@@ -1,0 +1,38 @@
+{
+  "identity_status": "fixture_only",
+  "bibliography_created": false,
+  "claims": {
+    "a19": {
+      "verdict": "unverifiable",
+      "evidence": ""
+    },
+    "a16": {
+      "verdict": "contradicted",
+      "evidence": "Version: 2"
+    },
+    "a08": {
+      "verdict": "supported",
+      "evidence": "The updated median lifetime is 24 seconds."
+    },
+    "a13": {
+      "verdict": "supported",
+      "evidence": "The updated median lifetime is 24 seconds."
+    },
+    "a05": {
+      "verdict": "unverifiable",
+      "evidence": ""
+    },
+    "a27": {
+      "verdict": "contradicted",
+      "evidence": "The updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+    },
+    "a24": {
+      "verdict": "supported",
+      "evidence": "The updated median lifetime is 24 seconds."
+    },
+    "a02": {
+      "verdict": "contradicted",
+      "evidence": "Title: Alpha lifetime trial"
+    }
+  }
+}

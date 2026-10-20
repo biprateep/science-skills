@@ -241,6 +241,22 @@ class FrameworkTest(unittest.TestCase):
             "blocked",
         )
 
+    def test_successful_process_keeps_stderr_separate_from_json(self):
+        outcome = process.execute(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('{}'); "
+                "print('permission notice', file=sys.stderr)",
+            ],
+            self.repo,
+            1,
+            1024,
+        )
+        self.assertEqual(outcome.status, "ok")
+        self.assertEqual(json.loads(outcome.output), {})
+        self.assertIn("permission notice", outcome.stderr)
+
     def test_paths_and_symlinks_cannot_escape_fixture(self):
         for path in ("../secret", "/tmp/secret", "a/../../secret", "a\\secret"):
             with (

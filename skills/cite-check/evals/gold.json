@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "evidence-boundaries": {
+      "claims": {
+        "increase": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "A",
+          "anchors": [
+            "12 percent",
+            "median lifetime"
+          ]
+        },
+        "temperature": {
+          "verdict": "unsupported",
+          "cohort": "planted_error",
+          "source": "A",
+          "anchors": [
+            "did not measure temperature dependence"
+          ]
+        },
+        "difference": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "B",
+          "anchors": [
+            "No statistically significant difference"
+          ]
+        },
+        "unread": {
+          "verdict": "unverifiable",
+          "cohort": "inaccessible",
+          "source": "C",
+          "anchors": []
+        }
+      }
+    },
+    "quantitative-controls": {
+      "claims": {
+        "q22": {
+          "verdict": "unsupported",
+          "cohort": "planted_error",
+          "source": "association",
+          "anchors": [
+            "Causal effects were not estimated"
+          ]
+        },
+        "q17": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "measurements",
+          "anchors": [
+            "12 percent",
+            "median lifetime"
+          ]
+        },
+        "q31": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "null_result",
+          "anchors": [
+            "No statistically significant difference",
+            "secondary endpoint"
+          ]
+        },
+        "q09": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "measurements",
+          "anchors": [
+            "-2.5 per second"
+          ]
+        },
+        "q04": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "measurements",
+          "anchors": [
+            "12 percent",
+            "median lifetime"
+          ]
+        },
+        "q06": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "association",
+          "anchors": [
+            "observational sample",
+            "association"
+          ]
+        },
+        "q25": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "measurements",
+          "anchors": [
+            "-2.5 per second"
+          ]
+        },
+        "q12": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "null_result",
+          "anchors": [
+            "No statistically significant difference",
+            "secondary endpoint"
+          ]
+        }
+      }
+    },
+    "identity-version-access": {
+      "claims": {
+        "a19": {
+          "verdict": "unverifiable",
+          "cohort": "inaccessible",
+          "source": "metadata_only",
+          "anchors": []
+        },
+        "a16": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "alpha_v2",
+          "anchors": [
+            "Version: 2"
+          ]
+        },
+        "a08": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "alpha_v2",
+          "anchors": [
+            "24 seconds"
+          ]
+        },
+        "a13": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "alpha_v2",
+          "anchors": [
+            "24 seconds"
+          ]
+        },
+        "a05": {
+          "verdict": "unverifiable",
+          "cohort": "inaccessible",
+          "source": "missing_record",
+          "anchors": []
+        },
+        "a27": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "alpha_v2",
+          "anchors": [
+            "24 seconds"
+          ]
+        },
+        "a24": {
+          "verdict": "supported",
+          "cohort": "true_control",
+          "source": "alpha_v2",
+          "anchors": [
+            "24 seconds"
+          ]
+        },
+        "a02": {
+          "verdict": "contradicted",
+          "cohort": "planted_error",
+          "source": "alpha_v2",
+          "anchors": [
+            "Title: Alpha lifetime trial"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -24,11 +24,16 @@ jobs:
       - name: Validate discovery and coverage
         run: python -m evaluation validate --require-coverage
       - name: Test framework and grading negative controls
-        run: python -m pytest --import-mode=importlib evaluation/tests skills/*/evals/tests -q
+        run: python -m pytest --import-mode=importlib evaluation/tests evals/tests skills/*/evals/tests -q
       - name: Calibrate references (not an agent benchmark)
         run: python -m evaluation run --runner replay --repeats 2
+      - name: Report citation calibration (not agent performance)
+        run: python skills/cite-check/evals/score.py .eval-runs/*/report.json --repeats 2 --format markdown
       - name: Check framework style and types
         run: |
-          ruff format --check --config skills/code-style/assets/ruff.toml evaluation
-          ruff check --config skills/code-style/assets/ruff.toml evaluation
-          mypy --config-file skills/code-style/assets/mypy.ini evaluation
+          ruff format --check --config skills/code-style/assets/ruff.toml evaluation evals/antigravity_runner.py evals/tests
+          ruff check --config skills/code-style/assets/ruff.toml evaluation evals/antigravity_runner.py evals/tests
+          mypy --config-file skills/code-style/assets/mypy.ini evaluation evals/antigravity_runner.py evals/tests
+          ruff format --check --config skills/code-style/assets/ruff.toml skills/cite-check/evals/score.py skills/cite-check/evals/grade.py
+          ruff check --config skills/code-style/assets/ruff.toml skills/cite-check/evals/score.py skills/cite-check/evals/grade.py
+          mypy --config-file skills/code-style/assets/mypy.ini skills/cite-check/evals/score.py skills/cite-check/evals/grade.py
