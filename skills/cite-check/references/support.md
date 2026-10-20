@@ -44,9 +44,11 @@ is real, the strength is not.
 
 ## Quotes
 
-- Quotes are checked by normalised substring match, or ≥ 0.85 sequence
-  similarity to absorb PDF-extraction damage (ligatures, broken hyphens,
-  superscripts). Paraphrases fail. Quotes under 15 characters are rejected.
+- Quotes must match a source span exactly after whitespace and typographic
+  ligature normalization. Case, punctuation, signs, numbers, mathematical
+  symbols and superscripts are preserved. Fuzzy similarity never certifies
+  evidence. The result includes the original source span and character
+  offsets. Quotes under 15 normalized characters are rejected.
 - Quote the sentence(s) that carry the claim — a result sentence, a stated
   number, a method description — not a related keyword.
 - `find_passages(identifier, [claim, …])` returns the abstract and the top
