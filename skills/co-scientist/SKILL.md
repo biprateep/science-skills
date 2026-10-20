@@ -104,7 +104,7 @@ hand-rolled equivalents wherever they apply:
 | `verify_derivation` | writing + running a per-derivation sympy check script (for expression-chain steps) | `protocols/cas_verification.md` §0 |
 | `manifest_init` / `manifest_read` / `manifest_append` / `manifest_set` / `manifest_update_checkpoint` | hand-editing `checkpoints/manifest.json` (file-locked; ids allocated atomically; `verified: true` requires evidence) | `protocols/checkpointing.md` |
 | `validate_figures` | eyeballing `\includegraphics` targets | `protocols/reporting.md` |
-| `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: requires verified checkpoints, complete figures, a fresh citation audit and error-free LaTeX | `protocols/reporting.md` §4 |
+| `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: requires verified checkpoints, complete figures, a fresh submission-ready citation audit and error-free LaTeX | `protocols/reporting.md` §4 |
 
 This toolbox has no citation tools: those are cite-check's own toolbox
 (`mcp__cite-check__*`), reached as its contract says (Component Skills).
@@ -326,9 +326,9 @@ figure paths from the manifest. The report is **pedagogical, not condensed**:
 full problem setup, every derivation step, all experimental details, algorithm
 floats and conceptual figures — length is not a constraint. Then, in order:
 **co-writer** rewrites each section's prose in the author's voice; **cite-check**
-judges every citation in the final prose and its `audit` must pass; the
+judges every citation in the final prose and its `submission-ready` audit must pass; the
 `compile_report` tool compiles, mechanically enforcing the verification and
-figure gates, a fresh citation audit, and error-free LaTeX output.
+figure gates, a fresh submission-ready citation audit, and error-free LaTeX output.
 → `references/protocols/reporting.md`
 
 ---
@@ -390,12 +390,15 @@ where decidable, numerically (logged seed) otherwise, unverifiable steps
 explicitly flagged — per the Math Derivation and CAS Verification Protocols.
 A citation may
 NOT enter the report except through **cite-check**, and a report that cites
-anything is not compiled until cite-check's `audit` returns `ok: true` with
-`require_support: true`. Where the MCP Toolbox is
-available, this gate is **mechanically enforced**: `verified: true` can only be
+anything is not compiled until cite-check's `audit`, requested with
+`policy: "submission-ready"`, `verify: true`, and `require_support: true`, returns
+that exact policy and literal `true` for `ok`, `input_complete`, `complete`, and
+`submission_ready`. Exploratory success or a completed assessment alone cannot
+certify report readiness. Where the MCP Toolbox is available, this gate is
+**mechanically enforced**: `verified: true` can only be
 recorded through `manifest_update_checkpoint` with evidence, and
 `compile_report` refuses to build while unverified derivation/data checkpoints
-exist, runs a fresh citation audit on current inputs, and rejects compilation
+exist, runs a fresh submission-ready audit on current inputs, and rejects compilation
 errors or unresolved references.
 </HARD-GATE>
 
@@ -469,7 +472,7 @@ flowchart TD
   decide -- yes --> viz["9. Visualization"]
   viz --> report["10. Assemble report<br/>(co-writer prose)"]
   decide -- "negative result" --> report
-  report --> audit{{"cite-check audit ok?"}}
+  report --> audit{{"cite-check submission-ready audit?"}}
   audit -- no --> report
   audit -- yes --> compile["compile_report"]
 ```

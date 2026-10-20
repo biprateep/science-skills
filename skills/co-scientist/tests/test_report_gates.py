@@ -30,9 +30,16 @@ class ReportGateTest(unittest.TestCase):
     def extract(self, tool, arguments):
         if tool == "extract_cites":
             return {"files": [str(self.tex)], "bib_files": [], "cites": []}
-        self.assertTrue(arguments["verify"])
-        self.assertTrue(arguments["require_support"])
-        return {"ok": True, "complete": True}
+        self.assertIs(arguments["verify"], True)
+        self.assertIs(arguments["require_support"], True)
+        self.assertEqual(arguments["policy"], "submission-ready")
+        return {
+            "policy": "submission-ready",
+            "ok": True,
+            "input_complete": True,
+            "complete": True,
+            "submission_ready": True,
+        }
 
     def fake_latex(self, command, **kwargs):
         (self.root / "report.pdf").write_bytes(b"test pdf")
@@ -66,20 +73,125 @@ class ReportGateTest(unittest.TestCase):
                         "bib_files": [str(self.root / "sources.bib")]}
             self.assertIs(arguments["verify"], True)
             self.assertIs(arguments["require_support"], True)
+            self.assertEqual(arguments["policy"], "submission-ready")
             return {"ok": False, "failures": ["missing support"]}
         with unittest.mock.patch.object(SERVER, "_cite_check_call", citation_call):
             result = SERVER.compile_report(str(self.root), allow_unverified=True)
         self.assertFalse(result["success"])
         self.assertEqual(result["gate"], "citations")
 
-    def test_incomplete_audit_is_not_accepted(self):
+    def test_submission_readiness_requires_exact_policy_and_boolean_flags(self):
+        manifest = self.root / "checkpoints/manifest.json"
+        manifest.parent.mkdir()
+        manifest.write_text(
+            json.dumps(
+                {
+                    "checkpoints": [
+                        {
+                            "id": "000",
+                            "phase": "derivation",
+                            "verified": False,
+                            "file": "checkpoint_000.md",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ready = {
+            "policy": "submission-ready",
+            "ok": True,
+            "input_complete": True,
+            "complete": True,
+            "submission_ready": True,
+        }
+        invalid = [{"ok": True, "complete": True}]
+        for policy in ("exploratory", "Submission-ready", True, None):
+            invalid.append(dict(ready, policy=policy))
+        missing_policy = ready.copy()
+        del missing_policy["policy"]
+        invalid.append(missing_policy)
+        for flag in ("ok", "input_complete", "complete", "submission_ready"):
+            for value in (False, "true", 1, None):
+                invalid.append({**ready, flag: value})
+            missing = ready.copy()
+            del missing[flag]
+            invalid.append(missing)
+        for audit in invalid:
+            with self.subTest(audit=audit):
+                extracted = {
+                    "files": [str(self.tex)],
+                    "cites": [{"key": "a"}],
+                    "bib_files": [],
+                }
+                with (
+                    unittest.mock.patch.object(
+                        SERVER,
+                        "_cite_check_call",
+                        side_effect=[extracted, audit],
+                    ) as cite_call,
+                    unittest.mock.patch.object(SERVER.subprocess, "run") as run,
+                ):
+                    result = SERVER.compile_report(
+                        str(self.root), allow_unverified=True
+                    )
+                cite_call.assert_called_with(
+                    "audit",
+                    {
+                        "tex_path": str(self.tex),
+                        "policy": "submission-ready",
+                        "verify": True,
+                        "require_support": True,
+                    },
+                )
+                self.assertFalse(result["success"])
+                self.assertEqual(result["gate"], "citations")
+                self.assertEqual(result["detail"], audit)
+                run.assert_not_called()
+
+    def test_submission_ready_audit_allows_compilation(self):
         def citation_call(tool, arguments):
             if tool == "extract_cites":
-                return {"files": [str(self.tex)], "cites": [{"key": "a"}],
-                        "bib_files": []}
-            return {"ok": True, "complete": False}
-        with unittest.mock.patch.object(SERVER, "_cite_check_call", citation_call):
-            self.assertFalse(SERVER.compile_report(str(self.root))["success"])
+                return {
+                    "files": [str(self.tex)],
+                    "cites": [{"key": "a"}],
+                    "bib_files": [],
+                }
+            return self.extract(tool, arguments)
+
+        with (
+            unittest.mock.patch.object(
+                SERVER, "_cite_check_call", citation_call
+            ),
+            unittest.mock.patch.object(
+                SERVER.subprocess, "run", self.fake_latex
+            ),
+        ):
+            result = SERVER.compile_report(str(self.root))
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            result["gates"]["citations"],
+            "passed (fresh submission-ready audit)",
+        )
+
+    def test_no_citations_or_bibliography_skips_audit(self):
+        with (
+            unittest.mock.patch.object(
+                SERVER, "_cite_check_call", side_effect=self.extract
+            ) as cite_call,
+            unittest.mock.patch.object(
+                SERVER.subprocess, "run", self.fake_latex
+            ),
+        ):
+            result = SERVER.compile_report(str(self.root))
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            result["gates"]["citations"],
+            "passed (no citations or bibliography)",
+        )
+        cite_call.assert_called_once_with(
+            "extract_cites", {"tex_path": str(self.tex)}
+        )
 
     def test_undeclared_input_coverage_blocks(self):
         with unittest.mock.patch.object(
@@ -88,12 +200,26 @@ class ReportGateTest(unittest.TestCase):
             self.assertFalse(SERVER.compile_report(str(self.root))["success"])
 
     def test_changed_input_invalidates_audit(self):
+        def citation_call(tool, arguments):
+            if tool == "extract_cites":
+                return {
+                    "files": [str(self.tex)],
+                    "cites": [{"key": "a"}],
+                    "bib_files": [],
+                }
+            return self.extract(tool, arguments)
+
         def mutate(command, **kwargs):
             self.tex.write_text("changed after audit")
             return self.fake_latex(command, **kwargs)
-        with unittest.mock.patch.object(SERVER, "_cite_check_call", self.extract):
-            with unittest.mock.patch.object(SERVER.subprocess, "run", mutate):
-                result = SERVER.compile_report(str(self.root))
+
+        with (
+            unittest.mock.patch.object(
+                SERVER, "_cite_check_call", citation_call
+            ),
+            unittest.mock.patch.object(SERVER.subprocess, "run", mutate),
+        ):
+            result = SERVER.compile_report(str(self.root))
         self.assertFalse(result["success"])
         self.assertEqual(result["gate"], "inputs_changed")
 

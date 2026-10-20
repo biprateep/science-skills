@@ -118,7 +118,7 @@ The **basis** (`fulltext` / `readme` / `abstract` / `none`) is recorded
 from the text cache, not from the caller. `readme` is a GitHub repository's
 README, description and `CITATION.cff` abstract: UNVERIFIABLE is allowed on
 it, because the code the README describes was not read. A SUPPORTS judged from an abstract alone is a
-warning in the audit, not a pass with full marks: fetch the PDF (`fetch_text`
+warning under exploratory policy and a submission-readiness failure: fetch the PDF (`fetch_text`
 with `pdf_path=`) when the claim is specific (a number, a method detail, a
 sample size).
 
@@ -235,3 +235,12 @@ caches, and unavailable versioned text never falls back to a newer version.
 The work identifier remains stable while its evidence version is separate.
 Legacy cache filenames are deliberately ignored because their lossy keys
 cannot prove which identifier created them; they can be removed locally.
+
+## Audit completion
+
+Use `policy="submission-ready"` for a final gate and require `ok`,
+`input_complete`, `complete`, and `submission_ready` all true. Exploratory
+`ok` means progress only. Assessment completeness includes negative verdicts
+and inaccessible-source triage; it never substitutes for readiness.
+See `audit-policies.md` for coverage units, limited evidence, provenance
+assurance, and the verified-repository README exception.

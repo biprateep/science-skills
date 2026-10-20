@@ -55,8 +55,10 @@ uncited.
   missing or stale support. Rewording that keeps the meaning still changes
   the hash — that is intended: the judge decides whether the paraphrase still
   matches the paper's strength.
-- `audit(tex_path, require_support=true)` must return `ok: true` before the
-  caller reports the manuscript as finished. The caller relays
+- `audit(tex_path, require_support=true, verify=true,
+  policy="submission-ready")` must return the exact strict policy and literal
+  true for `ok`, `input_complete`, `complete`, and `submission_ready` before
+  the caller reports the manuscript as finished. The caller relays
   `failures` / `warnings` to the user; it does not lower the bar.
 
 ## The support check, from the caller's side
@@ -77,7 +79,7 @@ for each key with status VERIFIED or FOUND:
                    judge=…, version=version, tex_path=tex_path,
                    occurrence_id=instance.occurrence_id, atom_id=atom.atom_id)
     # Repeat for each attached atom, including registered single-span sentences.
-audit(tex_path)
+audit(tex_path, policy="submission-ready")  # require explicit readiness
 ```
 
 The judge receives the exact atom, full extracted sentence/context, all
@@ -122,7 +124,7 @@ narrated into a pass.
   `resolve_citation` here; its orchestrator writes `report.bib` with
   `bib_add`.
 - co-scientist runs the support check once, on the report's final prose
-  (after its co-writer pass), and requires `audit` `ok: true` before
+  (after its co-writer pass), and requires a current submission-ready audit before
   `compile_report`.
 - The run manifest's `citations` section (`{"key", "id", "resolved",
   "supports"}`) maps onto the ledger: `id` is cite-check's canonical id,
@@ -143,13 +145,20 @@ narrated into a pass.
 
 ## What a caller may rely on
 
-- `audit.ok == true` means: every cite key exists in the `.bib`; every cited
-  entry's identifier resolves to a record whose title, first author and year
-  match (for a GitHub repository: a public repository whose name or declared
-  title is the entry's); every citation instance has a support verdict that is not
-  UNSUPPORTED / CONTRADICTS / missing / judged against a different paper.
-- Warnings are not failures but are the user's to see: PROBABLE and FOUND
-  entries, PARTIAL and UNVERIFIABLE verdicts, SUPPORTS judged from an
-  abstract only, uncited entries, entries not written by cite-check.
-- Everything is re-runnable and cached; a second `audit` on an unchanged
-  manuscript costs no network calls.
+- `submission_ready == true` under `policy="submission-ready"`, with `ok`,
+  `input_complete`, and `complete` also literal true, means every current
+  cited entry is VERIFIED with meaningful declared export provenance and
+  every support requirement has fresh adequate SUPPORTS evidence. The
+  declaration is not yet cryptographic export-digest assurance.
+- `complete` means every requirement has an assessed outcome; negative
+  verdicts and inaccessible-source triage count as assessed. Exploratory
+  `ok` can report usable progress and always has `submission_ready=false`.
+- Full text is adequate; the primary README/CFF record of a verified GitHub
+  repository is also eligible. Abstract-only support, PARTIAL, UNVERIFIABLE,
+  missing/stale support, and unchecked existence cannot establish readiness.
+- Explicit uncited atoms remain visibly unverified. The caller relays all
+  failures/warnings, including scope declarations, and never labels them
+  supported merely because the citation gate passed.
+- The audit checks current manuscript, bibliography, ledger, and source
+  snapshots before publishing. Retry an `audit-stale` result. Consult
+  `audit-policies.md` for precise coverage units and unknown denominators.

@@ -19,7 +19,7 @@ class ParserFollowupTest(unittest.TestCase):
                 r"\addbibresource[location=local]{missing.bib}"
             )
             (root / "refs.bib").write_text("@article{k,title={Example}}")
-            report = SERVER.audit(str(tex), verify=False)
+            report = SERVER.audit(str(tex), verify=False, policy="exploratory")
             self.assertFalse(report["ok"])
             self.assertFalse(report["complete"])
             self.assertTrue(
@@ -35,7 +35,7 @@ class ParserFollowupTest(unittest.TestCase):
             tex.write_text(r"\addbibresource[location=local]{refs.bib}")
             bib = root / "refs.bib"
             bib.write_text("@article{k,title={Example}}")
-            report = SERVER.audit(str(tex), verify=False)
+            report = SERVER.audit(str(tex), verify=False, policy="exploratory")
             self.assertTrue(report["complete"])
             self.assertTrue(report["ok"])
             self.assertEqual(report["bibs"], [str(bib)])

@@ -21,7 +21,7 @@ mode — worth testing separately that the skill does *not* over-scaffold it.)
 | Harness adapter | Skill detects the harness and uses the right tools for `<literature-search>`, `<spawn-subagent>`, etc. |
 | Hypothesis ranking | 3–5 framings generated and ranked before the design gate |
 | Math rigor + verification | CLT via characteristic functions has ≥8 load-bearing steps; sanity + sympy/numeric verification |
-| Literature + novelty | Citations through cite-check (audit ok) + a novelty verdict |
+| Literature + novelty | Citations through cite-check (submission-ready audit) + a novelty verdict |
 | Red-team | Independent reviewer challenges the derivation |
 | Checkpoints + manifest | Multiple phases, resumable manifest |
 | Visualization | Histogram convergence to Gaussian, inline, made under plot-style |
@@ -83,7 +83,8 @@ After completion, from the **clean working directory** run:
 - [ ] Covers: definition of φ_X(t), c.f. of the standardized sum, Taylor expansion of log φ, limit → Gaussian c.f., Lévy continuity theorem
 
 ### Literature, novelty & honesty
-- [ ] `report.bib` was written by cite-check (provenance comments on every entry) and cite-check's `audit` with `require_support: true` is `ok` on the final `report.tex`
+- [ ] `report.bib` was written by cite-check (provenance comments on every entry); the final `report.tex` audit explicitly requests `policy: "submission-ready"`, `verify: true`, and `require_support: true`
+- [ ] The fresh audit returns that exact policy and literal `true` for `ok`, `input_complete`, `complete`, and `submission_ready`; exploratory, incomplete, or legacy responses cannot pass compilation, even with `allow_unverified: true`
 - [ ] An explicit novelty verdict is given
 - [ ] A red-team / review checkpoint exists, produced by a separate invocation
 - [ ] Hypotheses and results carry confidence tags

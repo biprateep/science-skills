@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -107,11 +107,12 @@ Never edit anything under `mcp/` during a task.
 | `find_passages(identifier, [claims], version)` | abstract + top passages per claim by content-word overlap | what the judge reads first |
 | `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version, tex_path, occurrence_id, atom_id)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
 | `ledger_read(workdir)` | the manuscript's verdicts | resuming |
-| `audit(tex_path, bib_path, require_support)` | the gate: undefined keys, existence failures, missing / stale / negative verdicts; writes `.cite-check/audit.md` | `ok: true` = done |
+| `audit(tex_path, bib_path, require_support, verify, policy)` | separate existence/provenance/support coverage; default submission-ready gate or explicit exploratory progress; writes `.cite-check/audit.md` | only submission-ready policy plus `ok`, `input_complete`, `complete`, and `submission_ready` all true = done |
 
 Full argument lists are in each tool's docstring (`server.py call <tool>`
 with bad args prints it). Registry behaviour and thresholds:
-`references/registries.md`.
+`references/registries.md`. Audit policy criteria and coverage fields:
+`references/audit-policies.md`.
 
 ---
 
@@ -159,7 +160,8 @@ default registry). Then read the result's `repo` before citing:
    call it fabricated or remove it on that basis. FOUND entries (no
    identifier in the entry) get replaced with the official one.
 3. Support pass (Workflow C) over every missing or stale ledger verdict.
-4. `audit(main.tex)`. Relay `failures` and `warnings` to the user verbatim
+4. `audit(main.tex, policy="submission-ready")`. Require explicit readiness
+   and complete current inputs/assessments; exploratory `ok` is not done. Relay `failures` and `warnings` to the user verbatim
    from the report; do not soften them.
 
 ### C. Support check (the judge)
@@ -227,8 +229,11 @@ a search query, not a citation.
 </HARD-GATE>
 
 <HARD-GATE>
-A manuscript is not reported as citation-clean until `audit` returns
-`ok: true` with `require_support: true`. Verdicts come from the judge via
+A manuscript is not reported as citation-clean until `audit` with
+`policy="submission-ready"`, `verify=true`, and `require_support=true`
+returns literal true for `ok`, `input_complete`, `complete`, and
+`submission_ready`. Exploratory progress never establishes readiness.
+Verdicts come from the judge via
 `record_support`; the writer never records its own.
 </HARD-GATE>
 
@@ -307,6 +312,6 @@ flowchart TD
   rec -- refused --> judge
   rec --> audit{{"audit"}}
   audit -- "failures" --> fix
-  audit -- "ok" --> done["done — relay warnings"]
+  audit -- "submission_ready" --> done["done — relay warnings"]
   add["new citation while writing:<br/>search_citation → bib_add"] --> text
 ```
