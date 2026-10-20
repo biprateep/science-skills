@@ -2840,7 +2840,9 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
         with open(tp, "w") as fh:
             fh.write(text)
         meta = {"id": cid, "basis": basis, "source": source, "chars": len(text),
-                "fetched": _now_iso(), "title": rec.get("title", "")}
+                "fetched": _now_iso(), "title": rec.get("title", ""),
+                "extraction_version": TEXT_EXTRACTION_VERSION,
+                "version": rec.get("pin") or rec.get("arxiv_version")}
         with open(mp, "w") as fh:
             json.dump(meta, fh)
         meta["path"] = tp
@@ -2949,10 +2951,36 @@ def _load_ledger(workdir: str) -> dict:
     return {"version": 1, "entries": {}}
 
 
+EVIDENCE_POLICY = "exact-span-v1"
+TEXT_EXTRACTION_VERSION = "text-v1"
+
+
 def _claim_hash(claim: str) -> str:
-    t = re.sub(r"\u27e8[^\u27e9]*\u27e9", " ", claim or "")
-    t = re.sub(r"\s+", " ", _ascii(t).lower()).strip()
-    return hashlib.sha1(t.encode()).hexdigest()[:12]
+    # Whitespace is layout; scientific Unicode, case and citation markers are not.
+    text = re.sub(r"\s+", " ", claim or "").strip()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _source_identity(meta: dict, text: str) -> dict:
+    """Bind judgments to the actual cached bytes and acquisition policy."""
+    return {
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "id": meta.get("id"), "basis": meta.get("basis"),
+        "source": meta.get("source"), "version": meta.get("version"),
+        "extraction": meta.get("extraction_version", "legacy"),
+        "policy": EVIDENCE_POLICY,
+    }
+
+
+def _current_source_identity(identifier: str) -> dict | None:
+    meta = _load_text_meta(identifier)
+    if meta is None:
+        return None
+    try:
+        with open(meta["path"], encoding="utf-8", errors="replace") as source:
+            return _source_identity(meta, source.read())
+    except OSError:
+        return None
 
 
 def _quote_characters(text: str) -> tuple[str, list[int]]:
@@ -2996,7 +3024,8 @@ def _locate_quote(text: str, quote: str) -> dict:
 
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
                    quotes: list | None = None, note: str | None = None, judge: str | None = None,
-                   file: str | None = None, line: int | None = None) -> dict:
+                   file: str | None = None, line: int | None = None,
+                   context: str | None = None) -> dict:
     """Record a support verdict for one (cite key, claim sentence) pair.
 
     verdict ∈ SUPPORTS | PARTIAL | UNSUPPORTED | CONTRADICTS | UNVERIFIABLE.
@@ -3036,7 +3065,9 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
                                             "UNSUPPORTED / CONTRADICTS); UNVERIFIABLE is only for papers whose text could not be obtained"}
     ledger = _load_ledger(workdir)
     lid = f"{key}|{_claim_hash(claim)}"
-    ledger["entries"][lid] = {"key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
+    ledger["version"] = 2
+    ledger["entries"][lid] = {"context_hash": _claim_hash(context if context is not None else claim),
+                              "source_identity": _source_identity(meta, text), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
                               "quotes": checks, "note": note or None, "judge": judge or None,
                               "file": file, "line": line, "recorded": _now_iso()}
     _write_project(workdir, "ledger.json", ledger)
@@ -3142,6 +3173,16 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
         if vid and L["id"] != vid:
             failures.append(dict(loc, type="support-stale", verdict=L["verdict"],
                                  detail=f"verdict was judged against {L['id']} but the entry now resolves to {vid} — re-judge"))
+            coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
+            continue
+        current_source = _current_source_identity(L["id"])
+        if (not L.get("source_identity")
+                or L["source_identity"] != current_source
+                or L.get("context_hash") != _claim_hash(c["context"])):
+            failures.append(dict(
+                loc, type="support-stale", verdict=L["verdict"],
+                detail="source, context or evidence policy changed; re-judge"
+            ))
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
         verdicts[L["verdict"]] += 1
