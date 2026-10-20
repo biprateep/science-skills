@@ -1,0 +1,5 @@
+Use co-scientist to solve the closed-form reasoning exercise in problem.json. No literature lookup or report is needed. Derive the minimum-variance linear unbiased estimator for the two independent estimates with known standard deviations. Return its weights, mean, and variance as reduced rational strings (integers have no "/1"). Compare it with the unweighted mean, and evaluate whether each of the two supplied universal claims is valid.
+
+For the square-root claim use x = -3 as the counterexample and state the exact domain on which sqrt(x**2) = x is valid for real x. State whether the variance calculation remains justified if independence is removed with covariance unknown.
+
+Return strict JSON with keys weights (a list in input order), mean, variance, unweighted_mean, unweighted_variance, universal_unweighted_claim (boolean), sqrt_claim (boolean), counterexample (an object with numeric x, lhs, rhs), sqrt_valid_domain ("x >= 0"), unknown_covariance ("insufficient_information"), and derivation (a short explanatory string).

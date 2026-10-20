@@ -1,0 +1,35 @@
+{
+  "notice": "Synthetic evaluation records, not real publications. These cannot establish citation existence or official bibliographic provenance.",
+  "sources": {
+    "A": {
+      "text": "In the measured sample of 40 cells, treatment increased the median lifetime by 12 percent relative to the control. The experiment did not measure temperature dependence.",
+      "access": "full supplied excerpt"
+    },
+    "B": {
+      "text": "No statistically significant difference in lifetime was detected between the treatment and control groups.",
+      "access": "full supplied excerpt"
+    },
+    "C": {
+      "text": null,
+      "access": "metadata only"
+    }
+  },
+  "claims": {
+    "increase": {
+      "source": "A",
+      "text": "The measured sample had a 12 percent increase in median lifetime under treatment."
+    },
+    "temperature": {
+      "source": "A",
+      "text": "Treatment improves lifetime at every temperature."
+    },
+    "difference": {
+      "source": "B",
+      "text": "The source reports a statistically significant difference between treatment and control."
+    },
+    "unread": {
+      "source": "C",
+      "text": "The treatment doubles lifetime."
+    }
+  }
+}

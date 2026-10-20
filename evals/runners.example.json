@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "runners": {
+    "codex": {
+      "agent": "OpenAI Codex",
+      "model": null,
+      "description": "Local CLI template; live execution requires authentication and explicit opt-in.",
+      "argv": ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "workspace-write", "--output-last-message", "{response_file}", "-"],
+      "stdin": "prompt",
+      "output": "file",
+      "capabilities": ["filesystem", "python"]
+    },
+    "claude": {
+      "agent": "Claude Code",
+      "model": null,
+      "description": "Local CLI template; configure tool permissions using the native CLI.",
+      "argv": ["claude", "--print", "--output-format", "text"],
+      "stdin": "prompt",
+      "output": "stdout",
+      "capabilities": ["filesystem", "python"]
+    },
+    "antigravity": {
+      "agent": "Google Antigravity",
+      "model": null,
+      "description": "Local agy CLI template; tool access depends on native sandbox and permissions.",
+      "argv": ["agy", "--print", "--sandbox", "--output-format", "text"],
+      "stdin": "prompt",
+      "output": "stdout",
+      "capabilities": ["filesystem", "python"]
+    }
+  }
+}

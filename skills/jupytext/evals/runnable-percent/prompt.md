@@ -1,0 +1,3 @@
+Use jupytext to create analysis.py as a runnable percent-format notebook with its complete YAML pairing/kernel header, an introductory markdown cell, and separate code cells for imports, loading measurements, and computing/writing results. Include at least one further markdown cell explaining the result.
+
+Read the JSON list in measurements.json from the current directory; use only the Python standard library. Write results.json containing count, total, and mean. Handle an empty input with count 0, total 0 and mean null. Do not hardcode the supplied values: the script must also work with other finite numeric lists. The script must run as ordinary Python without notebook-only commands. Keep the notebook narrative in markdown cells. Your final response can be plain text.

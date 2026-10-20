@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "skill": "co-scientist",
+  "cases": [
+    {
+      "id": "weighted-inference",
+      "description": "Starter coverage: exact uncertainty weighting, a falsifying counterexample, and an explicit independence boundary; not a complete research workflow.",
+      "prompt": "weighted-inference/prompt.md",
+      "inputs": "weighted-inference/input",
+      "reference": "weighted-inference/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "weights",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/weights",
+          "expected": [
+            "4/5",
+            "1/5"
+          ]
+        },
+        {
+          "id": "mean",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/mean",
+          "expected": "54/5"
+        },
+        {
+          "id": "variance",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/variance",
+          "expected": "16/5"
+        },
+        {
+          "id": "unweighted-mean",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/unweighted_mean",
+          "expected": "12"
+        },
+        {
+          "id": "unweighted-variance",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/unweighted_variance",
+          "expected": "5"
+        },
+        {
+          "id": "universal-unweighted-claim",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/universal_unweighted_claim",
+          "expected": false
+        },
+        {
+          "id": "sqrt-claim",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/sqrt_claim",
+          "expected": false
+        },
+        {
+          "id": "counterexample",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/counterexample",
+          "expected": {
+            "x": -3,
+            "lhs": 3,
+            "rhs": -3
+          }
+        },
+        {
+          "id": "sqrt-valid-domain",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/sqrt_valid_domain",
+          "expected": "x >= 0"
+        },
+        {
+          "id": "unknown-covariance",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/unknown_covariance",
+          "expected": "insufficient_information"
+        }
+      ]
+    }
+  ]
+}

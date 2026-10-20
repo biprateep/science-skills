@@ -20,6 +20,15 @@ access and a shell with Python 3 (`code-style` runs its checks through
 [uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
 to further frameworks by adding a column to a map.
 
+## Evaluation
+
+All current and future skills share a [behavioral evaluation framework](evals/README.md).
+It discovers per-skill task manifests, runs repeatable trials, reports separate
+quality and reliability metrics, and compares compatible baselines. CI checks
+offline fixtures and graders; live Claude Code, Codex, and Antigravity runners
+require explicit opt-in. Replay calibration is never reported as agent performance.
+Generated evaluation runs and local runner settings are ignored by Git.
+
 ## Installation
 
 Clone the repo anywhere, then run the one script:

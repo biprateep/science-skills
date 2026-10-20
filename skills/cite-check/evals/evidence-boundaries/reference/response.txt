@@ -1,0 +1,22 @@
+{
+  "identity_status": "fixture_only",
+  "bibliography_created": false,
+  "claims": {
+    "increase": {
+      "verdict": "supported",
+      "evidence": "In the measured sample of 40 cells, treatment increased the median lifetime by 12 percent relative to the control."
+    },
+    "temperature": {
+      "verdict": "unsupported",
+      "evidence": "The experiment did not measure temperature dependence."
+    },
+    "difference": {
+      "verdict": "contradicted",
+      "evidence": "No statistically significant difference in lifetime was detected between the treatment and control groups."
+    },
+    "unread": {
+      "verdict": "unverifiable",
+      "evidence": ""
+    }
+  }
+}

@@ -1,0 +1,5 @@
+Use cite-check to audit the four claims in evidence.json against only the supplied excerpts. This is a controlled offline evidence exercise: all records are synthetic, so do not search for or cite them as real publications, and do not fabricate BibTeX. No bibliography is requested.
+
+For each claim return one verdict: "supported" when the supplied text supports it, "contradicted" when the text directly conflicts, "unsupported" when readable text does not establish it, or "unverifiable" when source text is unavailable. Include a verbatim evidence quotation for the supported and contradicted cases. Set identity_status to "fixture_only" because synthetic evidence cannot verify a real citation's existence. Set bibliography_created to false.
+
+Your final response must be a JSON object with keys identity_status, bibliography_created, and claims. claims is keyed by the four claim IDs, with verdict and evidence fields. Use an empty evidence string for unread. Additional explanation fields are allowed.

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "skill": "code-style",
+  "cases": [
+    {
+      "id": "repair-library",
+      "description": "Starter coverage: library annotations/imports/docstrings plus empty-input, numerical, and list-ownership behavior; not complete style certification.",
+      "prompt": "repair-library/prompt.md",
+      "inputs": "repair-library/input",
+      "reference": "repair-library/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "library-structure",
+          "kind": "command",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/code-style/evals/grade.py",
+            "{workspace}",
+            "structure"
+          ],
+          "timeout_s": 15
+        },
+        {
+          "id": "library-behavior",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/code-style/evals/grade.py",
+            "{workspace}",
+            "behavior"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    }
+  ]
+}
