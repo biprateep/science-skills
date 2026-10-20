@@ -84,8 +84,14 @@ class ProtocolSchemaTest(unittest.TestCase):
                     for field in ("start", "end", "citation_ids", "kind", "reason"):
                         self.assertIn(field, atomic_schema)
                     support_fields = schemas["record_support"]["properties"]
-                    for field in ("tex_path", "occurrence_id", "atom_id"):
+                    for field in ("tex_path", "occurrence_id", "atom_id", "proposed_correction"):
                         self.assertIn(field, support_fields)
+                    proposal_schema = json.dumps(schemas["record_support"])
+                    for field in ("replacement_text", "rationale", "revise-claim", "replace-citation"):
+                        self.assertIn(field, proposal_schema)
+                    correction_fields = schemas["correction_report"]["properties"]
+                    self.assertEqual(correction_fields["policy"]["default"], "submission-ready")
+                    self.assertFalse(correction_fields["annotated"]["default"])
                     policy_schema = schemas["audit"]["properties"]["policy"]
                     self.assertEqual(policy_schema["default"], "submission-ready")
                     self.assertEqual(set(policy_schema["enum"]), {"submission-ready", "exploratory"})
@@ -132,6 +138,24 @@ class ProtocolSchemaTest(unittest.TestCase):
                     audit_text = " ".join(item.get("text", "") for item in audit_result["content"])
                     self.assertIn('"submission_ready": false', audit_text)
                     self.assertIn('"coverage"', audit_text)
+                    correction_result = (await session.call_tool("correction_report", {
+                        "tex_path": str(manuscript), "verify": False,
+                        "require_support": False, "policy": "exploratory", "annotated": True,
+                    })).model_dump(by_alias=True)
+                    correction_text = " ".join(item.get("text", "") for item in correction_result["content"])
+                    self.assertIn('"report_written": true', correction_text)
+                    self.assertIn('"submission_ready": false', correction_text)
+                    self.assertTrue((pathlib.Path(directory) / ".cite-check" / "corrections.html").is_file())
+                    for proposal in (
+                        {"action": "unknown", "rationale": "A meaningful correction reason."},
+                        {"action": "revise-claim", "rationale": "A meaningful correction reason.", "approved": True},
+                    ):
+                        refused_proposal = (await session.call_tool("record_support", {
+                            "workdir": directory, "key": "a", "claim": sentence["claim"],
+                            "verdict": "UNSUPPORTED", "identifier": "not-an-id",
+                            "proposed_correction": proposal,
+                        })).model_dump(by_alias=True)
+                        self.assertTrue(refused_proposal.get("isError", False))
                     refused = (await session.call_tool("audit", {
                         "tex_path": str(manuscript), "policy": "unknown",
                     })).model_dump(by_alias=True)

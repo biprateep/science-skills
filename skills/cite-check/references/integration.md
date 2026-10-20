@@ -116,6 +116,23 @@ in front of it). `record_support` enforces the evidence rules mechanically —
 a SUPPORTS without a verbatim quote is rejected — so the ledger cannot be
 narrated into a pass.
 
+## Reviewing actionable corrections
+
+Call `correction_report(tex_path, bib_path, annotated=true)` when a user
+needs actionable findings or an annotated source copy. It performs one fresh
+audit, preserves its readiness flags, and returns `report_written` separately.
+CLI exit status follows `ok`, so a failing audit can still produce useful
+reports. Do not interpret artifact generation as a citation pass.
+
+The independent judge may pass `proposed_correction` to `record_support`
+for a non-support outcome bound to an explicit occurrence and registered
+atom. The caller relays it as unapproved wording; it never silently applies
+it or generates a new citation identifier. After the user chooses a change,
+re-extract, register affected atoms, obtain fresh independent judgments and
+rerun the strict gate. Use the same workflow in Codex, Claude Code and Gemini;
+native MCP and CLI expose identical parameters. See
+[correction-reports.md](correction-reports.md) for fields and examples.
+
 ## co-scientist specifically
 
 - co-scientist has no citation tool of its own (its `resolve_citation` was

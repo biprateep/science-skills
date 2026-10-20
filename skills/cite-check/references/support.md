@@ -244,3 +244,17 @@ Use `policy="submission-ready"` for a final gate and require `ok`,
 and inaccessible-source triage; it never substitutes for readiness.
 See `audit-policies.md` for coverage units, limited evidence, provenance
 assurance, and the verified-repository README exception.
+
+## Optional correction drafts
+
+For a non-support outcome, the independent judge may return an optional
+`proposed_correction` containing `action`, a substantive `rationale`, and
+optional `replacement_text`. See [correction-reports.md](correction-reports.md).
+Only `revise-claim` accepts replacement wording, and it requires an actual
+source quote. A proposal remains unapproved and scientifically unvalidated:
+verifying its quoted evidence does not verify the replacement. Do not invent
+citation keys, DOI strings, BibTeX, numbers, or stronger scientific claims.
+If the available evidence cannot justify wording, omit it and describe the
+next action. Runtime checks require a nonempty judge label but cannot certify
+that the judge invocation was independent; the caller must preserve that
+separation.
