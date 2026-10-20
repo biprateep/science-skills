@@ -79,6 +79,49 @@ class ProtocolSchemaTest(unittest.TestCase):
                     self.assertEqual(array["items"]["type"], "string")
                     self.assertIn("identifier", json.dumps(schemas["bib_add"]))
                     self.assertIn("version", json.dumps(schemas["bib_add"]))
+                    self.assertEqual(set(schemas), set(SERVER.TOOLS))
+                    atomic_schema = json.dumps(schemas["register_claims"])
+                    for field in ("start", "end", "citation_ids", "kind", "reason"):
+                        self.assertIn(field, atomic_schema)
+                    support_fields = schemas["record_support"]["properties"]
+                    for field in ("tex_path", "occurrence_id", "atom_id"):
+                        self.assertIn(field, support_fields)
+                    manuscript = pathlib.Path(directory) / "main.tex"
+                    manuscript.write_text(r"A result holds \cite{a}.")
+                    extraction = SERVER.extract_cites(str(manuscript))
+                    sentence = extraction["sentences"][0]
+                    arguments = {
+                        "tex_path": str(manuscript),
+                        "sentence_id": sentence["sentence_id"],
+                        "atoms": [{
+                            "start": 0, "end": len(sentence["claim"]),
+                            "citation_ids": sentence["citation_ids"],
+                        }],
+                    }
+                    atomic_result = (await session.call_tool(
+                        "register_claims", arguments
+                    )).model_dump(by_alias=True)
+                    self.assertFalse(atomic_result.get("isError", False))
+                    atomic_text = " ".join(
+                        item.get("text", "") for item in atomic_result["content"]
+                    )
+                    self.assertIn('"atom_id"', atomic_text)
+                    self.assertEqual(
+                        SERVER.register_claims(**arguments)["atoms"],
+                        SERVER.ledger_read(directory)["ledger"]["decompositions"][
+                            sentence["sentence_id"]
+                        ]["atoms"],
+                    )
+                    for malformed in (
+                        {"start": False}, {"start": 0.0}, {"unexpected": True}
+                    ):
+                        invalid = dict(arguments)
+                        invalid["atoms"] = [dict(arguments["atoms"][0], **malformed)]
+                        refused = (await session.call_tool(
+                            "register_claims", invalid
+                        )).model_dump(by_alias=True)
+                        self.assertTrue(refused.get("isError", False), refused)
+                        self.assertFalse(SERVER.register_claims(**invalid)["ok"])
                     result = (
                         await session.call_tool(
                             "resolve_citation",

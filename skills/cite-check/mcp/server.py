@@ -37,8 +37,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from typing import Literal
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -2900,9 +2901,15 @@ _TEX_MATH = re.compile(
 
 
 def _strip_tex_comments(text: str) -> str:
-    text = "\n".join(re.sub(r"(?<!\\)%.*$", "", line) for line in text.split("\n"))
-    text = re.sub(r"\\begin\{comment\}.*?\\end\{comment\}", " ", text, flags=re.S)
-    return re.sub(r"\\iffalse.*?\\fi", " ", text, flags=re.S)
+    """Blank comments while preserving source character offsets and lines."""
+    def blank(match: re.Match) -> str:
+        return "".join("\n" if char == "\n" else " " for char in match[0])
+
+    text = re.sub(r"(?<!\\)%[^\n]*", blank, text)
+    text = re.sub(
+        r"\\begin\{comment\}.*?\\end\{comment\}", blank, text, flags=re.S
+    )
+    return re.sub(r"\\iffalse.*?\\fi", blank, text, flags=re.S)
 
 
 def _braced(text: str, i: int) -> tuple:
@@ -2945,7 +2952,8 @@ def _tex_file_arguments(text: str, commands: tuple[str, ...]) -> list[str]:
 
 
 def _gather_tex(main_path: str, seen: set | None = None,
-                root: str | None = None) -> list:
+                root: str | None = None,
+                snapshots: dict[str, str] | None = None) -> list:
     """[(path, comment-stripped text)] for the main file and every
     \\input / \\include / \\subfile it pulls in."""
     seen = seen if seen is not None else set()
@@ -2956,14 +2964,17 @@ def _gather_tex(main_path: str, seen: set | None = None,
     if not os.path.isfile(main_path):
         raise ValueError(f"missing included TeX file: {main_path}")
     seen.add(main_path)
-    with open(main_path, errors="replace") as fh:
-        text = _strip_tex_comments(fh.read())
+    with open(main_path, encoding="utf-8", newline="") as fh:
+        original = fh.read()
+    if snapshots is not None:
+        snapshots[main_path] = original
+    text = _strip_tex_comments(original)
     files = [(main_path, text)]
     for argument in _tex_file_arguments(text, ("input", "include", "subfile")):
         cand = os.path.join(root, argument)
         if not os.path.splitext(cand)[1]:
             cand += ".tex"
-        files += _gather_tex(cand, seen, root)
+        files += _gather_tex(cand, seen, root, snapshots)
     return files
 
 
@@ -3071,11 +3082,13 @@ def extract_cites(tex_path: str) -> dict:
     tex_path = os.path.abspath(tex_path)
     if not os.path.exists(tex_path):
         return {"error": f"{tex_path} not found"}
+    source_snapshots = {}
     try:
-        files = _gather_tex(tex_path)
+        files = _gather_tex(tex_path, snapshots=source_snapshots)
     except (OSError, ValueError) as exc:
         return {"ok": False, "complete": False, "error": str(exc)}
     cites, bib_files, docclass = [], [], None
+    sentences = []
     for path, text in files:
         m = re.search(r"\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}", text)
         if m and not docclass:
@@ -3107,7 +3120,10 @@ def extract_cites(tex_path: str) -> dict:
             out.append(text[last:s])
             out.append(f" \u27e8cite#{n}\u27e9 ")
             last = e
-            tokens[n] = {"cmd": cmd, "keys": keys, "line": text.count("\n", 0, s) + 1}
+            tokens[n] = {
+                "cmd": cmd, "keys": keys, "line": text.count("\n", 0, s) + 1,
+                "source_start": s, "source_end": e, "source_index": n,
+            }
         out.append(text[last:])
         joined = "".join(out)
         m = re.search(r"\\begin\{document\}", joined)
@@ -3128,26 +3144,68 @@ def extract_cites(tex_path: str) -> dict:
         sents = []
         for para in re.split(r"\n\s*\n", prose):
             sents.extend(_split_sentences(re.sub(r"\s+", " ", para).strip()))
+        source_text = source_snapshots[path]
         for si, sent in enumerate(sents):
-            for tm in _CITE_TOKEN.finditer(sent):
+            matches = list(_CITE_TOKEN.finditer(sent))
+            if not matches:
+                continue
+            claim = render(sent)
+            context = " ".join(
+                render(value) for value in sents[max(0, si - 1):si + 2]
+            )
+            anchors = [tokens[int(match[1])] for match in matches]
+            location_id = _atomic_digest(
+                [tex_path, path, anchors[0]["source_index"]]
+            )
+            sentence_id = _atomic_digest(
+                [tex_path, path, anchors, claim, context]
+            )
+            sentence = {
+                "sentence_id": sentence_id, "location_id": location_id,
+                "file": path, "tex_path": tex_path,
+                "claim": claim, "context": context,
+                "citation_ids": [], "offset_unit": "unicode-codepoint",
+            }
+            for tm in matches:
                 t = tokens[int(tm.group(1))]
-                claim = render(sent)
-                context = " ".join(
-                    render(value) for value in sents[max(0, si - 1):si + 2]
-                )
-                for key in t["keys"]:
+                marker = "⟨cite:" + ",".join(t["keys"]) + "⟩"
+                marker_start = len(render(sent[:tm.start()]))
+                marker_end = marker_start + len(marker)
+                for key_index, key in enumerate(t["keys"]):
+                    occurrence_id = _atomic_digest(
+                        [sentence_id, t["source_index"], key_index, key]
+                    )
+                    sentence["citation_ids"].append(occurrence_id)
                     cites.append({
                         "key": key, "cmd": t["cmd"], "file": path,
+                        "tex_path": tex_path,
                         "line": t["line"], "claim": claim, "context": context,
                         "nocite": t["cmd"].lower() == "nocite" or key == "*",
+                        "occurrence_id": occurrence_id,
+                        "sentence_id": sentence_id,
+                        "location_id": location_id,
+                        "marker_start": marker_start, "marker_end": marker_end,
+                        "source_start": t["source_start"],
+                        "source_end": t["source_end"],
+                        "source_byte_start": len(
+                            source_text[:t["source_start"]].encode("utf-8")
+                        ),
+                        "source_byte_end": len(
+                            source_text[:t["source_end"]].encode("utf-8")
+                        ),
+                        "source_command": source_text[
+                            t["source_start"]:t["source_end"]
+                        ],
                     })
+            sentences.append(sentence)
     keys = sorted({c["key"] for c in cites if c["key"] != "*"})
     by_key = {}
     for i, c in enumerate(cites):
         by_key.setdefault(c["key"], []).append(i)
     return {"complete": True, "main": tex_path, "files": [p for p, _ in files], "documentclass": docclass,
             "bib_files": list(dict.fromkeys(bib_files)), "n_instances": len(cites),
-            "n_keys": len(keys), "keys": keys, "cites": cites, "by_key": by_key}
+            "n_keys": len(keys), "keys": keys, "cites": cites, "by_key": by_key,
+            "sentences": sentences}
 
 
 # ---------------------------------------------------------------------------
@@ -3544,10 +3602,346 @@ def _locate_quote(text: str, quote: str) -> dict:
             "reason": "not found verbatim in the source text"}
 
 
+@dataclasses.dataclass
+class AtomicClaim:
+    """An exact sentence span and the citation occurrences supporting it.
+
+    Offsets are zero-based Unicode codepoints, with an exclusive end.
+    """
+
+    # MCP's Pydantic adapter honors these without adding a CLI dependency.
+    __pydantic_config__ = {"extra": "forbid"}
+
+    start: int = dataclasses.field(metadata={"strict": True})
+    end: int = dataclasses.field(metadata={"strict": True})
+    citation_ids: list[str]
+    kind: Literal["cited", "uncited"] = "cited"
+    reason: str | None = None
+
+
+def _atomic_digest(value: object) -> str:
+    """Hash exact JSON content without normalizing scientific symbols."""
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _validated_atoms(sentence: dict, cites: list[dict], atoms: list) -> list:
+    """Validate a complete partition and preserve all citation attachments.
+
+    Raises:
+        ValueError: Offsets, coverage or citation attachments are invalid.
+    """
+    if not isinstance(atoms, list) or not atoms:
+        raise ValueError("atoms must be a nonempty list")
+    claim = sentence["claim"]
+    occurrences = {cite["occurrence_id"]: cite for cite in cites}
+    eligible = {key for key, cite in occurrences.items() if not cite["nocite"]}
+    result, attached, position = [], set(), 0
+    for item in atoms:
+        atom = (
+            dataclasses.asdict(item) if isinstance(item, AtomicClaim) else item
+        )
+        if (
+            not isinstance(atom, dict)
+            or not {"start", "end", "citation_ids"} <= set(atom)
+            or set(atom) - {"start", "end", "citation_ids", "kind", "reason"}
+        ):
+            raise ValueError("each atom needs start, end and citation_ids")
+        kind, reason = atom.get("kind", "cited"), atom.get("reason")
+        if kind not in ("cited", "uncited"):
+            raise ValueError("atom kind must be cited or uncited")
+        if reason is not None and not isinstance(reason, str):
+            raise ValueError("reason must be a string")
+        if kind == "uncited" and len((reason or "").strip()) < 15:
+            raise ValueError(
+                "uncited atoms need a scope reason of at least 15 characters"
+            )
+        start, end, citation_ids = (
+            atom["start"],
+            atom["end"],
+            atom["citation_ids"],
+        )
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or start != position
+            or not start < end <= len(claim)
+        ):
+            raise ValueError(
+                "atoms must partition the complete sentence in order, "
+                "without gaps or overlaps; use Unicode codepoint offsets"
+            )
+        if (
+            not isinstance(citation_ids, list)
+            or (kind == "cited" and not citation_ids)
+            or (kind == "uncited" and citation_ids)
+            or any(not isinstance(value, str) for value in citation_ids)
+            or len(set(citation_ids)) != len(citation_ids)
+            or not set(citation_ids) <= eligible
+        ):
+            raise ValueError(
+                "citation_ids must name distinct cited occurrences"
+            )
+        for expression in _TEX_MATH.finditer(claim):
+            if expression.start() < start < expression.end() or (
+                expression.start() < end < expression.end()
+            ):
+                raise ValueError(
+                    "an atom boundary cannot split a math expression"
+                )
+        for occurrence_id, cite in occurrences.items():
+            left, right = cite["marker_start"], cite["marker_end"]
+            if start < right and end > left:
+                if kind == "uncited":
+                    raise ValueError(
+                        "uncited atoms cannot contain citation markers"
+                    )
+                if start > left or end < right:
+                    raise ValueError(
+                        "an atom boundary cannot split a citation marker"
+                    )
+                if not cite["nocite"] and occurrence_id not in citation_ids:
+                    raise ValueError(
+                        "retain the citation attached inside each atom"
+                    )
+        atom_text = claim[start:end]
+        prose = re.sub(r"⟨cite:[^⟩]*⟩", "", atom_text)
+        if not any(character.isalnum() for character in prose):
+            raise ValueError("each atom must contain assertion text")
+        result.append(
+            {
+                "start": start,
+                "end": end,
+                "text": atom_text,
+                "byte_start": len(claim[:start].encode("utf-8")),
+                "byte_end": len(claim[:end].encode("utf-8")),
+                "citation_ids": sorted(citation_ids),
+                "kind": kind,
+                "reason": reason.strip() if reason else None,
+            }
+        )
+        attached.update(citation_ids)
+        position = end
+    if position != len(claim) or attached != eligible:
+        raise ValueError(
+            "cover the entire sentence and every citation occurrence"
+        )
+    return result
+
+
+def register_claims(
+    tex_path: str, sentence_id: str, atoms: list[AtomicClaim]
+) -> dict:
+    """Register agent-proposed atomic claims without rewriting the sentence.
+
+    The first registration enables atomic mode for this main manuscript:
+    register every current cited sentence, using one span for simple claims.
+    Uncited spans need kind="uncited", no citation_ids, and a scope reason.
+    Changed sentence/context or partition requires registration and judging
+    again. All attached atom/occurrence pairs require separate verdicts.
+
+    Args:
+        tex_path: Main manuscript path, including its input/include files.
+        sentence_id: Current sentence_id returned by extract_cites.
+        atoms: A complete ordered partition of the exact extracted sentence.
+            Each span attaches to explicit occurrence IDs from that sentence.
+
+    Returns:
+        Registration and derived atom IDs, or an error. Offsets certify
+        coverage, not semantic atomicity: a judge must review the split and
+        source scope using the unchanged original sentence and context.
+    """
+    workdir = os.path.dirname(os.path.abspath(tex_path))
+    with _file_lock(_project_path(workdir, "ledger.json")):
+        extracted = extract_cites(tex_path)
+        if extracted.get("error"):
+            return {"ok": False, "error": extracted["error"]}
+        sentence = next(
+            (
+                item
+                for item in extracted["sentences"]
+                if item["sentence_id"] == sentence_id
+            ),
+            None,
+        )
+        if sentence is None:
+            return {
+                "ok": False,
+                "error": "sentence changed or ID is unknown; extract again",
+            }
+        cites = [
+            cite
+            for cite in extracted["cites"]
+            if cite["sentence_id"] == sentence_id
+        ]
+        try:
+            normalized = _validated_atoms(sentence, cites, atoms)
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+        decomposition_id = _atomic_digest([sentence_id, normalized])
+        for index, atom in enumerate(normalized):
+            atom["atom_id"] = _atomic_digest([decomposition_id, index])
+        registration = dict(
+            sentence,
+            atoms=normalized,
+            decomposition_id=decomposition_id,
+            tex_path=os.path.abspath(tex_path),
+        )
+        ledger = _load_ledger(workdir)
+        decompositions = ledger.setdefault("decompositions", {})
+        # Discard old judgments on any revision, including changing back to an
+        # earlier decomposition. An identical registration is idempotent.
+        previous = decompositions.get(sentence_id)
+        current_ids = {item["sentence_id"] for item in extracted["sentences"]}
+        invalidated = {
+            old_id
+            for old_id, old in decompositions.items()
+            if old.get("tex_path") == os.path.abspath(tex_path)
+            and old_id not in current_ids
+        }
+        if previous != registration:
+            invalidated.add(sentence_id)
+        if invalidated:
+            ledger["entries"] = {
+                key: value
+                for key, value in ledger["entries"].items()
+                if value.get("sentence_id") not in invalidated
+            }
+        # Keep history keyed by exact sentence identity. Inserting a citation
+        # must not overwrite a displaced sentence's atomic obligation.
+        decompositions[sentence_id] = registration
+        ledger["version"] = 3
+        _write_project(workdir, "ledger.json", ledger)
+    return {"ok": True, **registration}
+
+
+def _find_decomposition(cite: dict, ledger: dict) -> dict | None:
+    """Require exact registration once this manuscript enters atomic mode."""
+    registrations = [
+        value
+        for value in ledger.get("decompositions", {}).values()
+        if value.get("tex_path") == cite["tex_path"]
+    ]
+    for registration in registrations:
+        if registration["sentence_id"] == cite["sentence_id"]:
+            return registration
+    # A moved and edited assertion cannot be matched reliably by text or
+    # source ordinal. Atomic mode requires explicit registration of every
+    # current sentence; a single span is valid for a simple assertion.
+    return registrations[-1] if registrations else None
+
+
+def _support_target(
+    workdir: str,
+    tex_path: str,
+    occurrence_id: str,
+    atom_id: str | None,
+    key: str,
+    claim: str,
+    context: str | None,
+    ledger: dict,
+) -> dict:
+    """Resolve an exact current occurrence and optional registered atom.
+
+    Raises:
+        ValueError: The requested target is stale, ambiguous or incomplete.
+    """
+    if os.path.realpath(workdir) != os.path.realpath(os.path.dirname(tex_path)):
+        raise ValueError("workdir must be the main manuscript directory")
+    extracted = extract_cites(tex_path)
+    if extracted.get("error"):
+        raise ValueError(extracted["error"])
+    cite = next(
+        (
+            item
+            for item in extracted["cites"]
+            if item["occurrence_id"] == occurrence_id
+        ),
+        None,
+    )
+    if (
+        cite is None
+        or cite["nocite"]
+        or cite["key"] != key
+        or cite["claim"] != claim
+        or cite["context"] != context
+    ):
+        raise ValueError(
+            "use the exact current occurrence, key, claim and context"
+        )
+    registration = _find_decomposition(cite, ledger)
+    target = {
+        "occurrence_id": occurrence_id,
+        "sentence_id": cite["sentence_id"],
+        "location_id": cite["location_id"],
+        "file": cite["file"],
+        "line": cite["line"],
+        "context": cite["context"],
+    }
+    if registration:
+        if registration["sentence_id"] != cite["sentence_id"]:
+            raise ValueError(
+                "sentence or context changed; register claims again"
+            )
+        atom = next(
+            (
+                item
+                for item in registration["atoms"]
+                if item["atom_id"] == atom_id
+            ),
+            None,
+        )
+        if atom is None or occurrence_id not in atom["citation_ids"]:
+            raise ValueError(
+                "record each registered atom with an attached occurrence"
+            )
+        target.update(
+            atom_id=atom_id,
+            atom=atom,
+            decomposition_id=registration["decomposition_id"],
+        )
+    elif atom_id is not None:
+        raise ValueError("register claims before recording an atom verdict")
+    return target
+
+
+def _support_requirements(extracted: dict, ledger: dict) -> list[dict]:
+    """Expand citation instances only into atoms explicitly attached to them."""
+    required = []
+    for cite in extracted["cites"]:
+        if cite["nocite"]:
+            continue
+        registration = _find_decomposition(cite, ledger)
+        if not registration:
+            required.append(cite)
+        elif registration["sentence_id"] != cite["sentence_id"]:
+            required.append(dict(cite, decomposition_stale=True))
+        else:
+            for atom in registration["atoms"]:
+                if cite["occurrence_id"] in atom["citation_ids"]:
+                    required.append(
+                        dict(
+                            cite,
+                            atom_id=atom["atom_id"],
+                            atom=atom,
+                            decomposition_id=registration["decomposition_id"],
+                        )
+                    )
+    return required
+
+
+def _support_id(occurrence_id: str, atom_id: str | None = None) -> str:
+    """Keep sentence-occurrence and atom-occurrence judgments separate."""
+    return f"occurrence:{occurrence_id}|atom:{atom_id or 'sentence'}"
+
+
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
                    quotes: list[str] | None = None, note: str | None = None, judge: str | None = None,
                    file: str | None = None, line: int | None = None,
-                   context: str | None = None, version: str | None = None) -> dict:
+                   context: str | None = None, version: str | None = None,
+                   tex_path: str | None = None,
+                   occurrence_id: str | None = None,
+                   atom_id: str | None = None) -> dict:
     """Record a support verdict for one (cite key, claim sentence) pair.
 
     verdict ∈ SUPPORTS | PARTIAL | UNSUPPORTED | CONTRADICTS | UNVERIFIABLE.
@@ -3556,7 +3950,25 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     PARTIAL / CONTRADICTS / UNSUPPORTED / UNVERIFIABLE need a `note` saying
     what the paper does and does not say; UNVERIFIABLE is refused when full
     text is available. `claim` must be the exact sentence extract_cites gave.
+    Pass tex_path and occurrence_id together; atom_id selects a registered
+    span while claim/context retain the full original. Atomic mode requires
+    an atom_id even for a registered single-span sentence. Legacy calls only
+    satisfy unambiguous sentences in manuscripts outside atomic mode.
     """
+    if bool(tex_path) != bool(occurrence_id) or (atom_id and not occurrence_id):
+        return {"recorded": False,
+                "error": ("tex_path and occurrence_id are required together; "
+                          "atoms need both")}
+    target = {}
+    if tex_path and occurrence_id:
+        tex_path = os.path.abspath(tex_path)
+        try:
+            target = _support_target(
+                workdir, tex_path, occurrence_id, atom_id, key, claim, context,
+                _load_ledger(workdir),
+            )
+        except ValueError as error:
+            return {"recorded": False, "error": str(error)}
     if quotes is not None and (not isinstance(quotes, list)
                               or any(not isinstance(quote, str) for quote in quotes)):
         return {"recorded": False, "error": "quotes must be a list of strings"}
@@ -3595,13 +4007,25 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
                                             "UNSUPPORTED / CONTRADICTS); UNVERIFIABLE is only for papers whose text could not be obtained"}
     with _file_lock(_project_path(workdir, "ledger.json")):
         ledger = _load_ledger(workdir)
-        lid = f"{key}|{_claim_hash(claim)}"
-        ledger["version"] = 2
+        # Revalidate inside the transaction: registration may have changed
+        # while fetching source text. Never commit against an obsolete split.
+        if tex_path and occurrence_id:
+            try:
+                target = _support_target(
+                    workdir, tex_path, occurrence_id, atom_id,
+                    key, claim, context, ledger,
+                )
+            except ValueError as error:
+                return {"recorded": False, "error": str(error)}
+        lid = (_support_id(occurrence_id, atom_id) if occurrence_id
+               else f"{key}|{_claim_hash(claim)}")
+        ledger["version"] = 3
         ledger["entries"][lid] = {"context_hash": _claim_hash(context if context is not None else claim),
                                   "source_identity": _source_identity(meta, text),
                                   "source_cache_id": meta.get("cache_id", cid), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
                                   "quotes": checks, "note": note or None, "judge": judge or None,
                                   "file": file, "line": line, "recorded": _now_iso()}
+        ledger["entries"][lid].update(target)
         _write_project(workdir, "ledger.json", ledger)
     return {"recorded": True, "ledger_id": lid, "verdict": verdict, "basis": basis,
             "quotes_found": n_found, "quotes": checks}
@@ -3625,11 +4049,16 @@ def _audit_markdown(rep: dict, ver: dict, coverage: dict) -> str:
     for title, items in (("Failures", rep["failures"]), ("Warnings", rep["warnings"])):
         lines += [f"## {title} ({len(items)})", ""]
         for it in items:
-            where = f" ({os.path.basename(it['file'])}:{it['line']})" if it.get("file") else ""
+            where = (
+                f" ({os.path.basename(it['file'])}:{it.get('line', '—')})"
+                if it.get("file") else ""
+            )
             lines.append(f"- **{it['type']}** `{it.get('key', '')}`{where}: {it.get('status') or it.get('verdict') or ''} "
                          f"{it.get('detail') or ''}".rstrip())
             if it.get("claim"):
                 lines.append(f"  > {it['claim']}")
+            if it.get("atom"):
+                lines.append(f"  Atom `{it['atom_id']}`: {it['atom']}")
         lines.append("")
     lines += ["## Per key", "", "| key | existence | id | support verdicts |", "|---|---|---|---|"]
     for key in sorted(coverage):
@@ -3707,13 +4136,57 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
                 failures.append({"type": "existence", "key": k, "status": r["status"], "detail": detail})
             if not r.get("provenance"):
                 unofficial.append(k)
-    ledger = _load_ledger(workdir)["entries"]
+    ledger_state = _load_ledger(workdir)
+    ledger = ledger_state["entries"]
     verdicts, coverage, missing = Counter(), {}, []
-    for c in ex["cites"]:
-        if c["nocite"]:
+    legacy_counts = Counter(
+        (cite["key"], _claim_hash(cite["claim"]))
+        for cite in ex["cites"] if not cite["nocite"]
+    )
+    requirements = _support_requirements(ex, ledger_state)
+    uncited_atoms = []
+    for sentence in ex["sentences"]:
+        registration = _find_decomposition(sentence, ledger_state)
+        if (not registration
+                or registration["sentence_id"] != sentence["sentence_id"]):
             continue
-        L = ledger.get(f"{c['key']}|{_claim_hash(c['claim'])}")
-        loc = {"key": c["key"], "file": c["file"], "line": c["line"], "claim": c["claim"][:240]}
+        for atom in registration["atoms"]:
+            if atom["kind"] == "uncited":
+                scope = {
+                    "sentence_id": sentence["sentence_id"],
+                    "file": sentence["file"], "claim": sentence["claim"],
+                    "atom_id": atom["atom_id"], "atom": atom["text"],
+                    "reason": atom["reason"], "verified": False,
+                }
+                uncited_atoms.append(scope)
+                warnings.append(dict(
+                    scope, type="uncited-atom",
+                    detail=("declared uncited scope; not verified: "
+                            + atom["reason"]),
+                ))
+    for c in requirements:
+        loc = {"key": c["key"], "file": c["file"], "line": c["line"],
+               "claim": c["claim"][:240], "occurrence_id": c["occurrence_id"]}
+        if c.get("atom_id"):
+            loc.update(atom_id=c["atom_id"], atom=c["atom"]["text"])
+        if c.get("decomposition_stale"):
+            failures.append(dict(
+                loc, type="decomposition-stale",
+                detail=("atomic mode requires a current sentence registration; "
+                        "register claims and re-judge"),
+            ))
+            coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
+            continue
+        L = ledger.get(_support_id(c["occurrence_id"], c.get("atom_id")))
+        if (L is None and not c.get("atom_id")
+                and legacy_counts[(c["key"], _claim_hash(c["claim"]))] == 1):
+            legacy = ledger.get(f"{c['key']}|{_claim_hash(c['claim'])}")
+            # A legacy judgment is safe only when it maps to one occurrence
+            # and any supplied historical source location still matches.
+            if legacy and (legacy.get("file") in (None, c["file"])) and (
+                legacy.get("line") in (None, c["line"])
+            ):
+                L = legacy
         if not L:
             missing.append(c)
             coverage[c["key"]] = coverage.get(c["key"], "") + " MISSING"
@@ -3734,7 +4207,9 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
         arxiv_version = _entry_arxiv_version(entry) if entry else None
         if arxiv_version:
             expected_version = arxiv_version
-        if (not L.get("source_identity")
+        if (L.get("decomposition_id") != c.get("decomposition_id")
+                or (c.get("atom_id") and L.get("atom") != c["atom"])
+                or not L.get("source_identity")
                 or (expected_version and source_version != expected_version)
                 or L["source_identity"] != current_source
                 or L.get("context_hash") != _claim_hash(c["context"])):
@@ -3756,7 +4231,10 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
     for c in missing:
         (failures if require_support else warnings).append(
             {"type": "support-missing", "key": c["key"], "file": c["file"], "line": c["line"],
-             "claim": c["claim"][:240], "detail": "no support verdict recorded for this citation instance"})
+             "claim": c["claim"][:240], "occurrence_id": c["occurrence_id"],
+             "atom_id": c.get("atom_id"),
+             "atom": (c.get("atom") or {}).get("text"),
+             "detail": "no support verdict recorded for this atom/occurrence"})
     for k in cite_keys:
         coverage.setdefault(k, "")
     complete = not any(item["type"] in {
@@ -3766,13 +4244,34 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
               "n_instances": ex["n_instances"], "n_keys": len(cite_keys),
               "existence_counts": dict(Counter(r["status"] for r in ver.values())),
               "support_counts": dict(verdicts), "support_missing": len(missing),
+              "n_support_requirements": len(requirements),
+              "n_atomic_requirements": sum(
+                  "atom_id" in c for c in requirements
+              ),
+              "n_uncited_atoms": len(uncited_atoms),
+              "uncited_atoms": uncited_atoms,
               "unofficial_entries": sorted(unofficial), "failures": failures, "warnings": warnings,
               "checked": _now_iso()}
     coverage = {k: v.strip() or "—" for k, v in coverage.items()}
-    md_path = _project_path(workdir, "audit.md")
-    _atomic_write(md_path, _audit_markdown(report, ver, coverage))
-    report["report"] = md_path
-    _write_project(workdir, "audit.json", report)
+    with _file_lock(_project_path(workdir, "ledger.json")):
+        ledger_changed = (
+            _atomic_digest(_load_ledger(workdir))
+            != _atomic_digest(ledger_state)
+        )
+        manuscript_changed = (
+            _atomic_digest(extract_cites(tex_path)) != _atomic_digest(ex)
+        )
+        if ledger_changed or manuscript_changed:
+            failures.append({
+                "type": "audit-stale",
+                "detail": ("manuscript or ledger changed during audit; "
+                           "rerun audit"),
+            })
+            report["ok"] = False
+        md_path = _project_path(workdir, "audit.md")
+        _atomic_write(md_path, _audit_markdown(report, ver, coverage))
+        report["report"] = md_path
+        _write_project(workdir, "audit.json", report)
     report["summary"] = (f"{'PASS' if report['ok'] else 'FAIL'}: {len(failures)} failure(s), {len(warnings)} warning(s); "
                          f"{ex['n_instances']} citation instances, {len(missing)} without a support verdict; "
                          f"existence {report['existence_counts']}")
@@ -3825,6 +4324,7 @@ TOOLS = {
     "bib_add": bib_add,
     "verify_bib": verify_bib,
     "extract_cites": extract_cites,
+    "register_claims": register_claims,
     "fetch_text": fetch_text,
     "find_passages": find_passages,
     "record_support": record_support,

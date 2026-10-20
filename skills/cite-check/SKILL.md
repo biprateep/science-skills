@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.2.2"
+  version: "0.3.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -102,9 +102,10 @@ Never edit anything under `mcp/` during a task.
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
 | `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
 | `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
+| `register_claims(tex_path, sentence_id, atoms)` | register a complete partition of exact sentence spans, explicit citation attachments, and declared uncited scope; derives stable atom IDs | no assertion or citation may disappear |
 | `fetch_text(identifier, pdf_path, text_path, version)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
 | `find_passages(identifier, [claims], version)` | abstract + top passages per claim by content-word overlap | what the judge reads first |
-| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
+| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version, tex_path, occurrence_id, atom_id)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
 | `ledger_read(workdir)` | the manuscript's verdicts | resuming |
 | `audit(tex_path, bib_path, require_support)` | the gate: undefined keys, existence failures, missing / stale / negative verdicts; writes `.cite-check/audit.md` | `ok: true` = done |
 
@@ -165,7 +166,16 @@ default registry). Then read the result's `repo` before citing:
 
 Protocol and judge prompt: `references/support.md`. In short:
 
-1. Group instances `by_key`. For each cited paper: `fetch_text(id)`
+1. Inspect each extracted sentence for multiple assertions. Propose atomic
+   spans with `register_claims` before judging a compound sentence; preserve
+   all words, math, citation markers and their original scope. Use explicit
+   uncited spans with a reason for the authors' own assertions; these remain
+   unverified and visible in audit. Read `references/support.md` for offsets
+   and attachment rules. Once atomic mode starts, register every current
+   citation sentence (one span for a simple assertion); this prevents moved
+   or edited claims silently losing their atomic checks. Group attached
+   atoms/instances `by_key`.
+   For each cited paper: `fetch_text(id)`
    (`pdf_path=` for paywalled ones the user has), then
    `find_passages(id, [every claim citing it])`. If the bibliography pins a
    version, pass that same `version` (or versioned identifier) to both tools
@@ -176,8 +186,12 @@ Protocol and judge prompt: `references/support.md`. In short:
    passages and the claims — never the manuscript's argument. Without
    `<spawn-subagent>`, judge in a separate pass after all writing is done,
    passages in front of you, and record `judge: "inline"`.
-3. `record_support` per instance with the exact extracted `claim` and
-   `context`, the judge's verdict, verbatim quotes and note. Changed claims,
+3. `record_support` per attached atom/occurrence with `tex_path`,
+   `occurrence_id`, and registered `atom_id` (omit atom_id only for an
+   undecomposed sentence outside atomic mode). Always pass the exact original extracted `claim`
+   and `context`, the judge's verdict, verbatim quotes and note. The judge
+   must see the full original sentence/context alongside each exact atom;
+   support for one atom cannot cover another. Changed claims,
    context, source snapshots or evidence policies require a fresh judgment;
    legacy ledger records without those bindings are stale. A refusal (quote
    not found, note missing) goes back to the judge with the tool's reason;
