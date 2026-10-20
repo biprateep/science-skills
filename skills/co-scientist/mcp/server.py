@@ -181,11 +181,16 @@ def _check_one_step(lhs_s, rhs_s, cls, symbols, seed, tolerance, samples, domain
     def numeric_sample():
         rng = random.Random(seed)
         f = sp.lambdify(free, diff, "mpmath")
-        lo, hi = domain
         for _ in range(samples):
-            vals = [rng.uniform(lo, hi) for _ in free]
+            values = [_sample_symbol(s, rng, domain) for s in free]
+            vals = [
+                int(v) if v.is_integer else
+                float(v) if v.is_real else complex(v.evalf())
+                for v in values
+            ]
             try:
-                if abs(complex(f(*vals))) >= tolerance:
+                magnitude = abs(complex(f(*vals)))
+                if not math.isfinite(magnitude) or magnitude >= tolerance:
                     return False
             except Exception:
                 return False
@@ -228,37 +233,137 @@ def _check_one_step(lhs_s, rhs_s, cls, symbols, seed, tolerance, samples, domain
     return False, "none", "all tactics exhausted"
 
 
-def _step_worker(q, kwargs, timeout):
-    try:
-        _limit_worker_resources(timeout)
-        q.put(_check_one_step(**kwargs))
-    except Exception as exc:  # parse errors, bad assumptions, ...
-        q.put(("error", "error", f"{type(exc).__name__}: {exc}"))
 
-
-def _check_with_timeout(kwargs, timeout):
-    """sympy.simplify can hang; isolate each step in a killable process."""
-    import multiprocessing as mp
+def _check_with_timeout(kwargs: dict, timeout: float) -> tuple:
+    """Run CAS in a bounded child process on both fork and spawn platforms."""
     try:
-        ctx = mp.get_context("fork")
-    except ValueError:
-        return _check_one_step(**kwargs)  # non-fork platform: no timeout guard
-    q = ctx.Queue()
-    p = ctx.Process(target=_step_worker, args=(q, kwargs, timeout))
-    p.start()
-    p.join(timeout)
-    if p.is_alive():
-        p.terminate()
-        p.join()
-        if kwargs["cls"] in ("A", "N") and not kwargs.get("numeric_only"):
-            retry = dict(kwargs, numeric_only=True)
-            ok, method, detail = _check_with_timeout(retry, max(timeout // 2, 10))
-            if ok is not True:
-                return False, "timeout", f"symbolic timed out after {timeout}s; numeric fallback: {detail}"
-            return ok, method, f"symbolic timed out; {detail}"
+        child = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "--verify-step"],
+            input=json.dumps({"kwargs": kwargs, "timeout": timeout}),
+            text=True, capture_output=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
         return False, "timeout", f"exceeded {timeout}s"
-    return q.get()
+    if child.returncode != 0:
+        return False, "worker_failed", f"CAS worker exited {child.returncode}"
+    try:
+        result = json.loads(child.stdout)
+    except json.JSONDecodeError:
+        return False, "worker_failed", "CAS worker produced invalid output"
+    if not isinstance(result, list) or len(result) != 3:
+        return False, "worker_failed", "CAS worker produced invalid result"
+    return tuple(result)
 
+
+def _run_step_worker() -> None:
+    """Execute the private, JSON-only subprocess protocol."""
+    payload = json.load(sys.stdin)
+    _limit_worker_resources(payload["timeout"])
+    try:
+        result = _check_one_step(**payload["kwargs"])
+    except Exception as exc:  # Isolated CAS boundary: report all library errors.
+        result = ("error", "error", f"{type(exc).__name__}: {exc}")
+    print(json.dumps(result))
+
+
+def _sample_symbol(symbol, rng: random.Random, domain: list):
+    """Draw a finite value satisfying the symbol's declared assumptions."""
+    import sympy as sp
+
+    lo, hi = domain
+    if symbol.is_commutative is False:
+        raise ValueError("numeric sampling cannot test noncommutative symbols")
+    if symbol.is_positive:
+        lo = max(lo, math.nextafter(0.0, math.inf))
+    elif symbol.is_nonnegative:
+        lo = max(lo, 0.0)
+    if symbol.is_negative:
+        hi = min(hi, math.nextafter(0.0, -math.inf))
+    elif symbol.is_nonpositive:
+        hi = min(hi, 0.0)
+    if lo > hi:
+        raise ValueError(f"domain has no values satisfying {symbol}")
+    if symbol.is_integer:
+        lower, upper = math.ceil(lo), math.floor(hi)
+        if symbol.is_even or symbol.is_odd:
+            parity = int(bool(symbol.is_odd))
+            lower += (parity - lower) % 2
+            upper -= (upper - parity) % 2
+            stride = 2
+        else:
+            stride = 1
+        if lower > upper:
+            raise ValueError(f"domain has no admissible integer for {symbol}")
+        if symbol.is_prime:
+            lower = int(sp.nextprime(lower - 1))
+            if lower > upper:
+                raise ValueError(f"domain has no prime for {symbol}")
+        for _ in range(100):
+            value = rng.randrange(lower, upper + 1, stride)
+            if symbol.is_prime:
+                value = int(sp.nextprime(value - 1))
+            if value <= upper and (value != 0 or not symbol.is_nonzero):
+                return sp.Integer(value)
+    else:
+        for _ in range(100):
+            real = sp.Rational(str(rng.uniform(lo, hi)))
+            if symbol.is_irrational:
+                # A small irrational offset, kept strictly inside the domain.
+                width = sp.Rational(str(hi)) - sp.Rational(str(lo))
+                if width <= 0:
+                    break
+                real = (
+                    sp.Rational(str(lo)) + width / 4
+                    + width * sp.sqrt(2) / 4
+                    + width * sp.Rational(str(rng.random())) / 4
+                )
+            if symbol.is_imaginary:
+                value = sp.I * real
+            elif symbol.is_real is not True:
+                value = real + sp.I * sp.Rational(str(rng.uniform(lo, hi)))
+            else:
+                value = real
+            if value != 0 or not (symbol.is_nonzero or symbol.is_imaginary):
+                return value
+    raise ValueError(f"could not sample the domain for {symbol}")
+
+
+def _validate_derivation_settings(
+    steps: list, symbols: dict | None, seed: int, tolerance: float,
+    samples: int, domain: list, step_timeout: int,
+) -> None:
+    """Reject incomplete work and settings that could create vacuous passes."""
+    if not isinstance(steps, list) or not steps:
+        raise ValueError("steps must be a nonempty list")
+    if type(seed) is not int:
+        raise ValueError("seed must be an integer")
+    if type(samples) is not int or samples <= 0:
+        raise ValueError("samples must be a positive integer")
+    for label, value in (("tolerance", tolerance), ("step_timeout", step_timeout)):
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{label} must be positive and finite")
+    if not isinstance(domain, (list, tuple)) or len(domain) != 2:
+        raise ValueError("domain must contain two finite ascending bounds")
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in domain):
+        raise ValueError("domain bounds must be finite numbers")
+    if domain[0] >= domain[1]:
+        raise ValueError("domain bounds must be strictly ascending")
+    if symbols is not None and not isinstance(symbols, dict):
+        raise ValueError("symbols must map names to assumption strings")
+    if any(not isinstance(v, str) for v in (symbols or {}).values()):
+        raise ValueError("symbol assumptions must be strings")
+    _build_symbols(symbols)
+    for step in steps:
+        if not isinstance(step, dict):
+            raise ValueError("each step must be an object")
+        cls = step.get("cls", "S")
+        if not isinstance(cls, str) or cls.upper() not in ("S", "A", "N", "U"):
+            raise ValueError("step class must be S, A, N, or U")
+        if cls.upper() != "U" and any(
+            not isinstance(step.get(side), str) or not step[side].strip()
+            for side in ("lhs", "rhs")
+        ):
+            raise ValueError("checked steps require nonempty lhs and rhs strings")
 
 def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 12345,
                       tolerance: float = 1e-9, samples: int = 20,
@@ -275,7 +380,13 @@ def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 1234
         import sympy  # noqa: F401
     except ImportError:
         return {"error": "sympy not installed — run mcp/setup_mcp.sh"}
-    domain = domain or [0.1, 3.0]
+    domain = [0.1, 3.0] if domain is None else domain
+    try:
+        _validate_derivation_settings(
+            steps, symbols, seed, tolerance, samples, domain, step_timeout
+        )
+    except (ValueError, TypeError) as exc:
+        return {"error": str(exc), "verified": False}
     results, unverifiable, failures = [], [], []
     for step in steps:
         label = step.get("label", "?")
@@ -291,7 +402,8 @@ def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 1234
             return {"error": f"step {label!r}: lhs and rhs are required for class {cls}"}
         ok, method, detail = _check_with_timeout(
             dict(lhs_s=step["lhs"], rhs_s=step["rhs"], cls=cls, symbols=symbols,
-                 seed=seed, tolerance=tolerance, samples=samples, domain=domain),
+                 seed=seed, tolerance=tolerance, samples=samples, domain=domain,
+                 numeric_only=cls == "N"),
             step_timeout)
         if ok == "error":
             return {"error": f"step {label!r}: {detail}"}
@@ -303,7 +415,7 @@ def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 1234
         if not ok:
             failures.append(label)
     import sympy
-    verified = not failures
+    verified = bool(len(results) - len(unverifiable)) and not failures
     return {
         "verified": verified,
         "cas": f"sympy {sympy.__version__}",
@@ -314,7 +426,8 @@ def verify_derivation(steps: list, symbols: dict | None = None, seed: int = 1234
         "summary": ("all checked steps PASS"
                     + (f"; {len(unverifiable)} class-U step(s) need Red-Team review"
                        if unverifiable else "")) if verified
-                   else f"FAIL at step(s) {failures} — locate the error there",
+                   else (f"FAIL at step(s) {failures} — locate the error there"
+                         if failures else "no machine-checkable steps"),
     }
 
 
@@ -635,7 +748,9 @@ def _run_cli(argv):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
+    if sys.argv[1:] == ["--verify-step"]:
+        _run_step_worker()
+    elif len(sys.argv) > 1:
         _run_cli(sys.argv[1:])
     else:
         _run_mcp_server()
