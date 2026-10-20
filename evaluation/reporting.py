@@ -26,12 +26,12 @@ def _observations(values: list[int | float], total: int) -> dict[str, Any]:
 
 
 def _number(value: Any) -> TypeGuard[int | float]:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value >= 0
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
 
 
 def _usage(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -203,6 +203,97 @@ def _index(
     return indexed
 
 
+def _validate_checks(checks: Any) -> None:
+    if not isinstance(checks, list):
+        raise ValueError("Trial checks must be an array")
+    for check in checks:
+        if not isinstance(check, dict):
+            raise ValueError("Each check must be an object")
+        if not isinstance(check.get("id"), str) or not check["id"]:
+            raise ValueError("Check id must be a nonempty string")
+        if check.get("dimension") not in _DIMENSIONS:
+            raise ValueError("Unknown check dimension")
+        if check.get("status") not in ("pass", "fail", "error", "not_run"):
+            raise ValueError("Unknown check status")
+        if type(check.get("critical")) is not bool:
+            raise ValueError("Check critical must be boolean")
+        if not isinstance(check.get("detail", ""), str):
+            raise ValueError("Check detail must be a string")
+
+
+def _validate_measurements(result: dict[str, Any]) -> None:
+    success = result.get("reported_success")
+    if success is not None and type(success) is not bool:
+        raise ValueError("reported_success must be boolean or null")
+    duration = result.get("duration_s")
+    if duration is not None and not _number(duration):
+        raise ValueError("duration_s must be finite, nonnegative, or null")
+    usage = result.get("usage")
+    if usage is None:
+        return
+    if not isinstance(usage, dict):
+        raise ValueError("Trial usage must be an object or null")
+    for name in _USAGE:
+        value = usage.get(name)
+        if value is None:
+            continue
+        if not _number(value):
+            raise ValueError(f"Usage {name} must be finite and nonnegative")
+        if name != "cost_usd" and type(value) is not int:
+            raise ValueError(f"Usage {name} must be an integer")
+
+
+def _validate_trial(result: Any) -> None:
+    if not isinstance(result, dict):
+        raise ValueError("Each trial must be an object")
+    for name in ("skill", "case_id"):
+        if not isinstance(result.get(name), str) or not result[name]:
+            raise ValueError(f"Trial {name} must be a nonempty string")
+    repeat = result.get("repeat")
+    if type(repeat) is not int or repeat < 0:
+        raise ValueError("Trial repeat must be a nonnegative integer")
+    if result.get("status") not in _STATUSES:
+        raise ValueError("Unknown trial status")
+    seed = result.get("seed")
+    if seed is not None and (type(seed) is not int or seed < 0):
+        raise ValueError("Trial seed must be a nonnegative integer or null")
+    fingerprint = result.get("case_fingerprint")
+    if fingerprint is not None and not isinstance(fingerprint, str):
+        raise ValueError("Case fingerprint must be a string")
+    _validate_checks(result.get("checks"))
+    _validate_measurements(result)
+
+
+def _validate_report(report: Any) -> None:
+    if not isinstance(report, dict):
+        raise ValueError("Report must be an object")
+    version = report.get("schema_version")
+    if type(version) is not int or version != 1:
+        raise ValueError("Report schema_version must be integer 1")
+    if report.get("mode") not in ("replay", "live"):
+        raise ValueError("Report mode must be replay or live")
+    runner = report.get("runner")
+    if not isinstance(runner, dict):
+        raise ValueError("Report runner must be an object")
+    fingerprint = runner.get("config_sha256")
+    if fingerprint is not None and not isinstance(fingerprint, str):
+        raise ValueError("Runner configuration fingerprint must be a string")
+    inventory = report.get("inventory")
+    if not isinstance(inventory, dict):
+        raise ValueError("Report inventory must be an object")
+    for name in ("skills", "covered_skills"):
+        skills = inventory.get(name)
+        if not isinstance(skills, list) or not all(
+            isinstance(skill, str) and skill for skill in skills
+        ):
+            raise ValueError(f"Inventory {name} must be an array of names")
+    results = report.get("results")
+    if not isinstance(results, list):
+        raise ValueError("Report results must be an array")
+    for result in results:
+        _validate_trial(result)
+
+
 def _identity(key: tuple[str, str, int]) -> dict[str, Any]:
     return {"skill": key[0], "case_id": key[1], "repeat": key[2]}
 
@@ -268,6 +359,10 @@ def _compare_trials(
             trial_reasons.append("case fingerprint missing")
         elif after["case_fingerprint"] != before["case_fingerprint"]:
             trial_reasons.append("case definition changed")
+        if after.get("seed") is None or before.get("seed") is None:
+            trial_reasons.append("trial seed missing")
+        elif after["seed"] != before["seed"]:
+            trial_reasons.append("trial seed changed")
         if trial_reasons:
             output["incomparable"].append(
                 {**_identity(key), "reasons": trial_reasons}
@@ -295,13 +390,15 @@ def compare(
     """Compare matching trials only when their measurement settings agree.
 
     Args:
-        current: Current validated run report with provenance and results.
-        baseline: Earlier validated run report with provenance and results.
+        current: Current schema version 1 report with provenance and results.
+        baseline: Earlier schema version 1 report with provenance and results.
 
     Returns:
         Comparable outcome changes, exclusions, new/missing trials, and
         paired usage and duration deltas. Duration uses seconds, cost USD.
     """
+    _validate_report(current)
+    _validate_report(baseline)
     current_trials = _index(current["results"])
     baseline_trials = _index(baseline["results"])
     reasons = _compatibility(current, baseline)
@@ -405,12 +502,17 @@ def markdown(report: dict[str, Any]) -> str:
     """Render a concise report distinguishing calibration from live evaluation.
 
     Args:
-        report: Validated run report containing a summary from summarize().
+        report: Schema version 1 run report with results and skill inventory.
 
     Returns:
         Markdown with visible denominators, unknowns, and critical failures.
     """
-    summary = report["summary"]
+    _validate_report(report)
+    summary = summarize(
+        report["results"],
+        report["inventory"]["skills"],
+        report["inventory"]["covered_skills"],
+    )
     label = (
         "Replay calibration (not agent performance)"
         if report["mode"] == "replay"

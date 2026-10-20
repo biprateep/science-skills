@@ -12,6 +12,7 @@ def _trial(status="pass", **updates):
         "skill": "cite-check",
         "case_id": "grounding",
         "repeat": 1,
+        "seed": 42,
         "status": status,
         "checks": [],
         "reported_success": None,
@@ -28,6 +29,10 @@ def _report(results, mode="replay", config="runner-v1"):
         "schema_version": 1,
         "mode": mode,
         "runner": {"config_sha256": config},
+        "inventory": {
+            "skills": ["cite-check", "future"],
+            "covered_skills": ["cite-check"],
+        },
         "results": results,
         "summary": reporting.summarize(
             results, ["cite-check", "future"], ["cite-check"]
@@ -231,3 +236,84 @@ def test_report_functions_do_not_mutate_input():
     reporting.compare(current, current)
     reporting.markdown(current)
     assert current == original
+
+
+@pytest.mark.parametrize("seed", [None, 43])
+def test_seed_mismatch_or_missing_excludes_measurements(seed):
+    baseline = _report([_trial()])
+    current = _report([_trial("fail", seed=seed)])
+    comparison = reporting.compare(current, baseline)
+    assert comparison["comparable"] == 0
+    assert not comparison["regressions"]
+    assert comparison["duration_s"]["delta"] is None
+    assert "seed" in comparison["incomparable"][0]["reasons"][0]
+
+
+@pytest.mark.parametrize("version", [None, True, 1.0, "1", 2])
+def test_unsupported_schema_rejected_by_public_report_apis(version):
+    baseline = _report([_trial()])
+    current = _report([_trial()])
+    current["schema_version"] = version
+    with pytest.raises(ValueError, match="schema_version"):
+        reporting.compare(current, baseline)
+    with pytest.raises(ValueError, match="schema_version"):
+        reporting.compare(baseline, current)
+    with pytest.raises(ValueError, match="schema_version"):
+        reporting.markdown(current)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("results", None),
+        ("results", [None]),
+        ("results", [{}]),
+        ("runner", []),
+        ("inventory", {}),
+        ("mode", "unknown"),
+    ],
+)
+def test_malformed_envelopes_raise_value_error(field, value):
+    report = _report([_trial()])
+    report[field] = value
+    with pytest.raises(ValueError):
+        reporting.compare(report, _report([]))
+    with pytest.raises(ValueError):
+        reporting.markdown(report)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("skill", []),
+        ("repeat", True),
+        ("status", {}),
+        ("checks", None),
+        ("checks", [{}]),
+        ("seed", True),
+        ("duration_s", float("nan")),
+        ("usage", []),
+        ("usage", {"cost_usd": -1}),
+        ("usage", {"tool_calls": 1.5}),
+        ("case_fingerprint", []),
+        ("reported_success", 1),
+    ],
+)
+def test_malformed_trials_raise_value_error(field, value):
+    report = _report([_trial()])
+    report["results"][0][field] = value
+    with pytest.raises(ValueError):
+        reporting.compare(report, _report([]))
+    with pytest.raises(ValueError):
+        reporting.markdown(report)
+
+
+def test_markdown_recomputes_summary_from_observations():
+    report = _report([_trial("fail")])
+    report["summary"] = {"skills": "untrustworthy"}
+    assert "0/1 (0.0%)" in reporting.markdown(report)
+
+
+def test_seed_zero_remains_comparable():
+    report = _report([_trial(seed=0)])
+    assert reporting.compare(report, report)["comparable"] == 1
