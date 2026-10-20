@@ -1,0 +1,92 @@
+"""Finding 11: batch and nested inputs match their advertised MCP schema."""
+
+import asyncio
+import importlib.util
+import json
+import os
+import pathlib
+import sys
+import tempfile
+import unittest
+
+import test_evidence
+
+SERVER = test_evidence.SERVER
+
+
+class InputValidationTest(unittest.TestCase):
+    def test_invalid_batches_are_rejected_before_lookup(self):
+        for value in [[], [None], [""], {}, 42]:
+            self.assertIn("error", SERVER.resolve_citation(value))
+        self.assertEqual(SERVER.resolve_citation(["not-an-id", "also-invalid"])["n"], 2)
+
+    def test_nested_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bib = str(pathlib.Path(directory) / "refs.bib")
+            for items in [
+                [],
+                [{}],
+                [{"identifier": 7}],
+                [{"identifier": "x", "version": 8}],
+            ]:
+                self.assertFalse(SERVER.bib_add(bib, items)["ok"])
+        self.assertIn("error", SERVER.find_passages("x", ["claim"], k=0))
+        self.assertFalse(
+            SERVER.record_support(".", "x", "claim", "SUPPORTS", "x", quotes="a quote")[
+                "recorded"
+            ]
+        )
+
+
+@unittest.skipUnless(importlib.util.find_spec("mcp"), "MCP SDK not installed")
+class ProtocolSchemaTest(unittest.TestCase):
+    def test_stdio_schema_and_batch_call(self):
+        asyncio.run(self.check_protocol())
+
+    async def check_protocol(self):
+        import mcp
+        import mcp.client.stdio
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(
+                os.environ,
+                CITE_CHECK_CACHE=directory,
+                XDG_CONFIG_HOME=directory,
+                CITE_CHECK_KEYRING="off",
+            )
+            for name in ("ADS_API_TOKEN", "ADS_DEV_KEY", "ADS_TOKEN"):
+                environment.pop(name, None)
+            parameters = mcp.StdioServerParameters(
+                command=sys.executable,
+                args=[str(pathlib.Path(SERVER.__file__).resolve())],
+                env=environment,
+            )
+            async with mcp.client.stdio.stdio_client(parameters) as streams:
+                async with mcp.ClientSession(*streams) as session:
+                    await asyncio.wait_for(session.initialize(), 15)
+                    listed = (await session.list_tools()).model_dump(by_alias=True)
+                    schemas = {
+                        tool["name"]: tool["inputSchema"] for tool in listed["tools"]
+                    }
+                    identifier = schemas["resolve_citation"]["properties"]["identifier"]
+                    alternatives = identifier["anyOf"]
+                    self.assertEqual(
+                        {item["type"] for item in alternatives}, {"string", "array"}
+                    )
+                    array = next(
+                        item for item in alternatives if item["type"] == "array"
+                    )
+                    self.assertEqual(array["items"]["type"], "string")
+                    self.assertIn("identifier", json.dumps(schemas["bib_add"]))
+                    self.assertIn("version", json.dumps(schemas["bib_add"]))
+                    result = (
+                        await session.call_tool(
+                            "resolve_citation",
+                            {"identifier": ["not-an-id", "also-invalid"]},
+                        )
+                    ).model_dump(by_alias=True)
+                    self.assertFalse(result.get("isError", False))
+                    content = " ".join(
+                        item.get("text", "") for item in result["content"]
+                    )
+                    self.assertIn('"n"', content)
