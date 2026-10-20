@@ -2298,7 +2298,7 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
     added; an existing key is left alone unless replace=true, which swaps a
     hand-written entry for the official one under the same key.
     """
-    bib_path = os.path.abspath(bib_path)
+    bib_path = os.path.realpath(bib_path)
     text = ""
     if os.path.exists(bib_path):
         with open(bib_path, errors="replace") as fh:
@@ -2918,13 +2918,22 @@ def _text_paths(cid: str) -> tuple:
 
 
 def _load_text_meta(cid: str) -> dict | None:
-    tp, mp = _text_paths(cid)
-    if os.path.exists(mp) and os.path.exists(tp):
-        with open(mp) as fh:
-            meta = json.load(fh)
-        meta["path"] = tp
+    legacy_path, metadata_path = _text_paths(cid)
+    try:
+        with open(metadata_path, encoding="utf-8") as source:
+            meta = json.load(source)
+        digest = meta.get("text_sha256")
+        path = (os.path.join(os.path.dirname(legacy_path), digest + ".txt")
+                if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
+                else legacy_path)
+        with open(path, encoding="utf-8", errors="replace") as source:
+            text = source.read()
+        if digest and hashlib.sha256(text.encode("utf-8")).hexdigest() != digest:
+            return None
+        meta["path"] = path
         return meta
-    return None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def _obtain_text(rec: dict, cid: str) -> tuple:
@@ -3019,14 +3028,18 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
                 "fetched": _now_iso(), "title": rec.get("title", ""),
                 "extraction_version": TEXT_EXTRACTION_VERSION,
                 "version": rec.get("pin") or rec.get("arxiv_version")}
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        snapshot = os.path.join(os.path.dirname(tp), digest + ".txt")
+        meta["text_sha256"] = digest
         with _file_lock(tp):
-            _atomic_write(tp, text)
+            # Immutable snapshot first; metadata is the single commit point.
+            _atomic_write(snapshot, text)
             _atomic_write(mp, json.dumps(meta))
-        meta["path"] = tp
+        meta["path"] = snapshot
     out = dict(meta)
     out["abstract"] = (rec.get("abstract") or "")[:2500]
     if max_chars and out["basis"] != "none":
-        with open(tp, errors="replace") as fh:
+        with open(out["path"], encoding="utf-8", errors="replace") as fh:
             out["text"] = fh.read()[:max_chars]
     if out["basis"] == "none":
         out["note"] = "no text obtainable — pass pdf_path= with your copy of the paper, or judge UNVERIFIABLE"
