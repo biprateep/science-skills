@@ -14,6 +14,7 @@ gate. See skills/cite-check/SKILL.md and references/registries.md.
 
 import concurrent.futures
 import contextlib
+import dataclasses
 import functools
 import tempfile
 from collections import Counter
@@ -1717,7 +1718,7 @@ def _resolve_many(identifiers: list) -> list:
     return results
 
 
-def resolve_citation(identifier) -> dict:
+def resolve_citation(identifier: str | list[str]) -> dict:
     """Resolve an identifier (or a list of them) to real bibliographic metadata.
 
     Accepts arXiv ids, DOIs, ADS bibcodes, OpenAlex W-ids, inspire:nnn, in bare,
@@ -1732,7 +1733,11 @@ def resolve_citation(identifier) -> dict:
     branch or commit (checked to exist).
     """
     many = isinstance(identifier, list)
-    idents = [str(x) for x in (identifier if many else [identifier])]
+    if not isinstance(identifier, (str, list)):
+        return {"resolved": False, "error": "identifier must be a string or list of strings"}
+    idents = identifier if many else [identifier]
+    if not idents or any(not isinstance(item, str) or not item.strip() for item in idents):
+        return {"resolved": False, "error": "provide at least one nonempty identifier string"}
     try:
         res = _resolve_many(idents)
     except RuntimeError as exc:
@@ -2357,7 +2362,7 @@ def _text_identity(rec: dict) -> str:
     return _canonical(rec) + ("@" + version if version else "")
 
 
-def fetch_bibtex(identifier: str, key: str | None = None, prefer: list | None = None,
+def fetch_bibtex(identifier: str, key: str | None = None, prefer: list[str] | None = None,
                  journal_format: int | None = None, tex_path: str | None = None,
                  max_author: int = 10, version: str | None = None) -> dict:
     """Official BibTeX for one identifier, from ADS / Crossref / DataCite /
@@ -2404,8 +2409,17 @@ def _repo_advice(rec: dict) -> dict:
     return out
 
 
+@dataclasses.dataclass
+class BibliographyItem:
+    """An official bibliography request with an optional citation key and pin."""
+
+    identifier: str
+    key: str | None = None
+    version: str | None = None
+
+
 @_serialized_bibliography
-def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_format: int | None = None,
+def bib_add(bib_path: str, items: list[BibliographyItem | str], prefer: list[str] | None = None, journal_format: int | None = None,
             tex_path: str | None = None, replace: bool = False, max_author: int = 10) -> dict:
     """Add official entries to a .bib. items: [{"identifier": …, "key": …}] (key
     optional → Surname2017; "version" pins a GitHub repository's tag, branch
@@ -2421,6 +2435,10 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
             text = fh.read()
     if isinstance(items, (str, dict)):
         items = [items]
+    if not isinstance(items, list) or not items:
+        return {"ok": False, "error": "items must be a nonempty list", "results": []}
+    items = [dataclasses.asdict(item) if isinstance(item, BibliographyItem) else item
+             for item in items]
     parsed = _parse_bib(text)
     if not parsed["complete"]:
         return {"ok": False, "error": "; ".join(parsed["errors"]), "results": []}
@@ -2428,6 +2446,14 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
     for item in items:
         if not isinstance(item, (str, dict)):
             return {"ok": False, "error": "items must be identifiers or objects", "results": []}
+        if isinstance(item, dict):
+            identifier = item.get("identifier") or item.get("id")
+            if not isinstance(identifier, str) or not identifier.strip():
+                return {"ok": False, "error": "each item needs an identifier string", "results": []}
+            if item.get("version") is not None and not isinstance(item["version"], str):
+                return {"ok": False, "error": "version must be a string", "results": []}
+        elif not item.strip():
+            return {"ok": False, "error": "empty identifier", "results": []}
         key = item.get("key") if isinstance(item, dict) else None
         if key is not None:
             if not isinstance(key, str) or not key or re.search(r"[\s,{}()=]", key):
@@ -2671,7 +2697,7 @@ def _search_entry(entry: dict) -> dict:
     return dict(base, status="UNRESOLVED", notes=[f"no registry match for title '{title[:90]}'{closest}"])
 
 
-def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = None,
+def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | None = None,
                search_unresolved: bool = True) -> dict:
     """Existence check of every entry (or `keys`): resolve the entry's own
     DOI / arXiv id / bibcode — or, for software, the GitHub repository in its
@@ -3262,14 +3288,21 @@ def _sentences(text: str) -> list:
     return [s for s in out if len(s) >= 25]
 
 
-def find_passages(identifier: str, claims: list, k: int = 6, window: int = 2,
+def find_passages(identifier: str, claims: list[str] | str, k: int = 6, window: int = 2,
                   version: str | None = None) -> dict:
     """For each claim, the top-k passages (windows of `window` sentences) of
     the cited paper ranked by content-word and bigram overlap, plus the
     abstract. This is what the judge reads before quoting evidence.
     """
+    if (not isinstance(k, int) or isinstance(k, bool) or k < 1
+            or not isinstance(window, int) or isinstance(window, bool) or window < 1):
+        return {"error": "k and window must be positive integers"}
+    if not isinstance(claims, (list, str)) or not claims:
+        return {"error": "claims must be a nonempty string or list of strings"}
     if isinstance(claims, str):
         claims = [claims]
+    if any(not isinstance(claim, str) or not claim.strip() for claim in claims):
+        return {"error": "claims must contain nonempty strings"}
     meta = fetch_text(identifier, version=version)
     if meta.get("error"):
         return meta
@@ -3418,7 +3451,7 @@ def _locate_quote(text: str, quote: str) -> dict:
 
 
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
-                   quotes: list | None = None, note: str | None = None, judge: str | None = None,
+                   quotes: list[str] | None = None, note: str | None = None, judge: str | None = None,
                    file: str | None = None, line: int | None = None,
                    context: str | None = None, version: str | None = None) -> dict:
     """Record a support verdict for one (cite key, claim sentence) pair.
@@ -3430,6 +3463,9 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     what the paper does and does not say; UNVERIFIABLE is refused when full
     text is available. `claim` must be the exact sentence extract_cites gave.
     """
+    if quotes is not None and (not isinstance(quotes, list)
+                              or any(not isinstance(quote, str) for quote in quotes)):
+        return {"recorded": False, "error": "quotes must be a list of strings"}
     verdict = (verdict or "").strip().upper()
     if verdict not in _VERDICTS:
         return {"recorded": False, "error": f"verdict must be one of {list(_VERDICTS)}"}
