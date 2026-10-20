@@ -116,3 +116,12 @@ The orchestrator then calls `record_support` for each item; a refused record
 - **Preprint vs published**: the text fetched is the arXiv version when that
   is what is available; if the claim depends on something changed in the
   journal version, say so in the note.
+
+## Evidence freshness
+
+Pass both `claim` and `context` from `extract_cites` to `record_support`.
+Omitting context means the claim is the entire context, suitable only for an
+isolated sentence. Claim identity preserves mathematical case and Unicode.
+Verdicts bind to the source content digest, source version, extraction version
+and quote policy. The audit rejects changed context, replaced source text and
+legacy verdicts without this binding; obtain a fresh judgment.
