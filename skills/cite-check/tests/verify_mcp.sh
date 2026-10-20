@@ -128,11 +128,14 @@ expect 'r["basis"] == "fulltext" and r["source"].startswith("local:")' "text: lo
 check "passages: ranked" 0 "$PY" "$SERVER" call find_passages "{\"identifier\": \"arXiv:1706.03762\", \"claims\": [\"$CLAIM2\"]}"
 expect '"WMT 2014" in r["results"][0]["passages"][0]["text"]' "passages: top passage carries the claim's content"
 
-check "ledger: SUPPORTS with verbatim quote" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM1\", \"verdict\": \"SUPPORTS\", \"quotes\": [\"dispensing with recurrence and convolutions entirely\"]}"
-check "ledger: SUPPORTS with paraphrase refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"verdict\": \"SUPPORTS\", \"quotes\": [\"the model was trained on ImageNet\"]}"
-check "ledger: UNVERIFIABLE refused when text exists" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"verdict\": \"UNVERIFIABLE\", \"note\": \"could not obtain the text\"}"
-check "ledger: UNSUPPORTED without note refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"verdict\": \"UNSUPPORTED\"}"
-check "ledger: UNSUPPORTED with note" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"verdict\": \"UNSUPPORTED\", \"note\": \"EPR is about quantum mechanics, not machine translation\"}"
+"$PY" "$SERVER" call extract_cites "{\"tex_path\": \"$W/sample.tex\"}" > "$W/cites.json"
+CONTEXT1_JSON=$("$PY" -c 'import json,sys; print(json.dumps(next(c["context"] for c in json.load(open(sys.argv[1]))["cites"] if c["claim"] == sys.argv[2])))' "$W/cites.json" "$CLAIM1")
+CONTEXT2_JSON=$("$PY" -c 'import json,sys; print(json.dumps(next(c["context"] for c in json.load(open(sys.argv[1]))["cites"] if c["claim"] == sys.argv[2])))' "$W/cites.json" "$CLAIM2")
+check "ledger: SUPPORTS with verbatim quote" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM1\", \"context\": $CONTEXT1_JSON, \"verdict\": \"SUPPORTS\", \"quotes\": [\"dispensing with recurrence and convolutions entirely\"]}"
+check "ledger: SUPPORTS with paraphrase refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"SUPPORTS\", \"quotes\": [\"the model was trained on ImageNet\"]}"
+check "ledger: UNVERIFIABLE refused when text exists" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNVERIFIABLE\", \"note\": \"could not obtain the text\"}"
+check "ledger: UNSUPPORTED without note refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNSUPPORTED\"}"
+check "ledger: UNSUPPORTED with note" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNSUPPORTED\", \"note\": \"EPR is about quantum mechanics, not machine translation\"}"
 check "ledger: read" 0 "$PY" "$SERVER" call ledger_read "{\"workdir\": \"$W\"}"
 expect 'len(r["ledger"]["entries"]) == 2' "ledger: two verdicts recorded"
 
