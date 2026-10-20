@@ -116,6 +116,25 @@ in front of it). `record_support` enforces the evidence rules mechanically —
 a SUPPORTS without a verbatim quote is rejected — so the ledger cannot be
 narrated into a pass.
 
+## Bounded verification progress
+
+When the caller needs limited or resumable registry work, use
+`verification_job` with a per-run budget and optional priorities tied to
+current occurrence/atom IDs. Resume with the returned `job_id`; omitted
+priorities and search configuration retain the stored settings. The next
+budget is a fresh grant, and cumulative usage remains visible. Status reads
+perform no network work. See [verification-jobs.md](verification-jobs.md).
+
+The caller must relay every UNCHECKED identity and the ordered support-work
+queue. `identity_complete` does not mean the scientific claims were checked;
+`identity_verified` does not replace export provenance or support evidence.
+Source reading and independent judgments remain outside this job's automated
+work, with no model-call or token-cost accounting invented. Even a finished
+identity queue has `submission_ready=false`. Complete the normal support
+workflow and obtain the existing strict audit before reporting readiness.
+Changed input, ledger or source snapshots require a fresh job; a stored job
+is never an authorization to reuse stale evidence.
+
 ## Reviewing actionable corrections
 
 Call `correction_report(tex_path, bib_path, annotated=true)` when a user

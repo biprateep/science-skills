@@ -14,6 +14,7 @@ gate. See skills/cite-check/SKILL.md and references/registries.md.
 
 import concurrent.futures
 import contextlib
+import contextvars
 import dataclasses
 import functools
 import tempfile
@@ -31,6 +32,7 @@ import sys
 import threading
 import time
 import unicodedata
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,8 +40,9 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Literal
+from collections.abc import Callable
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -84,7 +87,9 @@ def _file_lock(path: str):
             lock.flush()
         else:
             import fcntl
-        deadline = time.monotonic() + 120
+        budget = _request_budget.get()
+        lock_timeout = min(120, budget.remaining()) if budget else 120
+        deadline = time.monotonic() + lock_timeout
         while True:
             try:
                 if os.name == "nt":
@@ -96,7 +101,10 @@ def _file_lock(path: str):
             except (BlockingIOError, OSError):
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"timed out locking {path}")
-                time.sleep(0.02)
+                if budget is not None:
+                    budget.sleep(min(0.02, budget.remaining() / 2))
+                else:
+                    time.sleep(0.02)
         try:
             yield
         finally:
@@ -411,13 +419,317 @@ def _user_agent() -> str:
     return ua + (f"; mailto:{_mailto()})" if _mailto() else ")")
 
 
+@dataclasses.dataclass
+class VerificationBudget:
+    """Per-run admission limits; seconds are a cooperative deadline.
+
+    Known public registry service fees are estimated as zero under the
+    documented pricing policy. Actual billed costs are not measured.
+    """
+
+    __pydantic_config__ = {"extra": "forbid"}
+
+    max_requests: int = dataclasses.field(default=50, metadata={"strict": True})
+    max_searches: int = dataclasses.field(default=10, metadata={"strict": True})
+    max_seconds: float = dataclasses.field(
+        default=60.0, metadata={"strict": True}
+    )
+    max_cost_usd: float | None = dataclasses.field(
+        default=0.0, metadata={"strict": True}
+    )
+
+
+@dataclasses.dataclass
+class ClaimPriority:
+    """Caller-assigned scheduling advice for one current support requirement."""
+
+    __pydantic_config__ = {"extra": "forbid"}
+
+    occurrence_id: str
+    reason: str
+    priority: Literal["high", "normal", "low"] = "high"
+    atom_id: str | None = None
+
+
+class BudgetExhaustedError(RuntimeError):
+    """A registry operation was not admitted; this is never absence evidence."""
+
+
+# This context is per invocation, explicitly copied into existing workers.
+# The shared budget object serializes reservations within one job only.
+_request_budget: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "citation_request_budget", default=None
+)
+_PUBLIC_ZERO_FEE_HOSTS = frozenset({
+    "api.adsabs.harvard.edu", "api.crossref.org", "api.datacite.org",
+    "api.github.com", "api.openalex.org", "export.arxiv.org", "arxiv.org",
+    "inspirehep.net", "github.com", "raw.githubusercontent.com",
+})
+_JOB_POLICY = "prioritized-identity-v1"
+_PRICING_POLICY = "public-registry-service-fee-zero-v1"
+
+
+def _validated_budget(
+    value: VerificationBudget | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate CLI input as strictly as the native nested schema."""
+    defaults = dataclasses.asdict(VerificationBudget())
+    supplied = (
+        dataclasses.asdict(value)
+        if isinstance(value, VerificationBudget)
+        else value
+    )
+    if supplied is None:
+        return defaults
+    if not isinstance(supplied, dict) or set(supplied) - set(defaults):
+        raise ValueError("budget must contain only documented limits")
+    defaults.update(supplied)
+    for name in ("max_requests", "max_searches"):
+        if type(defaults[name]) is not int or defaults[name] < 0:
+            raise ValueError(f"{name} must be a nonnegative integer")
+    for name in ("max_seconds", "max_cost_usd"):
+        number = defaults[name]
+        if number is None and name == "max_cost_usd":
+            continue
+        if (
+            type(number) not in (int, float)
+            or not math.isfinite(number)
+            or number < 0
+        ):
+            raise ValueError(f"{name} must be a finite nonnegative number")
+    return defaults
+
+
+class _RequestBudget:
+    """Share and durably account admission reservations across workers."""
+
+    def __init__(
+        self, limits: dict[str, Any], persist: Callable[[dict[str, Any]], None]
+    ) -> None:
+        self.limits = limits
+        self.persist = persist
+        self.started = time.monotonic()
+        self.lock = threading.RLock()
+        self.requests = 0
+        self.searches = 0
+        self.http_cache_hits = 0
+        self.unknown_price_requests = 0
+        self.stopped: str | None = None
+
+    def usage(self) -> dict[str, Any]:
+        """Return elapsed time and conservative admitted work counts."""
+        with self.lock:
+            elapsed = max(0.0, time.monotonic() - self.started)
+            return {
+                "requests": self.requests,
+                "searches": self.searches,
+                "http_cache_hits": self.http_cache_hits,
+                "elapsed_seconds": elapsed,
+                "unknown_price_requests": self.unknown_price_requests,
+                "estimated_service_cost_usd": None
+                if self.unknown_price_requests
+                else 0.0,
+                "actual_billed_cost_usd": None,
+                "model_tokens": None,
+                "model_calls": 0,
+                "external_model_cost_usd": None,
+                "deadline_exceeded": elapsed > self.limits["max_seconds"],
+                "deadline_overshoot_seconds": max(
+                    0.0, elapsed - self.limits["max_seconds"]
+                ),
+                "stop_reason": self.stopped,
+            }
+
+    def stop(self, reason: str) -> None:
+        self.stopped = self.stopped or reason
+        raise BudgetExhaustedError(self.stopped)
+
+    def remaining(self) -> float:
+        """Refuse work after any budget denial or cooperative deadline."""
+        with self.lock:
+            if self.stopped:
+                raise BudgetExhaustedError(self.stopped)
+            remaining = self.limits["max_seconds"] - (
+                time.monotonic() - self.started
+            )
+            if remaining <= 0:
+                self.stop("deadline")
+            return remaining
+
+    def sleep(self, seconds: float) -> None:
+        """Do not begin throttle/backoff waits exceeding the remaining grant."""
+        with self.lock:
+            if seconds >= self.remaining():
+                self.stop("deadline-before-wait")
+        time.sleep(seconds)
+        self.remaining()
+
+    def cache_hit(self) -> None:
+        """Count HTTP-cache reuse separately from request reservations."""
+        with self.lock:
+            self.remaining()
+            self.http_cache_hits += 1
+            self.persist(self.usage())
+
+    def reserve(self, kind: str, url: str | None = None) -> None:
+        """Persist an upper-bound reservation before sending any operation."""
+        with self.lock:
+            self.remaining()
+            field = "requests" if kind == "request" else "searches"
+            if getattr(self, field) >= self.limits["max_" + field]:
+                self.stop(field)
+            unknown = False
+            if kind == "request":
+                parsed = urllib.parse.urlparse(url or "")
+                unknown = (
+                    parsed.scheme not in {"https", "http"}
+                    or parsed.hostname not in _PUBLIC_ZERO_FEE_HOSTS
+                )
+                if unknown and self.limits["max_cost_usd"] is not None:
+                    self.stop("unknown-request-price")
+            setattr(self, field, getattr(self, field) + 1)
+            self.unknown_price_requests += int(unknown)
+            self.persist(self.usage())
+            self.remaining()
+
+
+def _context_map(
+    executor: Any, function: Callable[..., Any], values: Any
+) -> list[Any]:
+    """Propagate invocation-local limits to each existing executor worker."""
+    futures = [
+        executor.submit(contextvars.copy_context().run, function, value)
+        for value in values
+    ]
+    return [future.result() for future in futures]
+
+
+def _budget_sleep(seconds: float) -> None:
+    budget = _request_budget.get()
+    if budget is None:
+        time.sleep(seconds)
+    else:
+        budget.sleep(seconds)
+
+
+class _BudgetRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Disable implicit redirects so each physical request is admitted here."""
+
+    def redirect_request(
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> None:
+        del req, fp, code, msg, headers, newurl
+        return None
+
+
+def _budget_open(request: Any, timeout: float) -> Any:
+    """Close redirect bodies and admit each hop immediately before opening."""
+    budget = _request_budget.get()
+    if budget is None:
+        return urllib.request.urlopen(request, timeout=timeout)
+    opener = urllib.request.build_opener(_BudgetRedirectHandler())
+    visited: dict[str, int] = {}
+    while True:
+        budget.reserve("request", request.full_url)
+        try:
+            return opener.open(
+                request, timeout=min(timeout, budget.remaining())
+            )
+        except urllib.error.HTTPError as error:
+            location = error.headers.get("location") or error.headers.get("uri")
+            if error.code not in {301, 302, 303, 307, 308} or not location:
+                raise
+            try:
+                target = urllib.parse.urljoin(request.full_url, location)
+                if urllib.parse.urlparse(target).scheme not in {
+                    "http",
+                    "https",
+                }:
+                    budget.stop("unsupported-redirect-protocol")
+                target = urllib.parse.quote(target, safe=":/?#[]@!$&'()*+,;=%")
+                visited[target] = visited.get(target, 0) + 1
+                if visited[target] > 4 or sum(visited.values()) > 10:
+                    raise RuntimeError("redirect limit exceeded")
+                response_headers: Any = error.headers
+                redirected = (
+                    urllib.request.HTTPRedirectHandler().redirect_request(
+                        request,
+                        error,
+                        error.code,
+                        error.msg,
+                        response_headers,
+                        target,
+                    )
+                )
+                if redirected is None:
+                    raise RuntimeError("redirect method refused")
+                if (
+                    urllib.parse.urlparse(target).scheme == "http"
+                    and urllib.parse.urlparse(request.full_url).scheme
+                    == "https"
+                ):
+                    budget.stop("insecure-redirect-downgrade")
+                if (
+                    urllib.parse.urlparse(target).netloc
+                    != urllib.parse.urlparse(request.full_url).netloc
+                ):
+                    for name in ("Authorization", "Cookie"):
+                        redirected.remove_header(name)
+                request = redirected
+            finally:
+                error.close()
+            # No unbounded drain of a redirect body. Throttle then reserve
+            # at the top of the loop, with a fresh remaining-time check.
+            _throttle(urllib.parse.urlparse(request.full_url).netloc)
+
+
+def _budget_read(response: Any) -> bytes:
+    """Check cooperative deadline between bounded reads, including errors."""
+    budget = _request_budget.get()
+    if budget is None:
+        return response.read()
+    chunks: list[bytes] = []
+    while True:
+        remaining = budget.remaining()
+        stream = response
+        socket = None
+        for _ in range(3):
+            stream = getattr(stream, "fp", None)
+            socket = getattr(getattr(stream, "raw", None), "_sock", None)
+            if socket is not None or stream is None:
+                break
+        if socket is not None:
+            current = socket.gettimeout()
+            socket.settimeout(
+                min(current, remaining) if current is not None else remaining
+            )
+        read = getattr(response, "read1", response.read)
+        chunk = read(65536)
+        budget.remaining()
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
 def _throttle(host: str) -> None:
     interval = _HOST_INTERVAL.get(host, 0.2)
-    with _host_lock:
+    budget = _request_budget.get()
+    acquired = (
+        _host_lock.acquire(timeout=budget.remaining())
+        if budget
+        else _host_lock.acquire()
+    )
+    if not acquired:
+        budget.stop("deadline-waiting-for-throttle")
+    try:
+        if budget is not None:
+            budget.remaining()
         wait = _host_last.get(host, 0.0) + interval - time.monotonic()
         if wait > 0:
-            time.sleep(wait)
+            _budget_sleep(wait)
         _host_last[host] = time.monotonic()
+    finally:
+        _host_lock.release()
 
 
 def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dict | None = None,
@@ -428,6 +740,9 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
     identifier stays fabricated; a freshly minted DOI shows up tomorrow).
     429/5xx are retried with backoff. Network failure raises RuntimeError.
     """
+    budget = _request_budget.get()
+    if budget is not None:
+        budget.remaining()
     hdrs = {"User-Agent": _user_agent(), "Accept": "application/json, text/plain, */*"}
     hdrs.update(headers or {})
     cache_key = hashlib.sha1(
@@ -440,6 +755,8 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
                 hit = json.load(fh)
             ttl = META_TTL if hit["status"] == 200 else NEG_TTL
             if time.time() - hit["at"] < ttl:
+                if budget is not None:
+                    budget.cache_hit()
                 return hit["status"], hit["body"]
         except (OSError, ValueError, KeyError):
             pass
@@ -449,8 +766,8 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
         _throttle(host)
         req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read()
+            with _budget_open(req, timeout=timeout) as resp:
+                raw = _budget_read(resp)
                 status = resp.status
             body = raw if binary else raw.decode("utf-8", errors="replace")
             if cache and not binary and status == 200:
@@ -465,10 +782,16 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
                     delay = float(retry_after) if retry_after else 2.0 ** attempt
                 except ValueError:
                     delay = 2.0 ** attempt
-                time.sleep(min(delay, 30))
+                exc.close()
+                _budget_sleep(min(delay, 30))
                 last_error = exc
                 continue
-            body = b"" if binary else exc.read().decode("utf-8", errors="replace")
+            try:
+                body = (b"" if binary else _budget_read(exc).decode(
+                    "utf-8", errors="replace"
+                ))
+            finally:
+                exc.close()
             if cache and not binary and exc.code == 404:
                 _atomic_write(path, json.dumps(
                     {"status": 404, "body": "", "at": time.time(), "url": url}
@@ -477,7 +800,7 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
             if attempt < retries:
-                time.sleep(2.0 ** attempt)
+                _budget_sleep(2.0 ** attempt)
                 continue
     raise RuntimeError(f"{host}: {type(last_error).__name__}: {last_error}")
 
@@ -1666,9 +1989,9 @@ def _resolve_many(identifiers: list) -> list:
             return v, {"error": str(exc)}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        doi_found = dict(ex.map(by_doi, dois))
-        other_found = dict(ex.map(by_other, others))
-        repo_found = dict(ex.map(by_repo, repos))
+        doi_found = dict(_context_map(ex, by_doi, dois))
+        other_found = dict(_context_map(ex, by_other, others))
+        repo_found = dict(_context_map(ex, by_repo, repos))
 
     ads, ads_error = {}, None
     if _ads_token():
@@ -1970,13 +2293,18 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
 
     def run(name):
         try:
+            budget = _request_budget.get()
+            if budget is not None:
+                budget.reserve("search")
             return name, fns[name](**kwargs), None
         except Exception as exc:  # one registry down must not sink the search
             return name, [], f"{type(exc).__name__}: {exc}"
 
     records, errors = [], {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        for name, recs, err in ex.map(run, [r for r in enabled if r in fns]):
+        for name, recs, err in _context_map(
+            ex, run, [r for r in enabled if r in fns]
+        ):
             records += recs
             if err:
                 errors[name] = err
@@ -2864,7 +3192,7 @@ def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | Non
             to_search.append(e)
     if to_search and search_unresolved:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            out += list(ex.map(_search_entry, to_search))
+            out += list(_context_map(ex, _search_entry, to_search))
     else:
         out += [{"key": e["key"], "status": "UNRESOLVED", "via": None, "provenance": e["provenance"],
                  "notes": ["no identifier; search skipped"]} for e in to_search]
@@ -5745,6 +6073,853 @@ def audit(
     return report
 
 
+def _job_priorities(
+    values: list[Any] | None, requirements: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate scheduling advice against current occurrence/atom pairs."""
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        raise ValueError("priorities must be a list")
+    targets = {
+        (item["occurrence_id"], item.get("atom_id")) for item in requirements
+    }
+    seen = set()
+    result = []
+    for raw in values:
+        value = (
+            dataclasses.asdict(raw) if isinstance(raw, ClaimPriority) else raw
+        )
+        if (
+            not isinstance(value, dict)
+            or not {"occurrence_id", "reason"} <= set(value)
+            or set(value) - {"occurrence_id", "atom_id", "priority", "reason"}
+        ):
+            raise ValueError("priority needs a current occurrence and reason")
+        value = dict(value)
+        value.setdefault("atom_id", None)
+        value.setdefault("priority", "high")
+        occurrence, atom = value["occurrence_id"], value["atom_id"]
+        if not isinstance(occurrence, str) or (
+            atom is not None and not isinstance(atom, str)
+        ):
+            raise ValueError("priority target IDs must be strings")
+        target = (occurrence, atom)
+        if target not in targets or target in seen:
+            raise ValueError(
+                "priority target is missing, stale, ambiguous or duplicated"
+            )
+        if (
+            value["priority"] not in ("high", "normal", "low")
+            or not isinstance(value["reason"], str)
+            or len(value["reason"].strip()) < 8
+        ):
+            raise ValueError(
+                "priority must be high/normal/low with a meaningful reason"
+            )
+        seen.add(target)
+        result.append(value)
+    return sorted(
+        result,
+        key=lambda item: (item["occurrence_id"], item["atom_id"] or ""),
+    )
+
+
+def _job_scan(
+    tex_path: str,
+    bib_path: str | None,
+    priorities: list[Any] | None,
+    search_unresolved: bool,
+) -> dict[str, Any]:
+    """Build identity and support obligations from exact snapshots."""
+    extracted = extract_cites(tex_path)
+    if not extracted.get("complete"):
+        raise ValueError(
+            extracted.get("error", "incomplete manuscript extraction")
+        )
+    bibs = [os.path.abspath(bib_path)] if bib_path else extracted["bib_files"]
+    if not bibs and extracted["keys"]:
+        raise ValueError("no bibliography; declare it or provide bib_path")
+    with _file_lock(_project_path(os.path.dirname(tex_path), "ledger.json")):
+        ledger = _audit_ledger(os.path.dirname(tex_path))
+        ledger_digest = _audit_file_digest(
+            _project_path(os.path.dirname(tex_path), "ledger.json")
+        )
+    files = dict(extracted["source_digests"])
+    entries: dict[str, tuple[str, dict[str, Any]]] = {}
+    for path in bibs:
+        with open(path, "rb") as source:
+            raw = source.read()
+        files[path] = hashlib.sha256(raw).hexdigest()
+        parsed = _parse_bib(raw.decode("utf-8"))
+        if not parsed["complete"]:
+            raise ValueError(
+                "incomplete bibliography: " + "; ".join(parsed["errors"])
+            )
+        for entry in parsed["entries"]:
+            if entry["key"] in entries:
+                raise ValueError("duplicate bibliography key: " + entry["key"])
+            entries[entry["key"]] = (path, entry)
+    requirements = _support_requirements(extracted, ledger)
+    validated_priorities = _job_priorities(priorities, requirements)
+    assigned = {
+        (item["occurrence_id"], item["atom_id"]): item
+        for item in validated_priorities
+    }
+    ranks = {"high": 0, "normal": 1, "low": 2}
+    support = []
+    for required in requirements:
+        target = (required["occurrence_id"], required.get("atom_id"))
+        priority = assigned.get(
+            target,
+            {
+                "priority": "normal",
+                "reason": "Default scheduling order; no "
+                "consequence assessment.",
+            },
+        )
+        support.append(
+            {
+                "id": _atomic_digest(["support", *target]),
+                "key": required["key"],
+                "occurrence_id": target[0],
+                "atom_id": target[1],
+                "sentence_id": required["sentence_id"],
+                "file": required["file"],
+                "line": required["line"],
+                "claim": required["claim"],
+                "context": required["context"],
+                "assertion": required.get("atom", {}).get(
+                    "text", required["claim"]
+                ),
+                "decomposition_stale": bool(
+                    required.get("decomposition_stale")
+                ),
+                "priority": priority["priority"],
+                "priority_reason": priority["reason"],
+                "priority_source": "caller"
+                if target in assigned
+                else "default",
+                "status": "UNCHECKED",
+                "assessment_scope": "not assessed by this registry-only job",
+                "next_action": "Use the current strict audit to inspect "
+                "existing judgments. Retrieve the "
+                "correct source/version and obtain any "
+                "missing independent atom/occurrence "
+                "judgment; register stale decompositions "
+                "first.",
+            }
+        )
+    support.sort(
+        key=lambda item: (
+            ranks[item["priority"]],
+            item["file"],
+            item["line"],
+            item["id"],
+        )
+    )
+    keys = set(extracted["keys"]) - {"*"}
+    if any(item["key"] == "*" for item in extracted["cites"]):
+        keys.update(entries)
+    identity = []
+    for key in sorted(keys):
+        path, entry = entries.get(key, (None, {}))
+        related = [item for item in support if item["key"] == key]
+        identity_priority = min(
+            (item["priority"] for item in related),
+            key=lambda value: ranks[value],
+            default="normal",
+        )
+        identity.append(
+            {
+                "id": _atomic_digest(["identity", path, key, entry.get("raw")]),
+                "key": key,
+                "bib_path": path,
+                "priority": identity_priority,
+                "support_ids": [item["id"] for item in related],
+                "occurrence_ids": [
+                    item["occurrence_id"]
+                    for item in extracted["cites"]
+                    if item["key"] == key
+                ],
+                "status": "UNCHECKED",
+                "result": None,
+                "attempts": 0,
+                "reason": "not attempted"
+                if path
+                else "undefined citation key; repair bibliography",
+            }
+        )
+    identity.sort(key=lambda item: (ranks[item["priority"]], item["key"]))
+    sources = {}
+    for judgment in ledger["entries"].values():
+        identifier = judgment.get("source_cache_id", judgment["id"])
+        sources[identifier] = _current_source_identity(identifier)
+    snapshot = {"files": files, "ledger": ledger_digest, "sources": sources}
+    if not _correction_snapshot_current(snapshot, os.path.dirname(tex_path)):
+        raise ValueError("inputs changed while scanning; rescan")
+    return {
+        "config": {
+            "tex_path": tex_path,
+            "bib_path": os.path.abspath(bib_path) if bib_path else None,
+            "priorities": validated_priorities,
+            "search_unresolved": search_unresolved,
+            "tool_version": VERSION,
+            "job_policy": _JOB_POLICY,
+            "pricing_policy": _PRICING_POLICY,
+        },
+        "snapshot": snapshot,
+        "identity_queue": identity,
+        "support_queue": support,
+        "uncited_scope": [
+            dict(atom, verified=False)
+            for registration in ledger.get("decompositions", {}).values()
+            if registration.get("tex_path") == tex_path
+            and registration["sentence_id"]
+            in {item["sentence_id"] for item in extracted["sentences"]}
+            for atom in registration["atoms"]
+            if atom["kind"] == "uncited"
+        ],
+    }
+
+
+def _job_write(path: str, job: dict[str, Any]) -> None:
+    """Atomically save state with a corruption-detection checksum."""
+    job["updated"] = _now_iso()
+    payload = dict(job)
+    payload["integrity"] = _atomic_digest(job)
+    _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _job_valid_result(result: Any, key: str) -> bool:
+    """Validate live and persisted registry outcomes before crediting work."""
+    if not isinstance(result, dict) or result.get("key") != key:
+        return False
+    status = result.get("status")
+    if status not in (
+        "VERIFIED",
+        "FOUND",
+        "PROBABLE",
+        "MISMATCH",
+        "NOT_FOUND",
+        "UNRESOLVED",
+    ):
+        return False
+    if status in ("VERIFIED", "FOUND", "PROBABLE", "MISMATCH"):
+        identifier = result.get("id")
+        if (
+            not isinstance(identifier, str)
+            or _classify(identifier)[0] == "unknown"
+        ):
+            return False
+    if "ids" in result and (
+        not isinstance(result["ids"], dict)
+        or any(not isinstance(value, str) for value in result["ids"].values())
+    ):
+        return False
+    if "notes" in result and (
+        not isinstance(result["notes"], list)
+        or any(not isinstance(value, str) for value in result["notes"])
+    ):
+        return False
+    return True
+
+
+def _job_load(path: str, identifier: str) -> dict[str, Any]:
+    """Reject corrupt job metadata, progress states and accounting."""
+    with open(path, encoding="utf-8") as source:
+        job = json.load(source)
+    if not isinstance(job, dict):
+        raise ValueError("job state must be an object")
+    integrity = job.pop("integrity", None)
+    if integrity != _atomic_digest(job):
+        raise ValueError("job state checksum mismatch")
+    if (
+        set(job)
+        != {
+            "schema_version",
+            "job_id",
+            "created",
+            "updated",
+            "config",
+            "snapshot",
+            "identity_queue",
+            "support_queue",
+            "uncited_scope",
+            "runs",
+        }
+        or type(job["schema_version"]) is not int
+        or job["schema_version"] != 1
+        or job["job_id"] != identifier
+    ):
+        raise ValueError("unsupported or malformed job state")
+    if not isinstance(job["config"], dict) or set(job["config"]) != {
+        "tex_path",
+        "bib_path",
+        "priorities",
+        "search_unresolved",
+        "tool_version",
+        "job_policy",
+        "pricing_policy",
+    }:
+        raise ValueError("invalid job configuration")
+    config = job["config"]
+    if (
+        not isinstance(config["tex_path"], str)
+        or (
+            config["bib_path"] is not None
+            and not isinstance(config["bib_path"], str)
+        )
+        or not isinstance(config["priorities"], list)
+        or type(config["search_unresolved"]) is not bool
+    ):
+        raise ValueError("invalid job configuration values")
+    if not isinstance(job["runs"], list) or not isinstance(
+        job["identity_queue"], list
+    ):
+        raise ValueError("invalid job progress containers")
+    identity_fields = {
+        "id",
+        "key",
+        "bib_path",
+        "priority",
+        "support_ids",
+        "occurrence_ids",
+        "status",
+        "result",
+        "attempts",
+        "reason",
+    }
+    for item in job["identity_queue"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != identity_fields
+            or not isinstance(item["key"], str)
+            or not item["key"]
+            or not isinstance(item["id"], str)
+            or re.fullmatch(r"[a-f0-9]{64}", item["id"]) is None
+            or (
+                item["bib_path"] is not None
+                and not isinstance(item["bib_path"], str)
+            )
+            or item["priority"] not in ("high", "normal", "low")
+            or any(
+                not isinstance(item[name], list)
+                or any(not isinstance(value, str) for value in item[name])
+                for name in ("support_ids", "occurrence_ids")
+            )
+        ):
+            raise ValueError("malformed identity queue entry")
+        if (
+            not isinstance(item, dict)
+            or item.get("status") not in ("UNCHECKED", "RUNNING", "ASSESSED")
+            or type(item.get("attempts")) is not int
+            or item["attempts"] < 0
+            or not isinstance(item.get("reason"), str)
+        ):
+            raise ValueError("invalid identity progress")
+        result = item.get("result")
+        if result is not None and not _job_valid_result(result, item["key"]):
+            raise ValueError("invalid identity result")
+        if item["status"] == "ASSESSED" and (
+            result is None or result["status"] == "UNRESOLVED"
+        ):
+            raise ValueError("incomplete result marked assessed")
+    for run in job["runs"]:
+        if (
+            not isinstance(run, dict)
+            or set(run) != {"run_id", "limits", "usage", "state"}
+            or run["state"]
+            not in ("RUNNING", "FINISHED", "PAUSED", "INTERRUPTED")
+        ):
+            raise ValueError("invalid job run")
+        if not isinstance(run["limits"], dict) or set(run["limits"]) != set(
+            dataclasses.asdict(VerificationBudget())
+        ):
+            raise ValueError("incomplete saved budget limits")
+        limits = _validated_budget(run["limits"])
+        usage = run["usage"]
+        usage_fields = {
+            "requests",
+            "searches",
+            "http_cache_hits",
+            "elapsed_seconds",
+            "unknown_price_requests",
+            "estimated_service_cost_usd",
+            "actual_billed_cost_usd",
+            "model_tokens",
+            "model_calls",
+            "external_model_cost_usd",
+            "deadline_exceeded",
+            "deadline_overshoot_seconds",
+            "stop_reason",
+        }
+        if not isinstance(usage, dict) or set(usage) != usage_fields:
+            raise ValueError("invalid usage accounting")
+        for name in (
+            "requests",
+            "searches",
+            "http_cache_hits",
+            "unknown_price_requests",
+            "model_calls",
+        ):
+            if type(usage.get(name)) is not int or usage[name] < 0:
+                raise ValueError("invalid usage counter")
+        for name in ("elapsed_seconds", "deadline_overshoot_seconds"):
+            if (
+                type(usage.get(name)) not in (int, float)
+                or not math.isfinite(usage[name])
+                or usage[name] < 0
+            ):
+                raise ValueError("invalid elapsed-time accounting")
+        if (
+            usage["requests"] > limits["max_requests"]
+            or usage["searches"] > limits["max_searches"]
+            or usage["unknown_price_requests"] > usage["requests"]
+            or usage["model_calls"] != 0
+            or usage.get("actual_billed_cost_usd") is not None
+            or usage.get("model_tokens") is not None
+            or usage.get("external_model_cost_usd") is not None
+        ):
+            raise ValueError("invalid budget accounting")
+        elapsed = usage["elapsed_seconds"]
+        if (
+            type(usage.get("deadline_exceeded")) is not bool
+            or usage["deadline_exceeded"] != (elapsed > limits["max_seconds"])
+            or usage["deadline_overshoot_seconds"]
+            != max(0.0, elapsed - limits["max_seconds"])
+            or (
+                usage.get("stop_reason") is not None
+                and not isinstance(usage["stop_reason"], str)
+            )
+        ):
+            raise ValueError("invalid deadline accounting")
+        expected_cost = None if usage["unknown_price_requests"] else 0.0
+        if (
+            usage.get("estimated_service_cost_usd") != expected_cost
+            or (
+                expected_cost is not None
+                and type(usage["estimated_service_cost_usd"])
+                not in (int, float)
+            )
+            or (
+                limits["max_cost_usd"] is not None
+                and usage["unknown_price_requests"]
+            )
+        ):
+            raise ValueError("invalid cost accounting")
+    return job
+
+
+def _job_same_scan(job: dict[str, Any], scan: dict[str, Any]) -> bool:
+    """Compare immutable queue/config data separately from recorded progress."""
+    mutable = {"status", "result", "attempts", "reason"}
+
+    def identity(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in item.items() if key not in mutable}
+            for item in items
+        ]
+
+    return all(
+        job[name] == scan[name]
+        for name in ("config", "snapshot", "support_queue", "uncited_scope")
+    ) and identity(job["identity_queue"]) == identity(scan["identity_queue"])
+
+
+def _job_paths_safe(path: str, snapshot: dict[str, Any]) -> None:
+    """Reject job/lock aliases to manuscript, bibliography or source inputs."""
+    inputs = list(snapshot["files"])
+    inputs.append(os.path.join(os.path.dirname(path), "ledger.json"))
+    for identifier in snapshot["sources"]:
+        metadata = _load_text_meta(identifier)
+        if metadata and metadata.get("path"):
+            inputs.append(metadata["path"])
+    for output in (path, path + ".lock"):
+        if os.path.islink(output):
+            raise ValueError("job output is a symlink")
+        for source in inputs:
+            if os.path.realpath(output) == os.path.realpath(source) or (
+                os.path.exists(output)
+                and os.path.exists(source)
+                and os.path.samefile(output, source)
+            ):
+                raise ValueError("job output aliases an input")
+
+
+def _job_result(job: dict[str, Any], path: str) -> dict[str, Any]:
+    """Report identity progress without implying scientific verification."""
+    queue = [
+        dict(
+            item,
+            status="UNCHECKED",
+            result=None,
+            reason="interrupted saved run; identity remains unchecked",
+        )
+        if item["status"] == "RUNNING"
+        else item
+        for item in job["identity_queue"]
+    ]
+    total = {
+        name: sum(run["usage"][name] for run in job["runs"])
+        for name in (
+            "requests",
+            "searches",
+            "http_cache_hits",
+            "unknown_price_requests",
+            "elapsed_seconds",
+        )
+    }
+    total.update(
+        estimated_service_cost_usd=None
+        if total["unknown_price_requests"]
+        else 0.0,
+        actual_billed_cost_usd=None,
+        model_calls=0,
+        model_tokens=None,
+        external_model_cost_usd=None,
+    )
+    result = {
+        "ok": True,
+        "job_id": job["job_id"],
+        "job_path": path,
+        "scope": "registry identity only; support is not assessed by this job",
+        "submission_ready": False,
+        "identity_complete": all(
+            item["status"] == "ASSESSED" for item in queue
+        ),
+        "identity_verified": all(
+            item["status"] == "ASSESSED"
+            and item["result"]["status"] == "VERIFIED"
+            for item in queue
+        ),
+        "identity_expected": len(queue),
+        "identity_assessed": sum(
+            item["status"] == "ASSESSED" for item in queue
+        ),
+        "identity_unchecked": sum(
+            item["status"] != "ASSESSED" for item in queue
+        ),
+        "support_pending": len(job["support_queue"]),
+        "identity_queue": queue,
+        "support_queue": job["support_queue"],
+        "uncited_scope": job["uncited_scope"],
+        "config": job["config"],
+        "cumulative_usage": total,
+        "runs": job["runs"],
+        "elapsed_accounting_complete": all(
+            run["state"] not in ("INTERRUPTED", "RUNNING")
+            for run in job["runs"]
+        ),
+        "deadline_semantics": "cooperative; OS/DNS and file operations "
+        "may overshoot; elapsed and overshoot "
+        "are reported",
+        "accounting": "request/search counts are durable "
+        "pre-operation reservations, "
+        "conservatively including interrupted "
+        "admissions; HTTP cache hits consume no "
+        "request; actual billing and external "
+        "model spend are unknown",
+        "next_action": "Resume unchecked identities with "
+        "another explicit per-run grant, then "
+        "use existing source "
+        "retrieval/independent judgment tools "
+        "and a fresh submission-ready audit. Job "
+        "success is not citation readiness.",
+    }
+    if not _correction_snapshot_current(
+        job["snapshot"], os.path.dirname(job["config"]["tex_path"])
+    ):
+        return {
+            "ok": False,
+            "job_id": job["job_id"],
+            "submission_ready": False,
+            "identity_complete": False,
+            "rescan_required": True,
+            "error": "job-stale: inputs changed before "
+            "publication; create a new job",
+        }
+    return result
+
+
+def verification_job(
+    tex_path: str,
+    bib_path: str | None = None,
+    job_id: str | None = None,
+    operation: Literal["run", "status"] = "run",
+    budget: VerificationBudget | None = None,
+    priorities: list[ClaimPriority] | None = None,
+    search_unresolved: bool | None = None,
+) -> dict[str, Any]:
+    """Run or inspect prioritized registry checks under per-invocation limits.
+
+    Args:
+        tex_path: Main manuscript path; required on resume too.
+        bib_path: Optional override; omitted resume values use saved config.
+        job_id: Existing job ID to resume/inspect; omit to create a job.
+        operation: Run unchecked identities, or inspect state without network.
+        budget: Fresh per-run grant, not a change to previous accounting.
+        priorities: Explicit scheduling advice tied to current support IDs.
+        search_unresolved: Enable title searches; defaults true for new jobs.
+
+    Returns:
+        Identity progress, an unchecked support queue, and measured usage.
+        ok means the job command succeeded, never scientific readiness.
+    """
+    try:
+        limits = _validated_budget(budget)
+    except ValueError as invalid_budget:
+        return {
+            "ok": False,
+            "submission_ready": False,
+            "error": str(invalid_budget),
+        }
+    if job_id is not None and (
+        not isinstance(job_id, str)
+        or re.fullmatch(r"[a-f0-9]{32}", job_id) is None
+    ):
+        return {
+            "ok": False,
+            "submission_ready": False,
+            "error": "invalid job ID",
+        }
+
+    def no_persist(usage: dict[str, Any]) -> None:
+        del usage
+
+    if (
+        not isinstance(tex_path, str)
+        or not tex_path.strip()
+        or (
+            bib_path is not None
+            and (not isinstance(bib_path, str) or not bib_path.strip())
+        )
+    ):
+        return {
+            "ok": False,
+            "submission_ready": False,
+            "error": (
+                "manuscript and bibliography paths must be nonempty strings"
+            ),
+        }
+    controller = _RequestBudget(limits, no_persist)
+    token = _request_budget.set(controller)
+    identifier = job_id or uuid.uuid4().hex
+    tex_path = os.path.abspath(tex_path)
+    workdir = os.path.dirname(tex_path)
+    path = os.path.join(workdir, PROJECT_DIR, "job-" + identifier + ".json")
+    try:
+        if operation not in ("run", "status") or (
+            operation == "status" and job_id is None
+        ):
+            raise ValueError(
+                "status requires job_id; operation must be run/status"
+            )
+        if (
+            not isinstance(identifier, str)
+            or re.fullmatch(r"[a-f0-9]{32}", identifier) is None
+        ):
+            raise ValueError("invalid job ID")
+        preflight_error = _correction_preflight(tex_path, bib_path)
+        if preflight_error:
+            raise ValueError(preflight_error)
+        # Inspect immutable config before locking, then reload under lock.
+        # This also lets omitted resume parameters adopt a saved override.
+        if job_id:
+            if os.path.islink(path):
+                raise ValueError("job output is a symlink")
+            saved = _job_load(path, identifier)["config"]
+            if bib_path is None:
+                bib_path = saved["bib_path"]
+            preflight_error = _correction_preflight(tex_path, bib_path)
+            if preflight_error:
+                raise ValueError(preflight_error)
+        # Scan before locking so the lock-file cannot alias an input.
+        provisional = _job_scan(tex_path, bib_path, None, True)
+        _job_paths_safe(path, provisional["snapshot"])
+        with _file_lock(path):
+            job = _job_load(path, identifier) if job_id else None
+            if job is not None:
+                previous = job["config"]
+                bib_path = (
+                    previous["bib_path"] if bib_path is None else bib_path
+                )
+                priorities = (
+                    previous["priorities"] if priorities is None else priorities
+                )
+                search_unresolved = (
+                    previous["search_unresolved"]
+                    if search_unresolved is None
+                    else search_unresolved
+                )
+            if search_unresolved is None:
+                search_unresolved = True
+            if type(search_unresolved) is not bool:
+                raise ValueError("search_unresolved must be boolean")
+            scan = _job_scan(tex_path, bib_path, priorities, search_unresolved)
+            _job_paths_safe(path, scan["snapshot"])
+            if job is not None and not _job_same_scan(job, scan):
+                return {
+                    "ok": False,
+                    "job_id": identifier,
+                    "submission_ready": False,
+                    "identity_complete": False,
+                    "rescan_required": True,
+                    "error": "job-stale: inputs, source evidence, "
+                    "priorities or configuration changed; "
+                    "create a new job",
+                }
+            if job is None:
+                job = dict(
+                    scan,
+                    schema_version=1,
+                    job_id=identifier,
+                    created=_now_iso(),
+                    updated=_now_iso(),
+                    runs=[],
+                )
+            if operation == "status":
+                return _job_result(job, path)
+            for previous_run in job["runs"]:
+                if previous_run["state"] == "RUNNING":
+                    previous_run["state"] = "INTERRUPTED"
+            for item in job["identity_queue"]:
+                if item["status"] == "RUNNING":
+                    item.update(
+                        status="UNCHECKED",
+                        result=None,
+                        reason="interrupted; retry with cached prior "
+                        "requests where available",
+                    )
+            run = {
+                "run_id": uuid.uuid4().hex,
+                "limits": limits,
+                "usage": controller.usage(),
+                "state": "RUNNING",
+            }
+            job["runs"].append(run)
+
+            def persist(usage: dict[str, Any]) -> None:
+                run["usage"] = usage
+                _job_write(path, job)
+
+            controller.persist = persist
+            persist(controller.usage())
+            try:
+                for item in job["identity_queue"]:
+                    if item["status"] == "ASSESSED" or item["bib_path"] is None:
+                        continue
+                    controller.remaining()
+                    item.update(
+                        status="RUNNING",
+                        result=None,
+                        reason="in progress",
+                        attempts=item["attempts"] + 1,
+                    )
+                    persist(controller.usage())
+                    result = verify_bib(
+                        item["bib_path"],
+                        keys=[item["key"]],
+                        tex_path=tex_path,
+                        search_unresolved=search_unresolved,
+                    )
+                    controller.remaining()
+                    if not _correction_snapshot_current(
+                        job["snapshot"], workdir
+                    ):
+                        raise ValueError(
+                            "job-stale: inputs changed during "
+                            "verification; create a new job"
+                        )
+                    rows = (
+                        result.get("entries", [])
+                        if isinstance(result, dict)
+                        else []
+                    )
+                    row = (
+                        rows[0]
+                        if isinstance(rows, list)
+                        and len(rows) == 1
+                        and isinstance(rows[0], dict)
+                        and rows[0].get("key") == item["key"]
+                        else None
+                    )
+                    if row is not None and not _job_valid_result(
+                        row, item["key"]
+                    ):
+                        raise ValueError("malformed verifier result")
+                    if row is None or row.get("status") == "UNRESOLVED":
+                        item.update(
+                            status="UNCHECKED",
+                            result=row,
+                            reason="lookup incomplete; resume to retry",
+                        )
+                    elif row.get("status") not in {
+                        "VERIFIED",
+                        "FOUND",
+                        "PROBABLE",
+                        "MISMATCH",
+                        "NOT_FOUND",
+                    }:
+                        raise ValueError("malformed verifier result")
+                    else:
+                        item.update(
+                            status="ASSESSED",
+                            result=row,
+                            reason="registry assessment recorded; "
+                            "scientific support remains unchecked",
+                        )
+                    persist(controller.usage())
+            except (
+                BudgetExhaustedError,
+                OSError,
+                RuntimeError,
+                ValueError,
+            ) as error:
+                for item in job["identity_queue"]:
+                    if item["status"] == "RUNNING":
+                        item.update(
+                            status="UNCHECKED", result=None, reason=str(error)
+                        )
+                run["state"] = "PAUSED"
+                if str(error).startswith("job-stale:"):
+                    persist(controller.usage())
+                    return {
+                        "ok": False,
+                        "job_id": identifier,
+                        "submission_ready": False,
+                        "identity_complete": False,
+                        "rescan_required": True,
+                        "error": str(error),
+                    }
+            else:
+                run["state"] = "FINISHED"
+            finally:
+                persist(controller.usage())
+            if not _correction_snapshot_current(job["snapshot"], workdir):
+                return {
+                    "ok": False,
+                    "job_id": identifier,
+                    "submission_ready": False,
+                    "identity_complete": False,
+                    "rescan_required": True,
+                    "error": "job-stale: inputs changed before "
+                    "publication; create a new job",
+                }
+            return _job_result(job, path)
+    except (OSError, ValueError, RuntimeError) as error:
+        return {
+            "ok": False,
+            "submission_ready": False,
+            "identity_complete": False,
+            "error": str(error),
+            "job_id": job_id,
+            "run_usage": controller.usage(),
+        }
+    finally:
+        _request_budget.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # ping + dispatch
 # ---------------------------------------------------------------------------
@@ -5798,6 +6973,7 @@ TOOLS = {
     "ledger_read": ledger_read,
     "audit": audit,
     "correction_report": correction_report,
+    "verification_job": verification_job,
 }
 
 
