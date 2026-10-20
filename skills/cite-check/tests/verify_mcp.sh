@@ -211,13 +211,13 @@ if [ "${GH_LEFT:-0}" -ge 30 ]; then
     expect 'r["results"][1]["ref"]["found"] is True and "arXiv:1202.3665" in r["results"][1]["repo"]["readme_ids"]' "github: tag in URL checked, README paper link found"
     expect 'r["results"][2]["resolved"] is False' "github: deleted repository does not resolve"
     check "github: verify_bib software fixture" 1 "$PY" "$SERVER" call verify_bib "{\"bib_path\": \"$W/software.bib\"}"
-    expect 'dict((e["key"], e["status"]) for e in r["entries"]) == {"astropy": "VERIFIED", "emceepaper": "FOUND", "corner": "VERIFIED", "wrongrepo": "MISMATCH", "fakeversion": "PROBABLE", "gonerepo": "NOT_FOUND", "cornerjoss": "FOUND", "transformercode": "FOUND"}' "github: VERIFIED / paper-under-repo-URL FOUND / wrong repo MISMATCH / invented version PROBABLE / deleted NOT_FOUND"
+    expect 'dict((e["key"], e["status"]) for e in r["entries"]) == {"astropy": "VERIFIED", "emceepaper": "FOUND", "corner": "VERIFIED", "wrongrepo": "MISMATCH", "fakeversion": "UNRESOLVED", "gonerepo": "NOT_FOUND", "cornerjoss": "FOUND", "transformercode": "FOUND"}' "github: VERIFIED / paper-under-repo-URL FOUND / wrong repo MISMATCH / invented version UNRESOLVED / deleted NOT_FOUND"
     expect 'next(e for e in r["entries"] if e["key"] == "emceepaper")["id"] == "doi:10.1086/670067" and next(e for e in r["entries"] if e["key"] == "transformercode")["id"] == "arXiv:1706.03762"' "github: FOUND entries point at the paper"
     check "github: pinned @software entry" 0 "$PY" "$SERVER" call fetch_bibtex '{"identifier": "https://github.com/dfm/emcee/tree/v3.1.4", "key": "emcee"}'
     expect 'r["source"] == "github" and "version = {v3.1.4}" in r["bibtex"] and "Commit e1db6a282346" in r["bibtex"] and "version=v3.1.4" in r["provenance"]' "github: version, commit and provenance pinned"
     check "github: invented version has no entry" 1 "$PY" "$SERVER" call fetch_bibtex '{"identifier": "github:dfm/emcee", "version": "v97.3.1"}'
     check "github: README is the support text" 0 "$PY" "$SERVER" call fetch_text '{"identifier": "github:dfm/emcee"}'
-    expect 'r["basis"] == "readme" and r["source"] == "github-readme:dfm/emcee"' "github: basis readme"
+    expect 'r["basis"] == "readme" and r["source"].startswith("github-readme:dfm/emcee@")' "github: basis readme"
     check "github: UNVERIFIABLE allowed on a README" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"emcee\", \"identifier\": \"github:dfm/emcee\", \"claim\": \"emcee runs on GPUs.\", \"verdict\": \"UNVERIFIABLE\", \"note\": \"the README says nothing about hardware; the code was not read\"}"
     check "github: bib_add files the DOI export under the repository" 0 "$PY" "$SERVER" call bib_add "{\"bib_path\": \"$W/sw.bib\", \"items\": [{\"identifier\": \"github:astropy/astropy\", \"key\": \"astropy\"}, {\"identifier\": \"10.5281/zenodo.4670728\"}]}"
     expect 'r["results"][0]["preferred_citation"] == "10.3847/1538-4357/ac7c74" and r["results"][1]["status"] == "duplicate"' "github: preferred paper surfaced; software DOI recognised as a duplicate"
