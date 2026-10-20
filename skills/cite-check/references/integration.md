@@ -64,15 +64,36 @@ uncited.
 ```
 ex = extract_cites(tex_path)                     # instances + claims, grouped by_key
 verify_bib(bib_path, keys=ex.keys, tex_path)     # resolve failures before proceeding
+for each sentence in ex.sentences with a non-nocite occurrence:
+    register_claims(tex_path, sentence.sentence_id, complete_atomic_spans)
+    # One span for simple assertions; split compound assertions.
+    # Explicit citation IDs; preserve any uncited scope with kind + reason.
 for each key with status VERIFIED or FOUND:
     fetch_text(id, version=version)             # same pin as the bibliography; pdf_path= if supplied
     find_passages(id, [claim for every instance of key], version=version)
     judge  ← independent subagent, prompt in references/support.md
     record_support(workdir, key, claim=instance.claim, context=instance.context,
                    verdict=verdict, identifier=id, quotes=quotes, note=note,
-                   judge=…, version=version)   # per extracted instance
+                   judge=…, version=version, tex_path=tex_path,
+                   occurrence_id=instance.occurrence_id, atom_id=atom.atom_id)
+    # Repeat for each attached atom, including registered single-span sentences.
 audit(tex_path)
 ```
+
+The judge receives the exact atom, full extracted sentence/context, all
+citation attachments, and any declared uncited scope. `claim` always remains
+the full original extracted sentence. Atomic spans form a complete partition
+in Unicode character offsets, including conjunctions, punctuation and math;
+see `references/support.md` for the schema and validation rules. The caller
+must not apply one atom's verdict to another or attach an unrelated source
+to author-only results. Uncited spans remain explicitly unverified in audit.
+Re-extract and register again after changing the sentence, context or split;
+missing/stale atoms remain visible failures. Once any sentence is registered,
+atomic mode requires exact registration for every current citation sentence
+in that main manuscript. Legacy
+sentence-only calls apply only to unambiguous undecomposed occurrences in
+manuscripts without atomic-registration history. Retry `audit-stale` after a
+concurrent manuscript or ledger update before treating any report as current.
 
 UNRESOLVED is a lookup failure, not proof of fabrication or absence. Report
 its reason and retry after the transient failure; do not remove a citation
