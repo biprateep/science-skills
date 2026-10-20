@@ -12,6 +12,7 @@ its shell tool. See skills/co-scientist/SKILL.md — "MCP Toolbox".
 """
 
 import ast
+import hashlib
 import json
 import math
 import os
@@ -600,26 +601,101 @@ _INCLUDEGRAPHICS = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 _IMG_EXTS = (".png", ".pdf", ".jpg", ".jpeg", ".eps")
 
 
-def validate_figures(tex_path: str) -> dict:
-    """Check every \\includegraphics target in a .tex file exists on disk."""
-    tex_path = os.path.abspath(tex_path)
-    if not os.path.exists(tex_path):
-        return {"error": f"{tex_path} not found"}
-    base = os.path.dirname(tex_path)
-    with open(tex_path) as fh:
-        # strip LaTeX comments (unescaped %) before matching
-        text = "\n".join(re.split(r"(?<!\\)%", line, maxsplit=1)[0] for line in fh)
-    gp = re.search(r"\\graphicspath\{((?:\{[^}]*\})+)\}", text)
-    search_dirs = ([d for d in re.findall(r"\{([^}]*)\}", gp.group(1))] if gp else []) + ["", "figures/"]
-    found, missing = [], []
-    for target in _INCLUDEGRAPHICS.findall(text):
-        candidates = [os.path.join(base, d, target) for d in search_dirs]
-        if not os.path.splitext(target)[1]:
-            candidates = [c + ext for c in candidates for ext in _IMG_EXTS]
-        hit = next((c for c in candidates if os.path.exists(c)), None)
-        (found if hit else missing).append({"target": target, "resolved": hit})
-    return {"ok": not missing, "found": found, "missing": missing}
+def _tex_inputs(tex_path: str) -> dict[str, str]:
+    """Read literal TeX includes recursively, failing on missing inputs."""
+    root = os.path.dirname(os.path.abspath(tex_path))
+    files = {}
 
+    def visit(path: str) -> None:
+        path = os.path.abspath(path)
+        if path in files:
+            return
+        with open(path, encoding="utf-8") as handle:
+            text = "\n".join(
+                re.split(r"(?<!\\)%", line, maxsplit=1)[0]
+                for line in handle
+            )
+        text = re.sub(
+            r"\\begin\{comment\}.*?\\end\{comment\}|\\iffalse.*?\\fi",
+            "", text, flags=re.S,
+        )
+        files[path] = text
+        pattern = r"\\(input|include|subfile)\b\s*(?:\{([^}]+)\}|([^\s{}%]+))"
+        for match in re.finditer(pattern, text):
+            target = (match.group(2) or match.group(3)).strip()
+            if any(c in target for c in "\\#{}"):
+                raise ValueError(f"dynamic TeX input cannot be audited: {target}")
+            if not os.path.splitext(target)[1]:
+                target += ".tex"
+            visit(os.path.join(root, target))
+
+    visit(tex_path)
+    return files
+
+
+def validate_figures(tex_path: str) -> dict:
+    """Check figures in the root document and every literal TeX include."""
+    tex_path = os.path.abspath(tex_path)
+    try:
+        files = _tex_inputs(tex_path)
+    except (OSError, UnicodeError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    base = os.path.dirname(tex_path)
+    search_dirs = ["", "figures/"]
+    for text in files.values():
+        for group in re.findall(r"\\graphicspath\{((?:\{[^}]*\})+)\}", text):
+            search_dirs.extend(re.findall(r"\{([^}]*)\}", group))
+    found, missing = [], []
+    for path, text in files.items():
+        for target in _INCLUDEGRAPHICS.findall(text):
+            candidates = [os.path.join(base, d, target) for d in search_dirs]
+            if not os.path.splitext(target)[1]:
+                candidates = [c + ext for c in candidates for ext in _IMG_EXTS]
+            hit = next((c for c in candidates if os.path.isfile(c)), None)
+            (found if hit else missing).append(
+                {"target": target, "file": path, "resolved": hit}
+            )
+    return {"ok": not missing, "found": found, "missing": missing,
+            "files": list(files)}
+
+
+def _cite_check_call(tool: str, arguments: dict) -> dict:
+    """Call the sibling citation engine over its supported JSON CLI."""
+    directory = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "cite-check", "mcp"
+    ))
+    python = os.path.join(directory, ".venv", "bin", "python")
+    if not os.path.isfile(python):
+        python = sys.executable
+    try:
+        child = subprocess.run(
+            [python, os.path.join(directory, "server.py"), "call", tool,
+             json.dumps(arguments)],
+            capture_output=True, text=True, timeout=180, check=False,
+        )
+        result = json.loads(child.stdout)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        return {"error": f"cite-check {tool} failed: {exc}"}
+    if not isinstance(result, dict):
+        return {"error": "cite-check returned an invalid result"}
+    if child.returncode and not result.get("error") and result.get("ok") is not False:
+        return {"error": f"cite-check exited {child.returncode}"}
+    return result
+
+
+def _input_digests(paths: list[str]) -> dict[str, str | None]:
+    """Hash manuscript, bibliography, evidence ledger and figure inputs."""
+    digests = {}
+    for path in paths:
+        if not os.path.exists(path):
+            digests[path] = None
+            continue
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+        digests[path] = digest.hexdigest()
+    return digests
 
 def _unverified_checkpoints(manifest):
     return [cp for cp in manifest.get("checkpoints", [])
@@ -628,70 +704,128 @@ def _unverified_checkpoints(manifest):
 
 
 def compile_report(workdir: str, name: str = "report", allow_unverified: bool = False) -> dict:
-    """Compile the LaTeX report — gated: refuses if the manifest still has
-    unverified derivation/data checkpoints, or if any figure target is missing.
+    """Compile only current, audited report inputs with a successful toolchain.
 
-    allow_unverified=true bypasses the verification gate ONLY for explicitly
-    negative-result / limitations-documented reports; the bypass is recorded
-    in the result so it cannot happen silently.
+    Args:
+        workdir: Directory containing the report and its inputs.
+        name: Report basename, optionally ending in .tex.
+        allow_unverified: Bypass only unverified manifest checkpoints, for an
+            explicitly documented negative-result report. Other gates remain.
+
+    Returns:
+        Success, gate results, current-input digests and toolchain diagnostics.
     """
     workdir = os.path.abspath(workdir)
     name = name.removesuffix(".tex")
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", name):
+        return {"success": False, "gate": "name", "detail": "use a report basename"}
     tex = os.path.join(workdir, f"{name}.tex")
-    if not os.path.exists(tex):
-        return {"success": False, "gate": "missing_tex",
-                "detail": f"{tex} not found — copy resources/paper_template.tex there first"}
+    if not os.path.isfile(tex):
+        return {"success": False, "gate": "missing_tex", "detail": f"{tex} not found"}
 
-    gates = {"verification": "skipped (no manifest — Derivation mode?)"}
+    gates = {"verification": "skipped (no manifest)"}
     if os.path.exists(_manifest_path(workdir)):
-        manifest = _load_manifest(workdir)
+        try:
+            manifest = _load_manifest(workdir)
+        except (OSError, ValueError) as exc:
+            return {"success": False, "gate": "manifest", "detail": str(exc)}
         bad = _unverified_checkpoints(manifest)
         if bad and not allow_unverified:
             return {"success": False, "gate": "unverified_checkpoints",
-                    "detail": [{"id": c["id"], "file": c["file"]} for c in bad],
-                    "fix": "verify via verify_derivation (or check scripts) and record "
-                           "with manifest_update_checkpoint, or pass allow_unverified=true "
-                           "for an explicit negative-result report"}
-        gates["verification"] = ("BYPASSED (allow_unverified) — "
-                                 f"{len(bad)} unverified checkpoint(s)") if bad else "passed"
+                    "detail": [{"id": c["id"], "file": c["file"]} for c in bad]}
+        gates["verification"] = (
+            f"BYPASSED (allow_unverified): {len(bad)} checkpoint(s)" if bad else "passed"
+        )
 
     figs = validate_figures(tex)
     if not figs.get("ok"):
-        return {"success": False, "gate": "missing_figures", "detail": figs.get("missing")}
+        return {"success": False, "gate": "missing_figures",
+                "detail": figs.get("error") or figs.get("missing")}
     gates["figures"] = "passed"
-
-    def latex():
-        subprocess.run(["pdflatex", "-interaction=nonstopmode", f"{name}.tex"],
-                       cwd=workdir, capture_output=True, timeout=180)
+    extracted = _cite_check_call("extract_cites", {"tex_path": tex})
+    if extracted.get("error") or extracted.get("complete") is False:
+        return {"success": False, "gate": "citations", "detail": extracted}
+    if set(extracted.get("files", [])) != set(figs["files"]):
+        return {"success": False, "gate": "citations",
+                "detail": "citation parser did not cover every TeX input"}
+    bibs = extracted.get("bib_files", [])
+    if any(not os.path.isfile(path) for path in bibs):
+        return {"success": False, "gate": "citations",
+                "detail": "a declared bibliography is missing"}
+    paths = list(figs["files"]) + bibs + [
+        figure["resolved"] for figure in figs["found"]
+    ] + [os.path.join(workdir, ".cite-check", "ledger.json"),
+         _manifest_path(workdir)]
+    try:
+        before = _input_digests(paths)
+    except OSError as exc:
+        return {"success": False, "gate": "inputs", "detail": str(exc)}
+    if extracted.get("cites") or bibs:
+        citation_audit = _cite_check_call(
+            "audit", {"tex_path": tex, "require_support": True, "verify": True}
+        )
+        if citation_audit.get("ok") is not True or citation_audit.get("complete") is False:
+            return {"success": False, "gate": "citations", "detail": citation_audit}
+        gates["citations"] = "passed (fresh audit)"
+    else:
+        gates["citations"] = "passed (no citations or bibliography)"
 
     pdf = os.path.join(workdir, f"{name}.pdf")
-    if os.path.exists(pdf):
-        os.remove(pdf)  # a stale PDF must not pass the existence check
-    try:
-        latex()
-        bibtex_ran = False
-        bib = os.path.join(workdir, f"{name}.bib")
-        with open(tex) as fh:
-            active_bib = any(re.match(r"^[^%]*\\bibliography\{", ln) for ln in fh)
-        if os.path.exists(bib) and active_bib:
-            subprocess.run(["bibtex", name], cwd=workdir, capture_output=True, timeout=60)
-            latex()
-            latex()
-            bibtex_ran = True
-    except FileNotFoundError as exc:
-        return {"success": False, "gate": "toolchain", "detail": f"{exc.filename} not installed"}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "gate": "toolchain", "detail": "pdflatex/bibtex timed out"}
-
-    errors = []
     log = os.path.join(workdir, f"{name}.log")
-    if os.path.exists(log):
-        with open(log, errors="replace") as fh:
-            lines = fh.read().splitlines()
-        errors = [ln for ln in lines if ln.startswith("!")][:20]
-    return {"success": os.path.exists(pdf), "pdf": pdf if os.path.exists(pdf) else None,
-            "gates": gates, "bibtex_ran": bibtex_ran, "latex_errors": errors,
-            "detail": None if os.path.exists(pdf) else f"no PDF produced — see {log}"}
+    for stale in (pdf, log):
+        if os.path.exists(stale):
+            os.remove(stale)
+    commands = []
+    bibtex_ran = False
+
+    def run(command: list[str], timeout: int) -> None:
+        result = subprocess.run(
+            command, cwd=workdir, capture_output=True, text=True,
+            timeout=timeout, check=False,
+        )
+        commands.append({"command": command[0], "returncode": result.returncode})
+        if result.returncode:
+            raise RuntimeError(
+                f"{command[0]} exited {result.returncode}: "
+                + (result.stdout + result.stderr)[-2000:]
+            )
+
+    latex = ["pdflatex", "-no-shell-escape", "-halt-on-error",
+             "-interaction=nonstopmode", f"{name}.tex"]
+    try:
+        run(latex, 180)
+        if bibs:
+            texts = _tex_inputs(tex)
+            biber = any(re.search(r"\\addbibresource\b", t) for t in texts.values())
+            run(["biber" if biber else "bibtex", name], 60)
+            bibtex_ran = True
+        run(latex, 180)
+        # A third pass resolves citations and cross-reference label changes.
+        run(latex, 180)
+    except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
+        return {"success": False, "gate": "toolchain", "detail": str(exc),
+                "commands": commands, "gates": gates}
+    try:
+        after = _input_digests(paths)
+        with open(log, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError as exc:
+        return {"success": False, "gate": "inputs", "detail": str(exc)}
+    if before != after:
+        return {"success": False, "gate": "inputs_changed",
+                "detail": "report inputs changed after citation verification"}
+    errors = [line for line in lines if line.startswith("!")]
+    unresolved = [line for line in lines if re.search(
+        r"(?:Citation|Reference).*undefined|There were undefined|"
+        r"Rerun to get cross-references right|Label\(s\) may have changed|"
+        r"Please \(re\)run Biber", line,
+    )]
+    success = os.path.isfile(pdf) and not errors and not unresolved
+    return {"success": success, "pdf": pdf if success else None,
+            "gates": gates, "bibtex_ran": bibtex_ran, "commands": commands,
+            "latex_errors": errors[:20], "unresolved": unresolved[:20],
+            "input_sha256": before,
+            "detail": None if success else f"incomplete LaTeX build; see {log}"}
 
 
 # ---------------------------------------------------------------------------

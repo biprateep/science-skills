@@ -96,28 +96,33 @@ own to its brief. If co-writer is not installed, say so once and keep the
 drafted prose.
 ## 4. Validate figure references, then compile
 
-If the report cites anything, cite-check's `audit` (§5) must already have
-returned `ok: true` on the final `report.tex`. Then:
-
-**Preferred:** call the `compile_report` MCP tool (CLI fallback:
+Call the `compile_report` MCP tool (CLI fallback:
 `mcp/.venv/bin/python mcp/server.py call compile_report '{"workdir": "..."}'`).
-It runs the whole sequence with the hard gates built in:
+It runs the entire sequence with hard gates:
 
-1. **Verification gate** — refuses while the manifest contains
-   derivation/data/computation checkpoints with `verified: false`. For an
-   explicit negative-result report pass `allow_unverified: true`; the bypass is
-   recorded in the result, never silent.
-2. **Figure gate** — runs `validate_figures` and refuses on any missing
-   `\includegraphics` target (you can also call `validate_figures` directly
-   while drafting).
-3. Compiles: stale-PDF removal, `pdflatex` nonstop mode, conditional `bibtex`
-   (below), real errors surfaced from the `.log`.
+1. **Verification:** refuses unverified derivation/data/computation checkpoints.
+   `allow_unverified: true` bypasses only this gate for an explicitly documented
+   negative-result report; the result records the bypass.
+2. **Inputs and figures:** follows literal `\input`, `\include` and `\subfile`
+   paths recursively and checks each figure. Missing or unreadable inputs fail.
+3. **Citations:** calls cite-check on the current document, then runs a fresh
+   `audit` with `require_support: true` and `verify: true` whenever citations or
+   bibliography declarations exist. An incomplete or failing audit blocks the
+   build. A citation-free report needs no bibliography. Prepare the evidence
+   ledger through cite-check before compiling.
+4. **Compilation:** removes stale output; requires successful LaTeX and
+   bibliography-tool exits; runs enough LaTeX passes to resolve references; and
+   rejects errors or unresolved citations/references in the final log. Declared
+   bibliography filenames drive BibTeX/Biber selection, not the report basename.
+5. **Freshness:** hashes TeX, bibliography, figure, manifest and evidence-ledger
+   inputs before the audit and checks them again after compilation. Changed
+   inputs invalidate the build and require a new call.
 
-**Fallback** (no toolbox): check figure targets by hand, then
-`bash <skill-dir>/scripts/compile_report.sh report` (name WITHOUT the `.tex`
-extension) — same compile behavior, but the verification gate is then on your
-honor: re-read the manifest and confirm every derivation checkpoint is verified
-before compiling.
+The shell entry point, `bash <skill-dir>/scripts/compile_report.sh report`, uses
+these same gates. It is not a bypass. The sibling cite-check engine must be
+installed even when the current report has no citations, so input/citation
+coverage can be checked consistently. Dynamic TeX input paths are rejected;
+use literal paths for audited reports.
 
 ## 5. Bibliography — cite-check
 

@@ -104,7 +104,7 @@ hand-rolled equivalents wherever they apply:
 | `verify_derivation` | writing + running a per-derivation sympy check script (for expression-chain steps) | `protocols/cas_verification.md` §0 |
 | `manifest_init` / `manifest_read` / `manifest_append` / `manifest_set` / `manifest_update_checkpoint` | hand-editing `checkpoints/manifest.json` (file-locked; ids allocated atomically; `verified: true` requires evidence) | `protocols/checkpointing.md` |
 | `validate_figures` | eyeballing `\includegraphics` targets | `protocols/reporting.md` |
-| `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: refuses while unverified derivation/data checkpoints or missing figures exist | `protocols/reporting.md` §4 |
+| `compile_report` | `scripts/compile_report.sh` — **plus hard gates**: requires verified checkpoints, complete figures, a fresh citation audit and error-free LaTeX | `protocols/reporting.md` §4 |
 
 This toolbox has no citation tools: those are cite-check's own toolbox
 (`mcp__cite-check__*`), reached as its contract says (Component Skills).
@@ -328,7 +328,7 @@ floats and conceptual figures — length is not a constraint. Then, in order:
 **co-writer** rewrites each section's prose in the author's voice; **cite-check**
 judges every citation in the final prose and its `audit` must pass; the
 `compile_report` tool compiles, mechanically enforcing the verification and
-figure gates before running LaTeX.
+figure gates, a fresh citation audit, and error-free LaTeX output.
 → `references/protocols/reporting.md`
 
 ---
@@ -395,7 +395,8 @@ anything is not compiled until cite-check's `audit` returns `ok: true` with
 available, this gate is **mechanically enforced**: `verified: true` can only be
 recorded through `manifest_update_checkpoint` with evidence, and
 `compile_report` refuses to build while unverified derivation/data checkpoints
-exist.
+exist, runs a fresh citation audit on current inputs, and rejects compilation
+errors or unresolved references.
 </HARD-GATE>
 
 <HARD-GATE>
