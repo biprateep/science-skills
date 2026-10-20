@@ -19,6 +19,7 @@ class Outcome:
     returncode: int | None
     output: str
     duration_s: float
+    stderr: str = ""
 
 
 def execute(
@@ -99,11 +100,14 @@ def execute(
         out.seek(0)
         err.seek(0)
         output = out.read(limit).decode("utf-8", errors="replace")
+        diagnostics = err.read(limit).decode("utf-8", errors="replace")
         # Successful stdout must remain parseable; errors include diagnostics.
         if status != "ok":
-            output += err.read(max(0, limit - len(output.encode()))).decode(
-                "utf-8", errors="replace"
-            )
+            output += diagnostics[: max(0, limit - len(output.encode()))]
         return Outcome(
-            status, child.returncode, output, time.monotonic() - started
+            status,
+            child.returncode,
+            output,
+            time.monotonic() - started,
+            diagnostics,
         )

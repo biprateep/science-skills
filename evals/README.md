@@ -41,7 +41,13 @@ an agent until that agent has actually run the tasks successfully.
 Copy `evals/runners.example.json` to the ignored `evals/runners.local.json` and
 adapt the command, model selection, and declared capabilities to your installed
 CLI. The three examples use flags checked against local CLI help; they are
-templates, not claims of successful live evaluation.
+templates, not claims of successful live evaluation. Antigravity uses
+`antigravity_runner.py` because its `--print` flag takes the prompt as a string
+argument. The adapter replaces itself with the CLI, retaining process limits. See the
+[official headless-mode contract](https://www.antigravity.google/docs/cli/headless/).
+Native headless agents may deny tools that require interactive approval;
+configure narrowly scoped native permissions before benchmarking. Empty output
+is an execution error, and stderr diagnostics are retained separately.
 
 ```sh
 cp evals/runners.example.json evals/runners.local.json
@@ -203,7 +209,7 @@ JSON reports record Git commit/dirty status/diff hash, immutable pre-execution
 skill input hashes, task/framework fingerprints, runner fingerprint, and seeds.
 Fingerprints provide reproducibility metadata, not attestation against an agent
 that can access the host. No raw Git diff is stored. Run directories contain
-prompts, responses, runner output, and generated workspaces; treat them as
+prompts, responses, runner output, stderr diagnostics, and generated workspaces; treat them as
 potentially private. `.eval-runs/`, local runner configuration, and
 `evals/baselines.local/` are ignored. Custom `--output` paths must be kept out of
 version control by their owner. PR descriptions document changes and test
@@ -212,7 +218,7 @@ results; run logs and review directories are not committed.
 ## Development checks
 
 ```sh
-python -m pytest --import-mode=importlib evaluation/tests skills/*/evals/tests -q
+python -m pytest --import-mode=importlib evaluation/tests evals/tests skills/*/evals/tests -q
 python -m evaluation validate --require-coverage
 python -m evaluation run --runner replay --repeats 2
 ```
