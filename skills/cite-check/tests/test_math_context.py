@@ -26,10 +26,8 @@ class MathContextTest(unittest.TestCase):
                     contexts = []
                     for math in (r"\alpha=1", r"\beta=100"):
                         tex.write_text(
-                            opening
-                            + math
-                            + closing
-                            + r" We use this result \cite{k}."
+                            f"{opening}{math}{closing}"
+                            r" We use this result \cite{k}."
                         )
                         result = SERVER.extract_cites(str(tex))
                         self.assertTrue(result["complete"])
@@ -58,8 +56,9 @@ class MathContextTest(unittest.TestCase):
             contexts = []
             for value in ("1", "100"):
                 tex.write_text(
-                    r"\begin{equation}x=" + value + r"\end{equation}"
-                    "\n\n" + r"We use this result \cite{k}."
+                    rf"\begin{{equation}}x={value}\end{{equation}}"
+                    "\n\n"
+                    r"We use this result \cite{k}."
                 )
                 contexts.append(
                     SERVER.extract_cites(str(tex))["cites"][0]["context"]
