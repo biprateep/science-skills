@@ -78,7 +78,10 @@ claims and the citations already exist in the input.
    OUTPUT` (write both to scratch files if they are not files already; step
    9 logs the same two). It must print
    "fixed items identical", or only WARN lines after a ruled hard-limit cut.
-   Then the self-check below.
+   The checker covers signed numbers, common scientific units, explicit
+   unit macros, standard citation commands, and starred math environments.
+   Custom macros, arbitrary prose units, claim strength, and citation
+   attachment still need the self-check below.
 6. **The cold read** ([references/cold-read.md](references/cold-read.md)):
    always for a section or a draft; for a single paragraph, whenever an agent
    is available.
