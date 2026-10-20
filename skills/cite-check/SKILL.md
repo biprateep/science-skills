@@ -98,13 +98,13 @@ Never edit anything under `mcp/` during a task.
 |---|---|---|
 | `search_citation(title, author, year, hint, context, query)` | multi-registry search, duplicates merged, **ranked by cite-check's own scoring** (registry ranking is measurably wrong) | finding the real id of a paper you can describe; a `confidence: high` candidate |
 | `resolve_citation(identifier \| [ids])` | arXiv / DOI / bibcode / OpenAlex / INSPIRE / GitHub repository → metadata + cross-linked ids; batched. A repository also returns `repo`: archived / fork / moved, CITATION.cff, `preferred_citation` (the paper its authors ask for), software DOI, README identifiers, and `ref` for a URL naming a tag / branch / commit | existence of an id; nothing more |
-| `fetch_bibtex(identifier, key, prefer, journal_format, tex_path)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
+| `fetch_bibtex(identifier, key, prefer, journal_format, tex_path, version)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
 | `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
 | `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
-| `fetch_text(identifier, pdf_path)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
-| `find_passages(identifier, [claims])` | abstract + top passages per claim by content-word overlap | what the judge reads first |
-| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
+| `fetch_text(identifier, pdf_path, text_path, version)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
+| `find_passages(identifier, [claims], version)` | abstract + top passages per claim by content-word overlap | what the judge reads first |
+| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
 | `ledger_read(workdir)` | the manuscript's verdicts | resuming |
 | `audit(tex_path, bib_path, require_support)` | the gate: undefined keys, existence failures, missing / stale / negative verdicts; writes `.cite-check/audit.md` | `ok: true` = done |
 
@@ -149,13 +149,15 @@ default registry). Then read the result's `repo` before citing:
 ### B. Verify an existing manuscript
 
 1. `extract_cites(main.tex)` → keys, instances, `.bib` files.
-2. `verify_bib(bib, keys=<cited keys>, tex_path=main.tex)`. Fix before
-   going on: MISMATCH / NOT_FOUND / UNRESOLVED entries are either
-   fabrications (tell the user; remove or replace the citation) or entries
-   whose real paper `search_citation` can find (then
-   `bib_add(…, replace=true)`). FOUND entries (no identifier in the entry)
-   get replaced with the official one the same way.
-3. Support pass (Workflow C) over every instance without a ledger verdict.
+2. `verify_bib(bib, keys=<cited keys>, tex_path=main.tex)`. Investigate
+   MISMATCH / NOT_FOUND entries: identify the intended work with
+   `search_citation`, then replace through `bib_add(…, replace=true)` or
+   remove the citation with the user. UNRESOLVED means the lookup did not
+   establish an answer (for example, rate limiting, an outage, or a malformed
+   registry response). Keep it blocked, report the reason, and retry; do not
+   call it fabricated or remove it on that basis. FOUND entries (no
+   identifier in the entry) get replaced with the official one.
+3. Support pass (Workflow C) over every missing or stale ledger verdict.
 4. `audit(main.tex)`. Relay `failures` and `warnings` to the user verbatim
    from the report; do not soften them.
 
@@ -165,14 +167,21 @@ Protocol and judge prompt: `references/support.md`. In short:
 
 1. Group instances `by_key`. For each cited paper: `fetch_text(id)`
    (`pdf_path=` for paywalled ones the user has), then
-   `find_passages(id, [every claim citing it])`.
+   `find_passages(id, [every claim citing it])`. If the bibliography pins a
+   version, pass that same `version` (or versioned identifier) to both tools
+   and to `record_support`; never substitute the latest text. An official
+   arXiv export that omits the requested version is refused, not repaired
+   by hand or silently cited without its pin.
 2. Spawn **one independent judge per paper** with the title, abstract,
    passages and the claims — never the manuscript's argument. Without
    `<spawn-subagent>`, judge in a separate pass after all writing is done,
    passages in front of you, and record `judge: "inline"`.
-3. `record_support` per instance with the judge's verdict, verbatim quotes
-   and note. A refusal (quote not found, note missing) goes back to the
-   judge with the tool's reason; the writer does not "fix" the quote.
+3. `record_support` per instance with the exact extracted `claim` and
+   `context`, the judge's verdict, verbatim quotes and note. Changed claims,
+   context, source snapshots or evidence policies require a fresh judgment;
+   legacy ledger records without those bindings are stale. A refusal (quote
+   not found, note missing) goes back to the judge with the tool's reason;
+   the writer does not "fix" the quote.
 4. Verdicts: SUPPORTS · PARTIAL · UNSUPPORTED · CONTRADICTS · UNVERIFIABLE.
    UNSUPPORTED and CONTRADICTS fail the audit; the fix is a different paper,
    a weaker sentence, or no citation — decided with the user.
@@ -274,8 +283,10 @@ Load on demand:
 ```mermaid
 flowchart TD
   start["extract_cites"] --> vb["verify_bib"]
-  vb -- "MISMATCH / NOT_FOUND / UNRESOLVED / FOUND" --> fix["search_citation → bib_add(replace)<br/>or drop the citation (with the user)"]
+  vb -- "MISMATCH / NOT_FOUND / FOUND" --> fix["search_citation → bib_add(replace)<br/>or drop the citation (with the user)"]
   fix --> vb
+  vb -- "UNRESOLVED" --> retry["report lookup failure; retry"]
+  retry --> vb
   vb -- "VERIFIED" --> text["fetch_text + find_passages<br/>(per paper, all its claims)"]
   text --> judge["independent judge<br/>(one per paper)"]
   judge --> rec["record_support<br/>(quotes verified verbatim)"]

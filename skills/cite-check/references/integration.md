@@ -51,9 +51,9 @@ uncited.
   whether or not it resolves.
 - **Every instance whose claim changed must be re-judged.** Run
   `extract_cites` on the source and on the rewrite; instances whose
-  `(key, claim-hash)` pair is new have no ledger entry and show up in `audit`
-  as `support-missing`. Rewording that keeps the meaning still changes the
-  hash — that is intended: the judge decides whether the paraphrase still
+  exact claim or context changed need a fresh verdict; `audit` reports
+  missing or stale support. Rewording that keeps the meaning still changes
+  the hash — that is intended: the judge decides whether the paraphrase still
   matches the paper's strength.
 - `audit(tex_path, require_support=true)` must return `ok: true` before the
   caller reports the manuscript as finished. The caller relays
@@ -63,14 +63,29 @@ uncited.
 
 ```
 ex = extract_cites(tex_path)                     # instances + claims, grouped by_key
-verify_bib(bib_path, keys=ex.keys, tex_path)     # fix MISMATCH / NOT_FOUND / UNRESOLVED first
+verify_bib(bib_path, keys=ex.keys, tex_path)     # resolve failures before proceeding
 for each key with status VERIFIED or FOUND:
-    fetch_text(id)                               # cached globally; pdf_path= for paywalled papers
-    find_passages(id, [claim for every instance of key])
+    fetch_text(id, version=version)             # same pin as the bibliography; pdf_path= if supplied
+    find_passages(id, [claim for every instance of key], version=version)
     judge  ← independent subagent, prompt in references/support.md
-    record_support(workdir, key, claim, verdict, id, quotes, note, judge=…)   # per instance
+    record_support(workdir, key, claim=instance.claim, context=instance.context,
+                   verdict=verdict, identifier=id, quotes=quotes, note=note,
+                   judge=…, version=version)   # per extracted instance
 audit(tex_path)
 ```
+
+UNRESOLVED is a lookup failure, not proof of fabrication or absence. Report
+its reason and retry after the transient failure; do not remove a citation
+solely because a registry was unavailable. MISMATCH / NOT_FOUND require
+checking the intended identity before replacement or removal.
+
+Use the bibliography's same pin for retrieval and recording: pass `version`
+or keep the versioned identifier throughout (for example, an arXiv `v1` id
+or a GitHub commit URL). Do not drop the pin after `resolve_citation` returns
+work-level identifiers. If an official arXiv export omits the requested pin,
+`fetch_bibtex` refuses it; do not hand-edit the export or substitute a newer
+version. Source snapshot changes and legacy unbound ledger records require
+fresh judgments, even when the prose did not change.
 
 The caller never records a verdict it decided itself while writing; the
 judge is a separate invocation (or a separate, later pass with the passages
