@@ -20,10 +20,11 @@ python -m evaluation compare .eval-runs/NEW/report.json .eval-runs/OLD/report.js
 workspace and grades them. **This calibrates fixtures and graders; it measures
 no agent performance.** Broken-answer regression tests complement reference
 replay so an always-passing grader cannot be justified by positive fixtures
-alone. The starter suite has one case per skill, not comprehensive coverage of
-every instruction. In particular, plot-style currently evaluates a style
-review, not rendered figure quality, and cite-check uses supplied offline
-evidence, not live registry or MCP integration.
+alone. Most skills currently have one starter case, not comprehensive coverage of
+every instruction. Plot-style evaluates a style review, not rendered figure
+quality. [Cite-check](../skills/cite-check/evals/README.md) adds three controlled
+offline tasks and citation-specific metrics; these do not exercise live
+registries or MCP integration.
 
 Keep three kinds of evidence distinct:
 

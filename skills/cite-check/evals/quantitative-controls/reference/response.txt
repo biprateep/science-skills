@@ -1,0 +1,38 @@
+{
+  "identity_status": "fixture_only",
+  "bibliography_created": false,
+  "claims": {
+    "q22": {
+      "verdict": "unsupported",
+      "evidence": "Causal effects were not estimated."
+    },
+    "q17": {
+      "verdict": "supported",
+      "evidence": "In the 40-cell sample, treatment increased median lifetime by 12 percent relative to the control."
+    },
+    "q31": {
+      "verdict": "supported",
+      "evidence": "No statistically significant difference in the secondary endpoint was detected between the treatment and control groups."
+    },
+    "q09": {
+      "verdict": "contradicted",
+      "evidence": "The fitted rate was -2.5 per second."
+    },
+    "q04": {
+      "verdict": "contradicted",
+      "evidence": "In the 40-cell sample, treatment increased median lifetime by 12 percent relative to the control."
+    },
+    "q06": {
+      "verdict": "supported",
+      "evidence": "The observational sample shows an association between treatment and longer lifetime."
+    },
+    "q25": {
+      "verdict": "supported",
+      "evidence": "The fitted rate was -2.5 per second."
+    },
+    "q12": {
+      "verdict": "contradicted",
+      "evidence": "No statistically significant difference in the secondary endpoint was detected between the treatment and control groups."
+    }
+  }
+}

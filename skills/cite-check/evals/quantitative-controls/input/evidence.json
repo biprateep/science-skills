@@ -1,0 +1,51 @@
+{
+  "notice": "Synthetic controlled evaluation records; not real publications.",
+  "sources": {
+    "measurements": {
+      "text": "In the 40-cell sample, treatment increased median lifetime by 12 percent relative to the control. The fitted rate was -2.5 per second.",
+      "access": "full supplied excerpt"
+    },
+    "null_result": {
+      "text": "No statistically significant difference in the secondary endpoint was detected between the treatment and control groups.",
+      "access": "full supplied excerpt"
+    },
+    "association": {
+      "text": "The observational sample shows an association between treatment and longer lifetime. Causal effects were not estimated.",
+      "access": "full supplied excerpt"
+    }
+  },
+  "claims": {
+    "q22": {
+      "source": "association",
+      "text": "Treatment causes longer lifetime."
+    },
+    "q17": {
+      "source": "measurements",
+      "text": "In the measured sample, treatment increased median lifetime by 12 percent."
+    },
+    "q31": {
+      "source": "null_result",
+      "text": "The source detected no statistically significant difference in the secondary endpoint."
+    },
+    "q09": {
+      "source": "measurements",
+      "text": "The fitted rate was +2.5 per second."
+    },
+    "q04": {
+      "source": "measurements",
+      "text": "In the measured sample, treatment increased median lifetime by 21 percent."
+    },
+    "q06": {
+      "source": "association",
+      "text": "The observational sample associates treatment with longer lifetime."
+    },
+    "q25": {
+      "source": "measurements",
+      "text": "The fitted rate was -2.5 per second."
+    },
+    "q12": {
+      "source": "null_result",
+      "text": "The source detected a statistically significant difference in the secondary endpoint."
+    }
+  }
+}

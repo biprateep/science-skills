@@ -1,0 +1,84 @@
+{
+  "notice": "Synthetic controlled evaluation records; not real publications.",
+  "sources": {
+    "alpha_v2": {
+      "identity": {
+        "title": "Alpha lifetime trial",
+        "version": "2"
+      },
+      "text": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded.",
+      "access": "full supplied packet"
+    },
+    "metadata_only": {
+      "identity": {
+        "title": "Gamma follow-up",
+        "version": "1"
+      },
+      "text": null,
+      "access": "identity metadata only; full text unavailable"
+    },
+    "missing_record": {
+      "identity": null,
+      "text": null,
+      "access": "no registry record supplied; existence is unresolved"
+    }
+  },
+  "claims": {
+    "a19": {
+      "source": "metadata_only",
+      "expected_identity": {
+        "title": "Gamma follow-up"
+      },
+      "text": "The treatment doubles lifetime."
+    },
+    "a16": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "version": "1"
+      },
+      "text": "The updated median lifetime is 24 seconds."
+    },
+    "a08": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "version": "2"
+      },
+      "text": "Version 2 reports an updated median lifetime of 24 seconds."
+    },
+    "a13": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "title": "Alpha lifetime trial"
+      },
+      "text": "The updated median lifetime is 24 seconds."
+    },
+    "a05": {
+      "source": "missing_record",
+      "expected_identity": {
+        "title": "Delta extension"
+      },
+      "text": "The treatment doubles lifetime."
+    },
+    "a27": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "version": "2"
+      },
+      "text": "Version 2 reports an updated median lifetime of 18 seconds."
+    },
+    "a24": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "version": "2"
+      },
+      "text": "The updated median lifetime is 24 seconds."
+    },
+    "a02": {
+      "source": "alpha_v2",
+      "expected_identity": {
+        "title": "Beta lifetime trial"
+      },
+      "text": "The updated median lifetime is 24 seconds."
+    }
+  }
+}
