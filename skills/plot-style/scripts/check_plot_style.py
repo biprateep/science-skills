@@ -2,10 +2,11 @@
 """Static compliance check for the publication plot style.
 
     python check_plot_style.py script.py [more.py ...] [--strict]
+        [--allow-vector] [--allow-palette]
 
 Parses each script's AST and reports, per line:
 
-  ERROR  no-style        no use_style() / plt.style.use() / rcParams.update()
+  ERROR  no-style        no recognized house style before figure creation
   ERROR  figsize         figsize not derived from COLUMN_WIDTH / TEXT_WIDTH /
                          figsize()
   ERROR  savefig-format  saves a .pdf / .svg / .eps (house output is PNG)
@@ -29,10 +30,13 @@ Parses each script's AST and reports, per line:
 
 Exit status is 1 if any ERROR was found (or any WARN with --strict), else 0.
 Only the standard library is used, so it runs anywhere Python 3.9+ does.
+The allow flags record explicit user requests; they do not waive other rules.
+This is a static heuristic, not a runtime certificate: use verify_style() too.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 from collections.abc import Sequence
 import pathlib
@@ -49,8 +53,11 @@ WIDTH_TOKENS = (
 FIGSIZE_FUNCS = {"figsize", "grid_figsize"}
 VECTOR_EXT = re.compile(r"\.(pdf|svg|eps|ps)\b", re.IGNORECASE)
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{3,8}$")
-ALLOWED_COLORS = {"k", "black", "w", "white", "none", "gray", "grey"}
+ALLOWED_COLORS = {"none"}
 CYCLE_COLOR = re.compile(r"^C\d+$")
+PLOT_FORMAT_COLOR = re.compile(
+    r"^[-:.ox+*<>^vpsDhH1234|_]*(C\d|[bgrcmykw])[-:.ox+*<>^vpsDhH1234|_]*$"
+)
 COLOR_KWARGS = {"color", "c", "facecolor", "edgecolor", "colors", "fc", "ec"}
 SERIES_FUNCS = {
     "plot",
@@ -90,6 +97,35 @@ PALETTE_CALLS = {
     "blend_palette",
 }
 _PALETTE_WARNING = "third-party palette, only when the user asked for one"
+_INLINE_RC = {
+    "font.family": "serif",
+    "font.serif": ["CMU Serif", "Latin Modern Roman", "cmr10"],
+    "font.size": 10,
+    "axes.titlesize": 10,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "xtick.top": True,
+    "ytick.right": True,
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "legend.fontsize": 10,
+    "figure.facecolor": "w",
+    "figure.dpi": 300,
+    "mathtext.fontset": "cm",
+    "axes.formatter.use_mathtext": True,
+}
+_OUTPUT_RC = {
+    "savefig.dpi": 300,
+    "savefig.bbox": "tight",
+    "savefig.format": "png",
+    "legend.frameon": False,
+}
+_FIGURE_CALLS = {
+    "matplotlib.pyplot.figure",
+    "matplotlib.pyplot.subplots",
+    "matplotlib.pyplot.subplot_mosaic",
+}
 
 # One finding: (line, "ERROR" or "WARN", code, message).
 _Finding = tuple[int, str, str, str]
@@ -145,17 +181,50 @@ class Checker(ast.NodeVisitor):
         "use_style", "style.use" or "rcParams.update".
     """
 
-    def __init__(self, path: pathlib.Path, src: str) -> None:
+    def __init__(
+        self,
+        path: pathlib.Path,
+        src: str,
+        *,
+        allow_vector: bool = False,
+        allow_palette: bool = False,
+    ) -> None:
         """Initializes the checker for one script.
 
         Args:
           path: The script.
           src: Its source.
+          allow_vector: Whether the user explicitly requested vector output.
+          allow_palette: Whether the user explicitly requested custom colors.
         """
         self.path = path
         self.src = src
         self.findings: list[_Finding] = []
         self.style_calls: set[str] = set()
+        self.aliases: dict[str, str] = {}
+        self.constants: dict[str, object] = {}
+        self.allow_vector = allow_vector
+        self.allow_palette = allow_palette
+
+    def _resolved_name(self, node: ast.AST) -> str:
+        """Resolve imported module and function aliases."""
+        name = _name(node)
+        root, separator, rest = name.partition(".")
+        return self.aliases.get(root, root) + separator + rest
+
+    def _value(self, node: ast.AST | None) -> object:
+        """Read literal settings and previously assigned literal constants."""
+        if isinstance(node, ast.Name):
+            return self.constants.get(node.id)
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return [self._value(value) for value in node.elts]
+        if isinstance(node, ast.Dict):
+            return {
+                self._value(key): self._value(value)
+                for key, value in zip(node.keys, node.values)
+                if isinstance(key, (ast.Constant, ast.Name))
+            }
+        return _const(node)
 
     # -- reporting -----------------------------------------------------------
     def err(self, node: ast.expr | ast.stmt, code: str, msg: str) -> None:
@@ -170,8 +239,11 @@ class Checker(ast.NodeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         """Warns on imports of third-party palette packages."""
         for alias in node.names:
+            self.aliases[alias.asname or alias.name.split(".")[0]] = (
+                alias.name if alias.asname else alias.name.split(".")[0]
+            )
             root = alias.name.split(".")[0]
-            if root in PALETTE_MODULES:
+            if root in PALETTE_MODULES and not self.allow_palette:
                 self.warn(
                     node, "palette", f"imports {alias.name}: {_PALETTE_WARNING}"
                 )
@@ -180,7 +252,11 @@ class Checker(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Warns on imports from third-party palette packages."""
         root = (node.module or "").split(".")[0]
-        if root in PALETTE_MODULES:
+        for alias in node.names:
+            self.aliases[alias.asname or alias.name] = (
+                f"{node.module}.{alias.name}"
+            )
+        if root in PALETTE_MODULES and not self.allow_palette:
             self.warn(
                 node,
                 "palette",
@@ -188,16 +264,43 @@ class Checker(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Track literal constants and reject explicit rcParam overrides."""
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self.constants[target.id] = self._value(node.value)
+            elif isinstance(target, ast.Subscript) and self._resolved_name(
+                target.value
+            ).endswith(".rcParams"):
+                key = self._value(target.slice)
+                self._check_rc_values(node, {key: self._value(node.value)})
+        self.generic_visit(node)
+
     def visit_Call(self, call: ast.Call) -> None:
         """Runs the checks that look at one call."""
-        name = _name(call.func)
+        name = self._resolved_name(call.func)
         tail = name.rsplit(".", 1)[-1]
         self._check_palette_call(call, name, tail)
-        self._note_style_call(name, tail)
+        self._note_style_call(call, name)
 
         figsize_value = _kw(call, "figsize")
         if figsize_value is not None:
             self.check_figsize(figsize_value)
+        if name in _FIGURE_CALLS:
+            if not self.style_calls:
+                self.err(
+                    call, "no-style", "apply the house style before figures"
+                )
+            if figsize_value is None:
+                # figure(num, figsize, ...) also accepts a positional size.
+                if name.endswith(".figure") and len(call.args) > 1:
+                    self.check_figsize(call.args[1])
+                else:
+                    self.err(
+                        call,
+                        "figsize",
+                        "figure requires journal-derived figsize",
+                    )
 
         if tail == "savefig":
             self.check_savefig(call)
@@ -218,17 +321,66 @@ class Checker(ast.NodeVisitor):
             "plotstyle.set_palette",
             "ps.set_palette",
         )
-        if tail in PALETTE_CALLS and not is_own_palette:
+        if (
+            tail in PALETTE_CALLS
+            and not is_own_palette
+            and not self.allow_palette
+        ):
             self.warn(call, "palette", f"{name}(): {_PALETTE_WARNING}")
 
-    def _note_style_call(self, name: str, tail: str) -> None:
+    def _note_style_call(self, call: ast.Call, name: str) -> None:
         """Records a call that applies the style, for the later checks."""
-        if tail == "use_style":
+        if name == "plotstyle.use_style":
             self.style_calls.add("use_style")
         elif name.endswith("style.use"):
-            self.style_calls.add("style.use")
+            value = self._value(call.args[0]) if call.args else None
+            if (
+                isinstance(value, str)
+                and pathlib.PurePath(value).name == "paper.mplstyle"
+            ):
+                self.style_calls.add("style.use")
+            else:
+                self.style_calls.clear()
+                self.err(
+                    call,
+                    "style",
+                    "unrecognized style: use plotstyle.use_style() or"
+                    " the supplied paper.mplstyle",
+                )
         elif name.endswith("rcParams.update"):
-            self.style_calls.add("rcParams.update")
+            argument = call.args[0] if call.args else None
+            values = self._value(argument)
+            if argument is not None and self._resolved_name(argument) == (
+                "plotstyle.RC_PARAMS"
+            ):
+                values = _INLINE_RC
+            if isinstance(values, dict):
+                self._check_rc_values(call, values)
+                if all(
+                    values.get(key) == value
+                    for key, value in _INLINE_RC.items()
+                ):
+                    self.style_calls.add("rcParams.update")
+            else:
+                self.style_calls.clear()
+                self.err(
+                    call, "style", "cannot verify dynamic rcParams settings"
+                )
+
+    def _check_rc_values(
+        self, node: ast.expr | ast.stmt, values: dict[object, object]
+    ) -> None:
+        """Reject explicit contradictions even after a recognized preamble."""
+        for key, expected in {**_INLINE_RC, **_OUTPUT_RC}.items():
+            if key in values and values[key] != expected:
+                if (
+                    key == "savefig.format"
+                    and self.allow_vector
+                    and values[key] in ("pdf", "svg", "eps", "ps")
+                ):
+                    continue
+                self.err(node, "style-override", f"{key} must be {expected!r}")
+                self.style_calls.clear()
 
     def _check_layout_calls(self, call: ast.Call, name: str, tail: str) -> None:
         """Warns on tight_layout() and on the pyplot state machine."""
@@ -239,7 +391,7 @@ class Checker(ast.NodeVisitor):
                 "tight_layout() ignores fig.add_axes() colorbars;"
                 " savefig(bbox_inches='tight') already crops",
             )
-        if name.startswith("plt.") and tail in PYPLOT_STATE:
+        if name.startswith("matplotlib.pyplot.") and tail in PYPLOT_STATE:
             fix = f"ax.{tail}()" if tail == "legend" else f"ax.set_{tail}()"
             self.warn(
                 call,
@@ -263,7 +415,9 @@ class Checker(ast.NodeVisitor):
         """Errors unless a figsize derives from the journal widths."""
         text = ast.unparse(node)
         if isinstance(node, ast.Call):
-            if _name(node.func).rsplit(".", 1)[-1] in FIGSIZE_FUNCS:
+            if self._resolved_name(node.func) in {
+                f"plotstyle.{function}" for function in FIGSIZE_FUNCS
+            }:
                 return
         if isinstance(node, (ast.Tuple, ast.List)) and node.elts:
             width = ast.unparse(node.elts[0])
@@ -290,27 +444,28 @@ class Checker(ast.NodeVisitor):
         """Errors on vector output and on savefig without house arguments."""
         target = call.args[0] if call.args else _kw(call, "fname")
         literal = _literal_str(target) if target is not None else None
-        if literal is not None and VECTOR_EXT.search(literal):
+        output_format = self._value(_kw(call, "format"))
+        if not self.allow_vector and (
+            (literal is not None and VECTOR_EXT.search(literal))
+            or output_format in ("pdf", "svg", "eps", "ps")
+        ):
             self.err(
                 call,
                 "savefig-format",
                 f"saves {literal!r}: house output is a 300 dpi PNG",
             )
 
-        has_bbox = _const(_kw(call, "bbox_inches")) == "tight"
-        has_dpi = _const(_kw(call, "dpi")) == 300
         # savefig.bbox and savefig.dpi come from the style sheet when it is in
         # effect.
         rc_covered = bool(self.style_calls & {"use_style", "style.use"})
-        if not (has_bbox and has_dpi) and not rc_covered:
-            missing = [
-                argument
-                for argument, present in (
-                    ("bbox_inches='tight'", has_bbox),
-                    ("dpi=300", has_dpi),
-                )
-                if not present
-            ]
+        missing = []
+        for key, expected in (("bbox_inches", "tight"), ("dpi", 300)):
+            value = _kw(call, key)
+            if value is None and rc_covered:
+                continue
+            if self._value(value) != expected:
+                missing.append(f"{key}={expected!r}")
+        if missing:
             self.err(
                 call, "savefig-args", "savefig missing " + ", ".join(missing)
             )
@@ -325,19 +480,34 @@ class Checker(ast.NodeVisitor):
                 "legend(frameon=True): legends are always frameless",
             )
             return
-        inline_only = self.style_calls and not (
-            self.style_calls & {"use_style", "style.use"}
-        )
+        inline_only = not (self.style_calls & {"use_style", "style.use"})
         if frameon is None and inline_only:
             self.err(
                 call,
                 "legend-frame",
-                "legend() without frameon=False: the inline rcParams block"
-                " does not set legend.frameon",
+                "legend() without frameon=False or a recognized style sheet",
             )
 
     def check_colors(self, call: ast.Call) -> None:
         """Warns on hand-picked colours given to a data series."""
+        if self.allow_palette:
+            return
+        identity_line = len(call.args) >= 2 and ast.dump(
+            call.args[0]
+        ) == ast.dump(call.args[1])
+        if _name(call.func).rsplit(".", 1)[-1] == "plot":
+            for argument in call.args:
+                value = _const(argument)
+                match = (
+                    PLOT_FORMAT_COLOR.fullmatch(value)
+                    if isinstance(value, str)
+                    else None
+                )
+                if match and not CYCLE_COLOR.fullmatch(match[1]):
+                    if not (identity_line and match[1] == "k"):
+                        self.warn(
+                            call, "color", f"format {value!r}: use cycle colors"
+                        )
         for keyword in call.keywords:
             if keyword.arg not in COLOR_KWARGS:
                 continue
@@ -349,7 +519,15 @@ class Checker(ast.NodeVisitor):
                 color = _const(value)
                 if not isinstance(color, str):
                     continue
-                if color in ALLOWED_COLORS or CYCLE_COLOR.match(color):
+                if (
+                    color in ALLOWED_COLORS
+                    or CYCLE_COLOR.fullmatch(color)
+                    or (identity_line and color in ("k", "black"))
+                    or (
+                        color in ("w", "white")
+                        and _const(_kw(call, "histtype")) == "step"
+                    )
+                ):
                     continue
                 if (
                     HEX_COLOR.match(color)
@@ -374,19 +552,26 @@ class Checker(ast.NodeVisitor):
                     1,
                     "ERROR",
                     "no-style",
-                    "no use_style() / plt.style.use() / rcParams.update()"
-                    " before plotting",
+                    "no recognized plotstyle helper, paper.mplstyle, or"
+                    " complete inline rcParams preamble",
                 ),
             )
         self.findings.sort()
         return self.findings
 
 
-def check_file(path: pathlib.Path) -> list[_Finding]:
+def check_file(
+    path: pathlib.Path,
+    *,
+    allow_vector: bool = False,
+    allow_palette: bool = False,
+) -> list[_Finding]:
     """Checks one script.
 
     Args:
       path: The script.
+      allow_vector: Whether the user explicitly requested vector output.
+      allow_palette: Whether the user explicitly requested custom colors.
 
     Returns:
       Its findings, sorted, as (line, level, code, message).
@@ -397,7 +582,9 @@ def check_file(path: pathlib.Path) -> list[_Finding]:
     """
     src = path.read_text(encoding="utf-8")
     tree = ast.parse(src, filename=str(path))
-    checker = Checker(path, src)
+    checker = Checker(
+        path, src, allow_vector=allow_vector, allow_palette=allow_palette
+    )
     checker.visit(tree)
     return checker.finish()
 
@@ -412,16 +599,20 @@ def main(argv: Sequence[str] | None = None) -> int:
       The exit status: 1 for errors (or warnings under --strict), 2 when no
       file is given, 0 otherwise.
     """
-    argv = list(sys.argv[1:] if argv is None else argv)
-    strict = "--strict" in argv
-    files = [pathlib.Path(a) for a in argv if not a.startswith("--")]
-    if not files:
-        print(__doc__)
-        return 2
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("files", nargs="+", type=pathlib.Path)
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--allow-vector", action="store_true")
+    parser.add_argument("--allow-palette", action="store_true")
+    options = parser.parse_args(argv)
     n_err = n_warn = 0
-    for path in files:
+    for path in options.files:
         try:
-            findings = check_file(path)
+            findings = check_file(
+                path,
+                allow_vector=options.allow_vector,
+                allow_palette=options.allow_palette,
+            )
         except SyntaxError as error:
             print(f"{path}:{error.lineno}: ERROR syntax {error.msg}")
             n_err += 1
@@ -435,7 +626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not findings:
             print(f"{path}: OK")
     print(f"\n{n_err} error(s), {n_warn} warning(s)")
-    return 1 if n_err or (strict and n_warn) else 0
+    return 1 if n_err or (options.strict and n_warn) else 0
 
 
 if __name__ == "__main__":
