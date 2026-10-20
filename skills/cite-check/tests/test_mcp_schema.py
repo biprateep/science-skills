@@ -92,6 +92,10 @@ class ProtocolSchemaTest(unittest.TestCase):
                     correction_fields = schemas["correction_report"]["properties"]
                     self.assertEqual(correction_fields["policy"]["default"], "submission-ready")
                     self.assertFalse(correction_fields["annotated"]["default"])
+                    job_schema = schemas["verification_job"]
+                    for field in ("max_requests", "max_searches", "max_seconds", "max_cost_usd", "occurrence_id", "atom_id", "reason", "priority"):
+                        self.assertIn(field, json.dumps(job_schema))
+                    self.assertEqual(job_schema["properties"]["operation"]["default"], "run")
                     policy_schema = schemas["audit"]["properties"]["policy"]
                     self.assertEqual(policy_schema["default"], "submission-ready")
                     self.assertEqual(set(policy_schema["enum"]), {"submission-ready", "exploratory"})
@@ -156,6 +160,29 @@ class ProtocolSchemaTest(unittest.TestCase):
                             "proposed_correction": proposal,
                         })).model_dump(by_alias=True)
                         self.assertTrue(refused_proposal.get("isError", False))
+                    bibliography = pathlib.Path(directory) / "refs.bib"
+                    bibliography.write_text("@article{a,title={Example},doi={10.1234/example}}")
+                    job_result = (await session.call_tool("verification_job", {
+                        "tex_path": str(manuscript), "bib_path": str(bibliography),
+                        "budget": {"max_requests": 0, "max_searches": 0},
+                    })).model_dump(by_alias=True)
+                    job_text = " ".join(item.get("text", "") for item in job_result["content"])
+                    self.assertIn('"identity_unchecked": 1', job_text)
+                    self.assertIn('"support_pending": 1', job_text)
+                    self.assertIn('"submission_ready": false', job_text)
+                    saved_job = next((pathlib.Path(directory) / ".cite-check").glob("job-*.json"))
+                    job_id = json.loads(saved_job.read_text())["job_id"]
+                    status_result = (await session.call_tool("verification_job", {
+                        "tex_path": str(manuscript), "job_id": job_id, "operation": "status",
+                    })).model_dump(by_alias=True)
+                    self.assertFalse(status_result.get("isError", False))
+                    status_text = " ".join(item.get("text", "") for item in status_result["content"])
+                    self.assertIn('"identity_unchecked": 1', status_text)
+                    for invalid_budget in ({"max_requests": True}, {"max_requests": 1.5}, {"max_seconds": True}, {"max_seconds": "1"}, {"max_cost_usd": False}, {"max_cost_usd": "1"}, {"undocumented": 1}):
+                        invalid_job = (await session.call_tool("verification_job", {
+                            "tex_path": str(manuscript), "budget": invalid_budget,
+                        })).model_dump(by_alias=True)
+                        self.assertTrue(invalid_job.get("isError", False))
                     refused = (await session.call_tool("audit", {
                         "tex_path": str(manuscript), "policy": "unknown",
                     })).model_dump(by_alias=True)

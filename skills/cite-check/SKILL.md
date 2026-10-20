@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.6.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -101,6 +101,7 @@ Never edit anything under `mcp/` during a task.
 | `fetch_bibtex(identifier, key, prefer, journal_format, tex_path, version)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
 | `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
+| `verification_job(tex_path, bib_path, job_id, operation, budget, priorities, search_unresolved)` | prioritized registry checks with request/search/time/cost admission limits, persistent progress and an ordered support-work queue | identity progress only; remaining work is UNCHECKED and every job has `submission_ready=false` |
 | `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
 | `register_claims(tex_path, sentence_id, atoms)` | register a complete partition of exact sentence spans, explicit citation attachments, and declared uncited scope; derives stable atom IDs | no assertion or citation may disappear |
 | `fetch_text(identifier, pdf_path, text_path, version)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
@@ -120,6 +121,13 @@ with bad args prints it). Registry behaviour and thresholds:
 ## Workflows
 
 Pick the one that matches the request; all three end in `audit`.
+
+For a large manuscript or an explicit resource limit, use `verification_job`
+to check consequential claims' citation identities first and resume within
+fresh per-run grants. Priorities are scheduling advice; every low-priority
+requirement stays visible. Source reading and independent judgments remain
+pending, and the ordinary strict audit is still required. Read
+`references/verification-jobs.md` for budget accounting and resume rules.
 
 ### A. Add a citation while writing
 
