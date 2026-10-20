@@ -32,3 +32,6 @@ skills/plot-style/examples/figs/
 skills/co-writer/scratch/
 skills/co-writer/eval/runs/
 .co-writer/
+
+# Local audit notes and generated review artifacts
+/reviews/
