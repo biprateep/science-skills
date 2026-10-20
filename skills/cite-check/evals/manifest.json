@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "skill": "cite-check",
+  "cases": [
+    {
+      "id": "evidence-boundaries",
+      "description": "Starter coverage: support, contradiction, overreach, inaccessible evidence, and synthetic provenance; not live registry or full-text retrieval.",
+      "prompt": "evidence-boundaries/prompt.md",
+      "inputs": "evidence-boundaries/input",
+      "reference": "evidence-boundaries/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "increase",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/increase/verdict",
+          "expected": "supported"
+        },
+        {
+          "id": "temperature",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/temperature/verdict",
+          "expected": "unsupported"
+        },
+        {
+          "id": "difference",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/difference/verdict",
+          "expected": "contradicted"
+        },
+        {
+          "id": "unread",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/claims/unread/verdict",
+          "expected": "unverifiable"
+        },
+        {
+          "id": "synthetic-provenance",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/identity_status",
+          "expected": "fixture_only"
+        },
+        {
+          "id": "no-invented-bibliography",
+          "kind": "json_equals",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "pointer": "/bibliography_created",
+          "expected": false
+        },
+        {
+          "id": "verbatim-evidence",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/cite-check/evals/grade.py",
+            "{response_file}"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "A": {
+    "author_request": "Use the default AASTeX single-column house style.",
+    "configuration": {
+      "width_inches": 3.35224200913242,
+      "font_family": "Computer Modern",
+      "tick_direction": "in",
+      "top_ticks": true,
+      "right_ticks": true,
+      "legend_frame": false,
+      "palette": "tab10",
+      "png_dpi": 300,
+      "bbox_inches": "tight"
+    }
+  },
+  "B": {
+    "author_request": "Use the default house style.",
+    "configuration": {
+      "width_inches": 8,
+      "font_family": "Arial",
+      "tick_direction": "out",
+      "top_ticks": false,
+      "right_ticks": false,
+      "legend_frame": true,
+      "palette": "tab10",
+      "png_dpi": 72,
+      "bbox_inches": null
+    }
+  },
+  "C": {
+    "author_request": "Use red and blue lines, retain the other house defaults, and make this AASTeX two-column figure.",
+    "configuration": {
+      "width_inches": 7.10000594991006,
+      "font_family": "Computer Modern",
+      "tick_direction": "in",
+      "top_ticks": true,
+      "right_ticks": true,
+      "legend_frame": false,
+      "palette": [
+        "red",
+        "blue"
+      ],
+      "png_dpi": 300,
+      "bbox_inches": "tight"
+    }
+  }
+}

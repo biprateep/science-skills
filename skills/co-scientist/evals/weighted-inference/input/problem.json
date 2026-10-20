@@ -1,0 +1,21 @@
+{
+  "estimates": [
+    {
+      "value": 10,
+      "standard_deviation": 2
+    },
+    {
+      "value": 14,
+      "standard_deviation": 4
+    }
+  ],
+  "assumptions": [
+    "unbiased",
+    "independent",
+    "known variances"
+  ],
+  "claims": [
+    "An unweighted mean is always the minimum-variance linear unbiased estimator.",
+    "The square root of x squared equals x for every real x."
+  ]
+}

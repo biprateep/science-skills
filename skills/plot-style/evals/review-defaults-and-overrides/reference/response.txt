@@ -1,0 +1,13 @@
+{
+  "A": [],
+  "B": [
+    "font",
+    "legend_frame",
+    "save_bounds",
+    "save_dpi",
+    "tick_direction",
+    "tick_sides",
+    "width"
+  ],
+  "C": []
+}
