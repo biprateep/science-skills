@@ -90,8 +90,9 @@ The orchestrator then calls `record_support` for each item; a refused record
 3. `fetch_text` per paper (cached globally, reused across manuscripts and
    sessions); `find_passages` with **all** claims for that paper in one call.
 4. One judge per paper; one `record_support` per instance.
-5. On revision, only instances whose claim hash changed need re-judging: the
-   ledger keeps the rest. `audit` reports exactly which instances are missing.
+5. On revision, re-judge instances whose claim, surrounding context, source
+   snapshot, or evidence policy changed. `audit` reports missing and stale
+   verdicts; unchanged instances retain their judgments.
 
 ## Common cases
 
@@ -120,6 +121,10 @@ The orchestrator then calls `record_support` for each item; a refused record
 ## Evidence freshness
 
 Pass both `claim` and `context` from `extract_cites` to `record_support`.
+Extraction preserves inline and display mathematics, including LaTeX symbol
+names and citations inside equations. Context includes the neighboring sentence
+on either side across paragraph boundaries, so changing an adjacent displayed
+result also invalidates its old judgment.
 Omitting context means the claim is the entire context, suitable only for an
 isolated sentence. Claim identity preserves mathematical case and Unicode.
 Verdicts bind to the source content digest, source version, extraction version
