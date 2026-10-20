@@ -154,6 +154,67 @@ class CitationScoreTest(unittest.TestCase):
                     metrics["evidence_anchor_matches"]["count"], 16
                 )
 
+    def test_prompts_require_evidence_for_every_readable_verdict(self):
+        cases, suite = score.load_suite(self.repo)
+        rule = (
+            "For every claim with readable source text, include a relevant "
+            "verbatim evidence span, including supported, contradicted, "
+            "and unsupported verdicts."
+        )
+        for case_id, case in cases.items():
+            with self.subTest(case=case_id):
+                prompt = case.manifest_dir / case.specification["prompt"]
+                text = prompt.read_text(encoding="utf-8")
+                self.assertIn(rule, text)
+                self.assertIn("Return only JSON, with no code fences.", text)
+                readable = [
+                    gold
+                    for gold in suite[case_id].values()
+                    if gold.source_text is not None
+                ]
+                self.assertTrue(all(gold.anchors for gold in readable))
+
+    def test_matching_identity_accepts_minimal_scientific_evidence(self):
+        response = self.load_response("identity-version-access")
+        for claim in ("a08", "a13", "a24", "a27"):
+            response["claims"][claim]["evidence"] = (
+                "The updated median lifetime is 24 seconds."
+            )
+        self.replace_response(response, "identity-version-access")
+        metrics = self.evaluate()["metrics"]
+        self.assertEqual(metrics["verbatim_evidence_spans"]["count"], 17)
+        self.assertEqual(metrics["evidence_anchor_matches"]["count"], 17)
+
+    def test_live_stale_value_quote_without_version_header_is_valid(self):
+        response = self.load_response("identity-version-access")
+        response["claims"]["a27"]["evidence"] = (
+            "The updated median lifetime is 24 seconds. "
+            "The version 1 estimate of 18 seconds was superseded."
+        )
+        self.replace_response(response, "identity-version-access")
+        self.assertEqual(
+            self.evaluate()["metrics"]["evidence_anchor_matches"]["count"], 17
+        )
+
+    def test_identity_conflicts_still_require_conflicting_metadata(self):
+        response = self.load_response("identity-version-access")
+        for claim in ("a02", "a16"):
+            response["claims"][claim]["evidence"] = (
+                "The updated median lifetime is 24 seconds."
+            )
+        self.replace_response(response, "identity-version-access")
+        metrics = self.evaluate()["metrics"]
+        self.assertEqual(metrics["verbatim_evidence_spans"]["count"], 17)
+        self.assertEqual(metrics["evidence_anchor_matches"]["count"], 15)
+
+    def test_unsupported_claim_still_requires_stated_evidence(self):
+        response = self.load_response("evidence-boundaries")
+        response["claims"]["temperature"]["evidence"] = ""
+        self.replace_response(response, "evidence-boundaries")
+        metrics = self.evaluate()["metrics"]
+        self.assertEqual(metrics["exact_verdict_accuracy"]["count"], 20)
+        self.assertEqual(metrics["evidence_anchor_matches"]["count"], 16)
+
     def test_inaccessible_triage_and_invented_evidence_are_separate(self):
         response = self.load_response("identity-version-access")
         response["claims"]["a19"] = {

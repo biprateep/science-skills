@@ -1,5 +1,6 @@
 """Regression checks for deterministic starter-fixture graders."""
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -59,6 +60,31 @@ class GraderTest(unittest.TestCase):
                 self.assertEqual(
                     result.returncode, 1, result.stdout + result.stderr
                 )
+
+    def test_minimal_identity_evidence_passes_grade_command(self):
+        reference = json.loads(
+            (
+                self.evals / "identity-version-access/reference/response.txt"
+            ).read_text(encoding="utf-8")
+        )
+        for claim in ("a08", "a13", "a24", "a27"):
+            reference["claims"][claim]["evidence"] = (
+                "The updated median lifetime is 24 seconds."
+            )
+        self.artifact.write_text(json.dumps(reference), encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(self.evals / "grade.py"),
+                str(self.artifact),
+                "identity-version-access",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_missing_output_fails(self):
         self.artifact.unlink()

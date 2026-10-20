@@ -130,7 +130,6 @@
           "cohort": "true_control",
           "source": "alpha_v2",
           "anchors": [
-            "Version: 2",
             "24 seconds"
           ]
         },
@@ -139,7 +138,6 @@
           "cohort": "true_control",
           "source": "alpha_v2",
           "anchors": [
-            "Title: Alpha lifetime trial",
             "24 seconds"
           ]
         },
@@ -154,7 +152,6 @@
           "cohort": "planted_error",
           "source": "alpha_v2",
           "anchors": [
-            "Version: 2",
             "24 seconds"
           ]
         },
@@ -163,7 +160,6 @@
           "cohort": "true_control",
           "source": "alpha_v2",
           "anchors": [
-            "Version: 2",
             "24 seconds"
           ]
         },

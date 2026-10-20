@@ -8,15 +8,15 @@
     },
     "a16": {
       "verdict": "contradicted",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "Version: 2"
     },
     "a08": {
       "verdict": "supported",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "The updated median lifetime is 24 seconds."
     },
     "a13": {
       "verdict": "supported",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "The updated median lifetime is 24 seconds."
     },
     "a05": {
       "verdict": "unverifiable",
@@ -24,15 +24,15 @@
     },
     "a27": {
       "verdict": "contradicted",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "The updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
     },
     "a24": {
       "verdict": "supported",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "The updated median lifetime is 24 seconds."
     },
     "a02": {
       "verdict": "contradicted",
-      "evidence": "Title: Alpha lifetime trial\nVersion: 2\nThe updated median lifetime is 24 seconds. The version 1 estimate of 18 seconds was superseded."
+      "evidence": "Title: Alpha lifetime trial"
     }
   }
 }
