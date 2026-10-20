@@ -7,7 +7,7 @@
 # digest it into a proposal, and file the proposal for the author to rule on
 # in "co-writer review". The profile is never changed here.
 #
-#   update.sh
+#   update.sh [--manual]
 #
 # The digest agent is a headless Claude Code run confined to the packet
 # directory (Read/Write/Glob/Grep only). Set CO_WRITER_DIGEST_CMD to use
@@ -16,6 +16,14 @@
 # there. A copy of the output goes to $CO_WRITER_HOME/update.log.
 
 set -euo pipefail
+
+manual=false
+if [[ "${1:-}" == "--manual" && $# -eq 1 ]]; then
+  manual=true
+elif [[ $# -ne 0 ]]; then
+  echo "usage: update.sh [--manual]" >&2
+  exit 2
+fi
 
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STORE="${CO_WRITER_HOME:-$HOME/.co-writer}"
@@ -33,8 +41,16 @@ set -e
 if [[ $status -eq 3 ]]; then
   echo "$packet"
   exit 0
+elif [[ $status -ne 0 ]]; then
+  echo "packet creation failed (exit $status)" >&2
+  exit "$status"
 fi
 echo "packet: $packet"
+if [[ "$manual" == true ]]; then
+  echo "Follow digest.md in $packet in the current agent session."
+  echo "Then run: python3 '$SKILL/scripts/cowriter.py' file '$packet'"
+  exit 0
+fi
 
 prompt="You are running the co-writer digest. Read digest.md in this \
 directory and follow it exactly: read pairs.jsonl, notes.md, \
