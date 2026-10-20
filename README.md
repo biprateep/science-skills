@@ -37,12 +37,12 @@ this machine does not have:
    | Harness | Mechanism | Picks up new skills |
    | :--- | :--- | :--- |
    | **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
-   | **Google Antigravity** | a directory entry in `~/.gemini/config/skills.json` | automatically |
+   | **Google Antigravity** | symlinks in `~/.gemini/config/skills/<name>` | rerun the script |
    | **OpenAI Codex** | one symlink `~/.agents/skills/science-skills` → `skills/` | automatically |
 
 2. **Builds and registers the MCP toolboxes** that skills ship (co-scientist's
    and cite-check's): one `.venv` per toolbox, then an entry in Claude Code
-   (`--scope user`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
+   (user-scope `~/.claude.json`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
    (`~/.gemini/config/mcp_config.json`, read by the app, the IDE and the `agy`
    CLI alike). This step needs the network and takes a minute — pass
    `--skip-mcp` to leave it out, or run
@@ -143,11 +143,23 @@ bash science-skills/scripts/install.sh
 ```
 
 The pull alone makes edits to existing skills live. The rerun covers what a
-pull cannot: it links skills that are new since the last run into Claude Code,
+pull cannot: it links skills that are new since the last run into Claude Code
+and Antigravity,
 removes the links of skills renamed or deleted upstream, reinstalls each MCP
-toolbox's requirements, and repeats the tool check. Antigravity and Codex
-scan `skills/` and need nothing. As always, start a new session to load the
-changes.
+toolbox's requirements, and repeats the tool check. Codex scans `skills/`
+automatically. As always, start a new session to load the changes.
+
+Installers preserve foreign directories, links (including dangling links),
+and MCP registrations. Ownership receipts beside client configurations let
+an unchanged registration follow a moved clone when its old path is gone.
+Conflicts fail visibly; inspect the old launcher before removing or migrating
+it. Existing same-path installations are adopted on the first refresh.
+Codex TOML edits use `tomlkit` to preserve unrelated tables and comments.
+Antigravity's old `skills.json` entry is removed only when it points to this
+clone, as skills move to the documented global skill directory.
+
+The shell installers and file locks support Linux, macOS, and WSL; native
+Windows installation is not supported by these Bash scripts.
 
 ## Featured Skills
 

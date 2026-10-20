@@ -11,10 +11,10 @@
 # 1. Creates mcp/.venv and installs requirements (uv if available, else pip).
 # 2. Smoke-tests the server in CLI mode.
 # 3. Registers the server in every harness found on this machine:
-#      Claude Code        -> `claude mcp add --scope user`
+#      Claude Code        -> user-scope mcpServers in ~/.claude.json
 #      OpenAI Codex       -> ~/.codex/config.toml   ([mcp_servers.co-scientist])
 #      Google Antigravity -> mcp_config.json        ("mcpServers"."co-scientist")
-#    Existing registrations and unrelated config entries are left untouched.
+#    Owned registrations refresh; unrelated entries are left untouched.
 #
 # Newly registered MCP servers load at the NEXT session start of each harness.
 # Until then the identical checks are available via CLI mode:
@@ -97,150 +97,49 @@ if [ "$MODE" = install ]; then
 fi
 
 # ==============================================================================
-# 3a. Claude Code
+# 3. Client configurations — parsed, ownership-checked, atomic transactions.
 # ==============================================================================
-if command -v claude >/dev/null 2>&1; then
-    if [ "$MODE" = install ]; then
-        if claude mcp get co-scientist >/dev/null 2>&1; then
-            echo "  claude-code: already registered"
-        else
-            run claude mcp add --scope user co-scientist -- "$PY" "$SERVER"
-            [ "$DRY_RUN" = 1 ] || echo "  claude-code: registered (user scope)"
-        fi
-    else
-        if claude mcp get co-scientist >/dev/null 2>&1; then
-            run claude mcp remove --scope user co-scientist
-            [ "$DRY_RUN" = 1 ] || echo "  claude-code: deregistered"
-        else
-            echo "  claude-code: not registered"
-        fi
+CONFIG_HELPER="$MCP_DIR/../../../scripts/install_config.py"
+CONFIG_PY="$(host_python)"
+CONFIG_FAILED=0
+register_client() {
+    local client="$1" config="$2"
+    local options=()
+    if [ "$DRY_RUN" = 1 ] && [ "$client" = codex ] \
+            && ! "$CONFIG_PY" -c 'import tomlkit' >/dev/null 2>&1; then
+        echo "  [dry-run] would install tomlkit, then validate owned Codex registration"
+        return
     fi
-else
-    echo "  claude-code: not found — skipped"
-fi
-
-# ==============================================================================
-# 3b. OpenAI Codex
-# ==============================================================================
-# Registered as "co-scientist", the name Claude Code and Antigravity use, so the tools
-# are mcp__co-scientist__* in every harness. Earlier versions wrote
-# [mcp_servers.co_scientist]; a table of that name that runs this server is ours, and
-# install removes it so the toolbox never starts twice in one session.
-CODEX_CFG="${CODEX_HOME:-$HOME/.codex}/config.toml"
-CODEX_NEW='^\[mcp_servers\."?co-scientist"?\]'
-CODEX_OLD='^\[mcp_servers\."?co_scientist"?\]'
-CODEX_ANY='^\[mcp_servers\."?co[_-]scientist"?\]'
-
-codex_drop() {  # codex_drop <header-regex> — drop matching tables that run $SERVER
-    HDR="$1" SRV="$SERVER" awk '
-        function flush() { if (!index(buf, ENVIRON["SRV"])) printf "%s", buf; buf = ""; mine = 0 }
-        /^[ \t]*\[/ { if (mine) flush(); if ($0 ~ ENVIRON["HDR"]) mine = 1 }
-        mine        { buf = buf $0 "\n"; next }
-                    { print }
-        END         { if (mine) flush() }
-    ' "$CODEX_CFG" > "$CODEX_CFG.tmp" && mv "$CODEX_CFG.tmp" "$CODEX_CFG"
+    [ "$DRY_RUN" = 1 ] && options+=(--dry-run)
+    if ! "$CONFIG_PY" "$CONFIG_HELPER" mcp --client "$client" \
+            --config "$config" --name "co-scientist" --python "$PY" \
+            --server "$SERVER" --mode "$MODE" ${options+"${options[@]}"}; then
+        CONFIG_FAILED=1
+    fi
 }
 
+# Read the user scope directly; `claude mcp get` can select a project/local
+# entry with the same name and cannot establish ownership of the user entry.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    CLAUDE_USER_CFG="$CLAUDE_CONFIG_DIR/.claude.json"
+else
+    CLAUDE_USER_CFG="$HOME/.claude.json"
+fi
+if command -v claude >/dev/null 2>&1 || [ -f "$CLAUDE_USER_CFG" ]; then
+    register_client claude "$CLAUDE_USER_CFG"
+fi
+CODEX_CFG="${CODEX_HOME:-$HOME/.codex}/config.toml"
 if command -v codex >/dev/null 2>&1 || [ -f "$CODEX_CFG" ]; then
-    if [ "$MODE" = install ]; then
-        if [ -f "$CODEX_CFG" ] && grep -Eq "$CODEX_OLD" "$CODEX_CFG"; then
-            if [ "$DRY_RUN" = 1 ]; then
-                echo "  [dry-run] would remove the old [mcp_servers.co_scientist] from $CODEX_CFG"
-            else
-                codex_drop "$CODEX_OLD"
-                echo "  codex: removed the old [mcp_servers.co_scientist] entry"
-            fi
-        fi
-        if [ -f "$CODEX_CFG" ] && grep -Eq "$CODEX_NEW" "$CODEX_CFG"; then
-            echo "  codex: already registered"
-        elif [ "$DRY_RUN" = 1 ]; then
-            echo "  [dry-run] would add [mcp_servers.co-scientist] to $CODEX_CFG"
-        else
-            mkdir -p "$(dirname "$CODEX_CFG")"
-            # A new [table] appended at EOF is valid TOML regardless of what precedes it.
-            printf '\n[mcp_servers.co-scientist]\ncommand = "%s"\nargs = ["%s"]\n' \
-                "$PY" "$SERVER" >> "$CODEX_CFG"
-            echo "  codex: registered in $CODEX_CFG"
-        fi
-    elif [ ! -f "$CODEX_CFG" ] || ! grep -Eq "$CODEX_ANY" "$CODEX_CFG"; then
-        echo "  codex: not registered"
-    elif [ "$DRY_RUN" = 1 ]; then
-        echo "  [dry-run] would remove [mcp_servers.co-scientist] from $CODEX_CFG"
-    else
-        codex_drop "$CODEX_ANY"
-        echo "  codex: deregistered from $CODEX_CFG"
-    fi
-else
-    echo "  codex: not found — skipped"
+    register_client codex "$CODEX_CFG"
 fi
-
-# ==============================================================================
-# 3c. Google Antigravity
-# ==============================================================================
-# Every Antigravity surface (the app, the IDE and the agy CLI) reads the global
-# ~/.gemini/config/mcp_config.json; the per-surface copies under ~/.gemini/
-# antigravity*/ are left over from earlier releases. scripts/install.sh creates
-# ~/.gemini/config when it finds Antigravity, so the file is created there if
-# missing. Without that directory, fall back to an older home that exists.
 AG_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}"
-AG_CFG=""
-if [ -d "$AG_DIR" ]; then
-    AG_CFG="$AG_DIR/mcp_config.json"
-    if [ ! -f "$AG_CFG" ] && [ "$MODE" = install ] && [ "$DRY_RUN" = 0 ]; then
-        : > "$AG_CFG"   # empty is fine: the writer below treats it as {}
-    fi
-    # Keep it if it exists, or if a dry-run install only narrates creating it.
-    if [ ! -f "$AG_CFG" ] && ! { [ "$MODE" = install ] && [ "$DRY_RUN" = 1 ]; }; then
-        AG_CFG=""
-    fi
-else
-    for cand in "$HOME/.gemini/antigravity/mcp_config.json" \
-                "$HOME/.antigravity/mcp_config.json"; do
-        if [ -f "$cand" ]; then AG_CFG="$cand"; break; fi
-    done
+if [ -d "$AG_DIR" ] || command -v agy >/dev/null 2>&1 \
+        || command -v antigravity >/dev/null 2>&1; then
+    register_client antigravity "$AG_DIR/mcp_config.json"
 fi
-
-if [ -z "$AG_CFG" ]; then
-    echo "  antigravity: no mcp_config.json found — skipped"
-elif [ "$DRY_RUN" = 1 ]; then
-    echo "  [dry-run] would $MODE 'co-scientist' in $AG_CFG"
-elif ! AG_PY="$(host_python)"; then
-    echo "  antigravity: no python3 available to edit $AG_CFG — skipped" >&2
-else
-    "$AG_PY" - "$AG_CFG" "$PY" "$SERVER" "$MODE" <<'PYEOF'
-import json, os, sys
-cfg_path, py, srv, mode = sys.argv[1:5]
-# A freshly created mcp_config.json is zero bytes; json.load would choke on it.
-raw = open(cfg_path).read().strip()
-if raw:
-    try:
-        cfg = json.loads(raw)
-    except ValueError as exc:
-        sys.exit(f"  antigravity: {cfg_path} is not valid JSON ({exc}); fix it, then rerun")
-else:
-    cfg = {}
-if not isinstance(cfg, dict):
-    sys.exit(f"  antigravity: {cfg_path} must contain a JSON object; leaving it alone")
-
-servers = cfg.setdefault("mcpServers", {})
-if mode == "install":
-    if "co-scientist" in servers:
-        print(f"  antigravity: already registered ({cfg_path})")
-        raise SystemExit
-    servers["co-scientist"] = {"command": py, "args": [srv]}
-    verb = "registered in"
-else:
-    if "co-scientist" not in servers:
-        print(f"  antigravity: not registered ({cfg_path})")
-        raise SystemExit
-    del servers["co-scientist"]
-    verb = "deregistered from"
-
-with open(cfg_path, "w") as fh:
-    json.dump(cfg, fh, indent=2)
-    fh.write("\n")
-print(f"  antigravity: {verb} {cfg_path}")
-PYEOF
+if [ "$CONFIG_FAILED" = 1 ]; then
+    echo "MCP configuration conflicts remain; venv retained. See above." >&2
+    exit 1
 fi
 
 # ==============================================================================
