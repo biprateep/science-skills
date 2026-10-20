@@ -731,15 +731,18 @@ def _arxiv_parse(body: str) -> list:
     out = []
     try:
         root = ET.fromstring(body)
-    except ET.ParseError:
-        return out
+    except ET.ParseError as exc:
+        raise RegistryLookupError("arxiv", "malformed-response", 200) from exc
+    if root.tag != "{http://www.w3.org/2005/Atom}feed":
+        raise RegistryLookupError("arxiv", "malformed-response", 200)
     for e in root.findall("a:entry", _ATOM):
         title = re.sub(r"\s+", " ", e.findtext("a:title", "", _ATOM)).strip()
         eid = e.findtext("a:id", "", _ATOM)
-        if not title or title == "Error" or "/api/errors" in eid:
-            continue
-        m = re.search(r"arxiv\.org/abs/(.+)$", eid)
-        aid = _strip_arxiv_version(m.group(1)) if m else None
+        m = re.fullmatch(r"https?://arxiv\.org/abs/(.+)", eid)
+        if (not title or title == "Error" or not m
+                or not _ARXIV_RE.fullmatch(m.group(1))):
+            raise RegistryLookupError("arxiv", "malformed-response", 200)
+        aid = _strip_arxiv_version(m.group(1))
         cat = e.find("x:primary_category", _ATOM)
         out.append(_record(
             registry="arxiv", title=title, arxiv=aid,
@@ -778,15 +781,6 @@ def _arxiv_lookup(ids: list) -> dict:
         status, body = _http(f"{_ARXIV_API}?id_list={','.join(chunk)}&max_results={len(chunk)}")
         if not _registry_status("arxiv", status):
             continue
-        try:
-            root = ET.fromstring(body)
-        except ET.ParseError as exc:
-            raise RegistryLookupError("arxiv", "malformed-response", status) from exc
-        if root.tag != "{http://www.w3.org/2005/Atom}feed" or any(
-            "/api/errors" in entry.findtext("a:id", "", _ATOM)
-            for entry in root.findall("a:entry", _ATOM)
-        ):
-            raise RegistryLookupError("arxiv", "malformed-response", status)
         for rec in _arxiv_parse(body):
             found[rec["arxiv"].lower()] = rec
     return found
@@ -795,7 +789,7 @@ def _arxiv_lookup(ids: list) -> dict:
 def _arxiv_query(q: str, max_results: int = 10) -> list:
     url = f"{_ARXIV_API}?search_query={urllib.parse.quote(q)}&max_results={max_results}"
     status, body = _http(url)
-    return _arxiv_parse(body) if status == 200 else []
+    return _arxiv_parse(body) if _registry_status("arxiv", status) else []
 
 
 def _arxiv_search(title=None, author=None, words=None, year=None, max_results=10) -> list:
@@ -816,7 +810,51 @@ def _arxiv_search(title=None, author=None, words=None, year=None, max_results=10
 _CROSSREF = "https://api.crossref.org/works"
 
 
+def _registry_list(
+    data: dict, key: str, item_type: type, registry: str,
+) -> list:
+    """Validate optional registry arrays before converting their contents."""
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        not isinstance(item, item_type) for item in value
+    ):
+        raise RegistryLookupError(registry, "malformed-response", 200)
+    return value
+
+
+def _registry_strings(data: dict, keys: tuple[str, ...], registry: str) -> None:
+    """Reject non-string scalar fields in a registry response."""
+    if any(data.get(key) is not None and not isinstance(data[key], str)
+           for key in keys):
+        raise RegistryLookupError(registry, "malformed-response", 200)
+
+
 def _cr_record(msg: dict) -> dict:
+    """Convert valid Crossref records and classify malformed nested fields."""
+    if not isinstance(msg, dict):
+        raise RegistryLookupError("crossref", "malformed-response", 200)
+    _registry_strings(msg, ("DOI", "abstract", "type", "URL"), "crossref")
+    if not _DOI_RE.fullmatch(msg.get("DOI") or ""):
+        raise RegistryLookupError("crossref", "malformed-response", 200)
+    if msg.get("is-referenced-by-count") is not None and type(
+        msg["is-referenced-by-count"]
+    ) is not int:
+        raise RegistryLookupError("crossref", "malformed-response", 200)
+    for key in ("title", "subtitle", "container-title"):
+        _registry_list(msg, key, str, "crossref")
+    for author in _registry_list(msg, "author", dict, "crossref"):
+        _registry_strings(author, ("family", "given", "name"), "crossref")
+    for link in _registry_list(msg, "link", dict, "crossref"):
+        _registry_strings(link, ("URL", "content-type"), "crossref")
+    try:
+        return _cr_record_fields(msg)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise RegistryLookupError("crossref", "malformed-response", 200) from exc
+
+
+def _cr_record_fields(msg: dict) -> dict:
     title = " ".join(msg.get("title") or []).strip()
     sub = " ".join(msg.get("subtitle") or []).strip()
     if sub and _norm_title(sub) not in _norm_title(title):
@@ -886,6 +924,31 @@ def _datacite_doi(doi: str):
             raise ValueError("missing DOI")
     except (KeyError, TypeError, ValueError) as exc:
         raise RegistryLookupError("datacite", "malformed-response", status) from exc
+    _registry_strings(a, ("doi", "publisher", "url"), "datacite")
+    if not _DOI_RE.fullmatch(a.get("doi") or ""):
+        raise RegistryLookupError("datacite", "malformed-response", status)
+    for title in _registry_list(a, "titles", dict, "datacite"):
+        _registry_strings(title, ("title",), "datacite")
+    for creator in _registry_list(a, "creators", dict, "datacite"):
+        _registry_strings(
+            creator, ("familyName", "givenName", "name"), "datacite"
+        )
+    for description in _registry_list(a, "descriptions", dict, "datacite"):
+        _registry_strings(description, ("description",), "datacite")
+    if a.get("types") is not None and not isinstance(a["types"], dict):
+        raise RegistryLookupError("datacite", "malformed-response", status)
+    _registry_strings(
+        a.get("types") or {}, ("resourceTypeGeneral",), "datacite"
+    )
+    if a.get("publicationYear") is not None and type(a["publicationYear"]) is not int:
+        raise RegistryLookupError("datacite", "malformed-response", status)
+    try:
+        return _datacite_record_fields(a)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise RegistryLookupError("datacite", "malformed-response", status) from exc
+
+
+def _datacite_record_fields(a: dict) -> dict:
     authors = []
     for c in a.get("creators") or []:
         if c.get("familyName"):
