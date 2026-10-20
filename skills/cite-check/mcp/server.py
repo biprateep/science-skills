@@ -1807,16 +1807,19 @@ def _parse_fields(body: str) -> dict:
     while i < n:
         m = _FIELD_START.match(body, i)
         if not m:
+            if body[i:].strip().strip(",").strip():
+                raise ValueError("malformed bibliography field")
             break
         name, i, parts = m.group(1).lower(), m.end(), []
         while True:
             while i < n and body[i].isspace():
                 i += 1
             if i >= n:
-                break
+                raise ValueError("missing bibliography field value")
             if body[i] == "{":
                 j = _find_close(body, i)
-                j = j if j >= 0 else n
+                if j < 0:
+                    raise ValueError("unterminated bibliography field")
                 parts.append(body[i + 1:j])
                 i = j + 1
             elif body[i] == '"':
@@ -1829,12 +1832,14 @@ def _parse_fields(body: str) -> dict:
                     elif body[j] == '"' and depth == 0:
                         break
                     j += 1
+                if j >= n:
+                    raise ValueError("unterminated quoted bibliography field")
                 parts.append(body[i + 1:j])
                 i = j + 1
             else:
                 m2 = _BARE.match(body, i)
                 if not m2:
-                    break
+                    raise ValueError("missing bibliography field value")
                 parts.append(m2.group(0))
                 i = m2.end()
             while i < n and body[i].isspace():
@@ -1844,8 +1849,8 @@ def _parse_fields(body: str) -> dict:
                 continue
             break
         fields[name] = re.sub(r"\s+", " ", "".join(parts)).strip()
-        while i < n and body[i] != ",":
-            i += 1
+        if i < n and body[i] != ",":
+            raise ValueError("missing comma between bibliography fields")
         i += 1
     return fields
 
@@ -1862,7 +1867,7 @@ def _parse_prov(s: str) -> dict:
 def _parse_bib(text: str) -> dict:
     """Entries with raw text and span, plus @comment/@string/@preamble blocks.
     A `@comment{cite-check: …}` directly before an entry becomes its provenance."""
-    entries, comments, keys = [], [], {}
+    entries, comments, keys, errors = [], [], {}, []
     i, last_prov, last_prov_end = 0, None, -1
     head = re.compile(r"@\s*([A-Za-z]+)\s*([{(])")
     while True:
@@ -1871,11 +1876,13 @@ def _parse_bib(text: str) -> dict:
             break
         m = head.match(text, at)
         if not m:
+            errors.append(f"malformed entry at character {at}")
             i = at + 1
             continue
         etype, open_idx = m.group(1).lower(), m.end() - 1
         close = _find_close(text, open_idx)
         if close < 0:
+            errors.append(f"unterminated entry at character {at}")
             break
         body, raw = text[open_idx + 1:close], text[at:close + 1]
         if etype in ("comment", "string", "preamble"):
@@ -1886,9 +1893,18 @@ def _parse_bib(text: str) -> dict:
                 last_prov, last_prov_end = pm.group(1).strip(), close + 1
             i = close + 1
             continue
-        km = re.match(r"\s*([^,\s]+)\s*,?", body)
+        km = re.match(r"\s*([^,\s]+)\s*,", body)
         key = km.group(1) if km else ""
-        fields = _parse_fields(body[km.end():]) if km else {}
+        try:
+            if not km:
+                raise ValueError("missing entry key or comma")
+            fields = _parse_fields(body[km.end():])
+        except ValueError as exc:
+            errors.append(f"{key or at}: {exc}")
+            i = close + 1
+            continue
+        if key in keys:
+            errors.append(f"duplicate bibliography key: {key}")
         prov = _parse_prov(last_prov) if last_prov and not text[last_prov_end:at].strip() else None
         last_prov = None
         entry = {"type": etype, "key": key, "fields": fields, "raw": raw,
@@ -1896,7 +1912,8 @@ def _parse_bib(text: str) -> dict:
         entries.append(entry)
         keys.setdefault(key, entry)
         i = close + 1
-    return {"entries": entries, "comments": comments, "keys": keys}
+    return {"entries": entries, "comments": comments, "keys": keys,
+            "errors": errors, "complete": not errors}
 
 
 def _entry_ids(entry: dict) -> dict:
@@ -2400,6 +2417,9 @@ def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = N
         return {"error": f"{bib_path} not found"}
     with open(bib_path, errors="replace") as fh:
         parsed = _parse_bib(fh.read())
+    if not parsed["complete"]:
+        return {"ok": False, "complete": False, "error": "; ".join(parsed["errors"]),
+                "entries": [], "n": 0, "parse_errors": parsed["errors"]}
     wanted = set(keys) if keys else None
     entries = [e for e in parsed["entries"] if wanted is None or e["key"] in wanted]
     missing_keys = sorted(wanted - set(parsed["keys"])) if wanted else []
@@ -2493,13 +2513,16 @@ def _braced(text: str, i: int) -> tuple:
     return (text[i + 1:j], j + 1) if j > 0 else ("", i + 1)
 
 
-def _gather_tex(main_path: str, seen: set | None = None) -> list:
+def _gather_tex(main_path: str, seen: set | None = None,
+                root: str | None = None) -> list:
     """[(path, comment-stripped text)] for the main file and every
     \\input / \\include / \\subfile it pulls in."""
     seen = seen if seen is not None else set()
     main_path = os.path.abspath(main_path)
-    if main_path in seen or not os.path.exists(main_path):
+    if main_path in seen:
         return []
+    if not os.path.isfile(main_path):
+        raise ValueError(f"missing included TeX file: {main_path}")
     seen.add(main_path)
     with open(main_path, errors="replace") as fh:
         text = _strip_tex_comments(fh.read())
@@ -2509,7 +2532,7 @@ def _gather_tex(main_path: str, seen: set | None = None) -> list:
         cand = os.path.join(base, m.group(1).strip())
         if not os.path.splitext(cand)[1]:
             cand += ".tex"
-        files += _gather_tex(cand, seen)
+        files += _gather_tex(cand, seen, base)
     return files
 
 
@@ -2612,7 +2635,10 @@ def extract_cites(tex_path: str) -> dict:
     tex_path = os.path.abspath(tex_path)
     if not os.path.exists(tex_path):
         return {"error": f"{tex_path} not found"}
-    files = _gather_tex(tex_path)
+    try:
+        files = _gather_tex(tex_path)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "complete": False, "error": str(exc)}
     cites, bib_files, docclass = [], [], None
     for path, text in files:
         m = re.search(r"\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}", text)
@@ -2624,8 +2650,18 @@ def extract_cites(tex_path: str) -> dict:
                 if b:
                     p = os.path.join(os.path.dirname(path), b)
                     bib_files.append(p if p.endswith(".bib") else p + ".bib")
+        instances = list(_cite_instances(text))
+        parsed_starts = {instance[2] for instance in instances}
+        for command in _CITE_CMD.finditer(text):
+            if (command.group("cmd").lower() not in _CITE_EXCLUDE
+                    and command.start() not in parsed_starts):
+                return {"ok": False, "complete": False,
+                        "error": f"malformed citation in {path}"}
+        if any(not item[1] for item in instances):
+            return {"ok": False, "complete": False,
+                    "error": f"empty or malformed citation in {path}"}
         tokens, out, last = {}, [], 0
-        for n, (cmd, keys, s, e) in enumerate(_cite_instances(text)):
+        for n, (cmd, keys, s, e) in enumerate(instances):
             out.append(text[last:s])
             out.append(f" \u27e8cite#{n}\u27e9 ")
             last = e
@@ -2656,7 +2692,7 @@ def extract_cites(tex_path: str) -> dict:
     by_key = {}
     for i, c in enumerate(cites):
         by_key.setdefault(c["key"], []).append(i)
-    return {"main": tex_path, "files": [p for p, _ in files], "documentclass": docclass,
+    return {"complete": True, "main": tex_path, "files": [p for p, _ in files], "documentclass": docclass,
             "bib_files": list(dict.fromkeys(bib_files)), "n_instances": len(cites),
             "n_keys": len(keys), "keys": keys, "cites": cites, "by_key": by_key}
 
@@ -3120,17 +3156,34 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
     if ex.get("error"):
         return ex
     workdir = os.path.dirname(os.path.abspath(tex_path))
-    bibs = [os.path.abspath(b) for b in ([bib_path] if bib_path else ex["bib_files"]) if b and os.path.exists(b)]
-    failures, warnings = [], []
+    expected_bibs = list(dict.fromkeys(
+        [os.path.abspath(b) for b in ([bib_path] if bib_path else ex["bib_files"]) if b]
+    ))
+    bibs = [path for path in expected_bibs if os.path.isfile(path)]
+    failures = [{"type": "missing-bib", "detail": path}
+                for path in expected_bibs if path not in bibs]
+    warnings = []
     if not bibs:
         failures.append({"type": "no-bib", "detail": "no readable .bib — pass bib_path or declare \\bibliography{…}"})
     entries = {}
     for b in bibs:
-        with open(b, errors="replace") as fh:
-            for e in _parse_bib(fh.read())["entries"]:
-                entries.setdefault(e["key"], (b, e))
+        try:
+            with open(b, encoding="utf-8", errors="replace") as fh:
+                parsed = _parse_bib(fh.read())
+        except OSError as exc:
+            failures.append({"type": "unreadable-bib", "detail": str(exc)})
+            continue
+        for error in parsed["errors"]:
+            failures.append({"type": "bib-parse", "detail": f"{b}: {error}"})
+        for entry in parsed["entries"]:
+            if entry["key"] in entries:
+                failures.append({"type": "duplicate-key", "key": entry["key"],
+                                 "detail": "key appears in multiple entries"})
+            entries.setdefault(entry["key"], (b, entry))
     cite_keys = set(ex["keys"])
     nocite_all = any(c["key"] == "*" for c in ex["cites"])
+    if nocite_all:
+        cite_keys.update(entries)
     for k in sorted(cite_keys - set(entries)):
         failures.append({"type": "undefined-cite", "key": k, "detail": "cited in the .tex but in no .bib"})
     if not nocite_all:
@@ -3200,8 +3253,11 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
              "claim": c["claim"][:240], "detail": "no support verdict recorded for this citation instance"})
     for k in cite_keys:
         coverage.setdefault(k, "")
-    report = {"ok": not failures, "tex": os.path.abspath(tex_path), "bibs": bibs,
-              "n_instances": ex["n_instances"], "n_keys": ex["n_keys"],
+    complete = not any(item["type"] in {
+        "missing-bib", "unreadable-bib", "no-bib", "bib-parse", "duplicate-key"
+    } for item in failures)
+    report = {"ok": not failures, "complete": complete, "tex": os.path.abspath(tex_path), "bibs": bibs,
+              "n_instances": ex["n_instances"], "n_keys": len(cite_keys),
               "existence_counts": dict(Counter(r["status"] for r in ver.values())),
               "support_counts": dict(verdicts), "support_missing": len(missing),
               "unofficial_entries": sorted(unofficial), "failures": failures, "warnings": warnings,
