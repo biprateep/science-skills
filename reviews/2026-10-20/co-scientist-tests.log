@@ -1,0 +1,15 @@
+PASS  ping
+PASS  verify: correct chain passes
+PASS  verify: wrong step fails
+PASS  verify: bad class rejected
+PASS  manifest: init
+PASS  manifest: init idempotent
+PASS  manifest: append checkpoint
+PASS  manifest: verified needs evidence
+PASS  manifest: bad scalar field rejected
+PASS  compile: blocked by unverified checkpoint
+PASS  manifest: mark verified with evidence
+PASS  compile: succeeds once verified
+PASS  figures: missing target detected
+
+13 passed, 0 failed
