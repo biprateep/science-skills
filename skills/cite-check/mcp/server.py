@@ -42,7 +42,7 @@ from html.parser import HTMLParser
 from typing import Any, Literal
 from collections.abc import Callable
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -3114,6 +3114,598 @@ def _search_entry(entry: dict) -> dict:
                            f"{c.get('title_similarity')}) — confirm by eye, then bib_add(replace=true)"])
     closest = f"; closest: '{cands[0]['title'][:70]}' ({cands[0].get('title_similarity')})" if cands else ""
     return dict(base, status="UNRESOLVED", notes=[f"no registry match for title '{title[:90]}'{closest}"])
+
+
+_LINT_MAX_BYTES = 4 * 1024 * 1024
+_LINT_MAX_ENTRIES = 2000
+_LINT_CREATOR = ("author", "editor", "organization", "institution")
+_LINT_DATE = ("year", "date")
+_LINT_RULES = {
+    "article": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("journal", "journaltitle"),
+    ],
+    "book": [("title",), _LINT_CREATOR, _LINT_DATE, ("publisher",)],
+    "collection": [("title",), _LINT_CREATOR, _LINT_DATE, ("publisher",)],
+    "inbook": [("title",), _LINT_CREATOR, _LINT_DATE, ("booktitle",)],
+    "incollection": [("title",), _LINT_CREATOR, _LINT_DATE, ("booktitle",)],
+    "inproceedings": [("title",), _LINT_CREATOR, _LINT_DATE, ("booktitle",)],
+    "conference": [("title",), _LINT_CREATOR, _LINT_DATE, ("booktitle",)],
+    "proceedings": [("title",), _LINT_DATE],
+    "report": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("institution", "organization"),
+    ],
+    "techreport": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("institution", "organization"),
+    ],
+    "thesis": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("institution", "school"),
+    ],
+    "phdthesis": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("institution", "school"),
+    ],
+    "mastersthesis": [
+        ("title",),
+        _LINT_CREATOR,
+        _LINT_DATE,
+        ("institution", "school"),
+    ],
+    **{
+        kind: [("title",), ("url", "doi", "repository", "howpublished")]
+        for kind in (
+            "software",
+            "softwareversion",
+            "softwaremodule",
+            "codefragment",
+            "dataset",
+            "online",
+            "electronic",
+            "www",
+        )
+    },
+    **{kind: [] for kind in ("misc", "manual", "unpublished", "xdata", "set")},
+}
+
+
+def _lint_deferred_fields(entry: dict[str, Any]) -> set[str]:
+    """Identify unexpanded top-level field expressions in parsed input."""
+    raw = entry["raw"]
+    body = raw[raw.index(",") + 1 : -1] if "," in raw else ""
+    deferred: set[str] = set()
+    position = 0
+    while match := _FIELD_START.match(body, position):
+        name, position = match.group(1).lower(), match.end()
+        while position < len(body):
+            while position < len(body) and body[position].isspace():
+                position += 1
+            start = position
+            if body[position] == "{":
+                position = _find_close(body, position) + 1
+            elif body[position] == '"':
+                position += 1
+                depth = 0
+                while position < len(body):
+                    character = body[position]
+                    if character == "{":
+                        depth += 1
+                    elif character == "}":
+                        depth -= 1
+                    elif character == '"' and depth == 0:
+                        position += 1
+                        break
+                    position += 1
+            else:
+                token = _BARE.match(body, position)
+                if token is None:
+                    break  # The parser rejects this before linting.
+                position = token.end()
+                if not token.group().isdigit():
+                    deferred.add(name)
+            if re.search(r"\\[A-Za-z]+", body[start:position]):
+                deferred.add(name)
+            while position < len(body) and body[position].isspace():
+                position += 1
+            if position < len(body) and body[position] == "#":
+                deferred.add(name)
+                position += 1
+                continue
+            break
+        position += 1  # Comma already validated by the parser.
+    return deferred
+
+
+def _lint_entry_ids(entry: dict[str, Any]) -> dict[str, str]:
+    """Read literal work locators, excluding free-text notes and macros."""
+    deferred = _lint_deferred_fields(entry)
+    fields = {
+        name: value
+        for name, value in entry["fields"].items()
+        if name not in deferred and name != "note"
+    }
+    return _entry_ids(dict(entry, fields=fields))
+
+
+def _lint_year(value: str, field: str) -> int | None:
+    """Extract a supported literal year, deferring legitimate date statuses."""
+    if value.lower() in {"forthcoming", "in press", "n.d.", "undated"}:
+        return None
+    pattern = (
+        r"\d{4}(?:-\d{2}(?:-\d{2})?)?(?:[?~%]|/"
+        r"(?:\d{4}(?:-\d{2}(?:-\d{2})?)?|\.\.))?"
+    )
+    if re.fullmatch(pattern if field == "date" else r"\d{4}", value):
+        return int(value[:4])
+    raise ValueError("not a supported literal year/date")
+
+
+def _lint_local_issues(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return conservative style advice, without resolving inherited data."""
+    fields = entry["fields"]
+    deferred = _lint_deferred_fields(entry)
+    issues: list[dict[str, Any]] = []
+
+    def add(code: str, field: str, message: str, action: str) -> None:
+        issues.append(
+            dict(code=code, field=field, message=message, action=action)
+        )
+
+    kind = entry["type"]
+    if kind not in _LINT_RULES:
+        add(
+            "unknown-entry-type",
+            "entrytype",
+            f"No metadata rules are defined for @{kind}.",
+            "Check that the selected bibliography style supports this type.",
+        )
+    inherited = bool(fields.get("crossref") or fields.get("xdata"))
+    if inherited:
+        add(
+            "inheritance-not-expanded",
+            "crossref" if fields.get("crossref") else "xdata",
+            "Inherited fields have not been expanded.",
+            "Check the resolved bibliography with its intended processor.",
+        )
+    relevant = {
+        "title",
+        "year",
+        "date",
+        "author",
+        "editor",
+        "organization",
+        "institution",
+        "school",
+        "journal",
+        "journaltitle",
+        "booktitle",
+        "publisher",
+        "doi",
+        "url",
+        "repository",
+        "code",
+        "howpublished",
+        "eprint",
+        "bibcode",
+        "adsurl",
+        "eid",
+        "note",
+    }
+    for field in sorted(deferred & relevant):
+        add(
+            "field-macro-unexpanded",
+            field,
+            "A macro or concatenation prevents a literal metadata check.",
+            "Check the expanded value with the intended bibliography style.",
+        )
+    preprint = bool(_lint_entry_ids(entry).get("arxiv"))
+    if not inherited:
+        for alternatives in _LINT_RULES.get(kind, []):
+            if preprint and alternatives[0] == "journal":
+                continue
+            if not any(fields.get(name) for name in alternatives):
+                add(
+                    "missing-field",
+                    alternatives[0],
+                    "No value for " + " or ".join(alternatives) + ".",
+                    "Check the official export and style requirements; "
+                    "do not invent missing metadata.",
+                )
+    if kind not in {"xdata", "set"}:
+        for field in _LINT_DATE:
+            value = fields.get(field)
+            if not value or field in deferred:
+                continue
+            try:
+                year = _lint_year(value, field)
+            except ValueError:
+                add(
+                    "invalid-year",
+                    field,
+                    f"The literal {field} is outside supported date syntax.",
+                    "Check the official export and date syntax for the style.",
+                )
+                continue
+            if year and year > int(_today()[:4]):
+                add(
+                    "future-year",
+                    field,
+                    "The date is in the future; forthcoming work may be valid.",
+                    "Confirm the release date in the source export.",
+                )
+    return issues
+
+
+def _lint_record_valid(record: Any) -> bool:
+    """Check provider shape before using it as comparison input."""
+    return (
+        isinstance(record, dict)
+        and record.get("resolved") is True
+        and isinstance(record.get("id"), str)
+        and bool(record["id"])
+        and _classify(record["id"])[0] != "unknown"
+        and isinstance(record.get("registries", []), list)
+        and all(
+            isinstance(registry, str)
+            for registry in record.get("registries", [])
+        )
+        and isinstance(record.get("ids"), dict)
+        and all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in record["ids"].items()
+        )
+        and isinstance(record.get("title"), str)
+        and isinstance(record.get("authors"), list)
+        and all(isinstance(author, str) for author in record["authors"])
+        and (record.get("year") is None or type(record["year"]) is int)
+        and isinstance(record.get("venue", ""), str)
+        and isinstance(record.get("type", ""), str)
+    )
+
+
+def _lint_compare_entries(
+    entries: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Compare own-ID metadata without title searches or file changes."""
+    plans: dict[str, list[str]] = {}
+    outcomes: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    for entry in entries:
+        if entry["type"] in {"xdata", "set"}:
+            outcomes.append(
+                dict(key=entry["key"], status="not-applicable", identifiers=[])
+            )
+            continue
+        ids = _lint_entry_ids(entry)
+        # Incidental code links in paper citations do not identify the paper.
+        if any(name in ids for name in ("doi", "arxiv", "bibcode")):
+            ids.pop("github", None)
+        pinned = _entry_arxiv_version(entry) or (
+            ids.get("github") and _entry_ref(entry)
+        )
+        identifiers = [f"{name}:{value}" for name, value in ids.items()]
+        status = (
+            "pinned-version-skipped"
+            if pinned
+            else "pending"
+            if identifiers
+            else "no-identifier"
+        )
+        if status == "pending":
+            plans[entry["key"]] = identifiers
+        outcomes.append(
+            dict(key=entry["key"], status=status, identifiers=identifiers)
+        )
+    requested = list(
+        dict.fromkeys(value for values in plans.values() for value in values)
+    )
+    try:
+        rows = _resolve_many(requested) if requested else []
+    except (RuntimeError, OSError, ValueError):
+        rows = []
+    records = {}
+    if isinstance(rows, list):
+        for row in rows:
+            if (
+                isinstance(row, dict)
+                and isinstance(row.get("input"), str)
+                and row["input"] in requested
+            ):
+                # Duplicate responses are ambiguous, not independent evidence.
+                key = row["input"]
+                records[key] = None if key in records else row
+    for entry, outcome in zip(entries, outcomes):
+        if outcome["status"] == "not-applicable":
+            continue
+        code = "registry-comparison-unavailable"
+        message = "No usable own-identifier registry comparison is available."
+        if outcome["status"] == "pinned-version-skipped":
+            code = "registry-version-unchecked"
+            message = "Pinned versions are not compared with latest metadata."
+        elif outcome["status"] == "pending":
+            outcome["status"] = "unavailable"
+            confirmed = None
+            for identifier in plans[entry["key"]]:
+                record = records.get(identifier)
+                if not isinstance(record, dict) or not _lint_record_valid(
+                    record
+                ):
+                    continue
+                aliases = {_classify(record["id"])} | {
+                    _classify(f"{name}:{value}")
+                    for name, value in record["ids"].items()
+                }
+                if _classify(identifier) not in aliases:
+                    outcome["status"] = "identity-unconfirmed"
+                    continue
+                # Deferred expressions cannot establish metadata identity.
+                deferred = _lint_deferred_fields(entry)
+                if deferred & {"title", "author", "year", "date"}:
+                    outcome["status"] = "identity-unconfirmed"
+                    continue
+                comparison_entry = entry
+                if not entry["fields"].get("year"):
+                    date = entry["fields"].get("date", "")
+                    try:
+                        date_year = _lint_year(date, "date") if date else None
+                    except ValueError:
+                        date_year = None
+                    if date_year:
+                        comparison_entry = dict(
+                            entry,
+                            fields=dict(entry["fields"], year=str(date_year)),
+                        )
+                comparison = _compare(comparison_entry, record, identifier)
+                if comparison["status"] == "VERIFIED":
+                    confirmed = record
+                    break
+                outcome["status"] = "identity-unconfirmed"
+            if confirmed is not None:
+                outcome["status"] = "compared"
+                outcome["resolved_id"] = confirmed["id"]
+                fields = entry["fields"]
+                year = _year(fields.get("year") or fields.get("date"))
+                if year and confirmed.get("year") and year != confirmed["year"]:
+                    issues.append(
+                        dict(
+                            key=entry["key"],
+                            field="year",
+                            code="registry-year-difference",
+                            message="The same-work registry record has a "
+                            "different year; print dates may differ.",
+                            action="Review the intended version and official "
+                            "export before changing the date.",
+                            evidence=dict(
+                                id=confirmed["id"], year=confirmed["year"]
+                            ),
+                        )
+                    )
+                ids = _lint_entry_ids(entry)
+                if (
+                    ids.get("arxiv")
+                    and not ids.get("doi")
+                    and confirmed["ids"].get("doi")
+                    and confirmed.get("venue")
+                    and (
+                        confirmed.get("type")
+                        in {
+                            "journal-article",
+                            "article",
+                            "proceedings-article",
+                            "conference-paper",
+                            "book-chapter",
+                        }
+                        or "arxiv" in (confirmed.get("registries") or [])
+                    )
+                    and not re.search(
+                        r"arxiv|preprint", confirmed["venue"], re.I
+                    )
+                ):
+                    issues.append(
+                        dict(
+                            key=entry["key"],
+                            field="entrytype",
+                            code="preprint-publication-review",
+                            message="The own-ID record explicitly links this "
+                            "preprint to a DOI and publication venue.",
+                            action="Review whether the preprint or published "
+                            "version is intended; retain intentional versions.",
+                            evidence=dict(
+                                id=confirmed["id"],
+                                ids=confirmed["ids"],
+                                venue=confirmed["venue"],
+                            ),
+                        )
+                    )
+                continue
+            if outcome["status"] == "identity-unconfirmed":
+                code = "registry-identity-unconfirmed"
+                message = (
+                    "Metadata or identifier aliases do not confirm "
+                    "that this is the same work."
+                )
+        issues.append(
+            dict(
+                key=entry["key"],
+                field="identifier",
+                code=code,
+                message=message,
+                action="Resolve the intended "
+                "work and inspect its official export manually.",
+            )
+        )
+    return dict(
+        requested=True,
+        identifiers_requested=requested,
+        identifier_count=len(requested),
+        comparable_entries=sum(
+            row["status"] != "not-applicable" for row in outcomes
+        ),
+        compared_entries=sum(row["status"] == "compared" for row in outcomes),
+        outcomes=outcomes,
+    ), issues
+
+
+def lint_bib(
+    bib_path: str,
+    keys: list[str] | None = None,
+    verify: bool = False,
+) -> dict[str, Any]:
+    """Advise on bibliography metadata, independently of citation readiness.
+
+    Args:
+        bib_path: UTF-8 bibliography file, at most 4 MiB and 2000 entries.
+        keys: Optional entry keys to inspect; omitted means every entry.
+        verify: Compare own-ID registry metadata using normal resolver caches.
+            Counts describe identifiers, not HTTP requests. Default is offline.
+
+    Returns:
+        Advisory issues with exact entry byte/character spans. ``ok`` and
+        ``input_complete`` concern input processing, never existence, official
+        provenance, support, or submission readiness. No file is modified.
+    """
+    report: dict[str, Any] = dict(
+        ok=False,
+        input_complete=False,
+        advisory_only=True,
+        submission_ready=False,
+        advisory_clean=False,
+        comparison_complete=False if verify else None,
+        input_sha256=None,
+        entries=[],
+        issues=[],
+        comparison=dict(
+            requested=verify,
+            identifiers_requested=[],
+            identifier_count=0,
+            compared_entries=0,
+            outcomes=[],
+        ),
+    )
+    if (
+        not isinstance(bib_path, str)
+        or not bib_path
+        or type(verify) is not bool
+        or keys is not None
+        and (
+            not isinstance(keys, list)
+            or any(not isinstance(key, str) or not key.strip() for key in keys)
+        )
+    ):
+        return dict(report, error="Invalid path, keys, or verify argument.")
+    path = os.path.abspath(os.path.expanduser(bib_path))
+    try:
+        if not os.path.isfile(path):
+            raise ValueError("Bibliography must be a regular file.")
+        with open(path, "rb") as stream:
+            raw = stream.read(_LINT_MAX_BYTES + 1)
+        if len(raw) > _LINT_MAX_BYTES:
+            raise ValueError("Bibliography exceeds the 4 MiB input limit.")
+        source = raw.decode("utf-8")
+        report["input_sha256"] = hashlib.sha256(raw).hexdigest()
+        parsed = _parse_bib(source)
+        if not parsed["complete"]:
+            return dict(
+                report,
+                error="Bibliography parsing is incomplete.",
+                parse_errors=parsed["errors"],
+            )
+        entries = parsed["entries"]
+        if len(entries) > _LINT_MAX_ENTRIES:
+            raise ValueError("Bibliography exceeds the 2000 entry limit.")
+        missing = sorted(set(keys or []) - set(parsed["keys"]))
+        if missing:
+            return dict(
+                report,
+                error="Requested bibliography keys are absent.",
+                missing_keys=missing,
+            )
+        selected = set(keys) if keys is not None else None
+        locations = {}
+        previous = byte_position = 0
+        line = 1
+        for entry in entries:
+            start, end = entry["start"], entry["end"]
+            gap = source[previous:start]
+            byte_position += len(gap.encode("utf-8"))
+            line += gap.count("\n")
+            size = len(entry["raw"].encode("utf-8"))
+            locations[entry["key"]] = dict(
+                scope="entry",
+                file=path,
+                line=line,
+                end_line=line + entry["raw"].count("\n"),
+                start=start,
+                end=end,
+                byte_start=byte_position,
+                byte_end=byte_position + size,
+            )
+            previous, byte_position = end, byte_position + size
+            line += entry["raw"].count("\n")
+        entries = [
+            entry
+            for entry in entries
+            if selected is None or entry["key"] in selected
+        ]
+        issues = [
+            dict(issue, key=entry["key"])
+            for entry in entries
+            for issue in _lint_local_issues(entry)
+        ]
+        if verify:
+            comparison, comparison_issues = _lint_compare_entries(entries)
+            report["comparison"] = comparison
+            report["comparison_complete"] = (
+                comparison["compared_entries"]
+                == comparison["comparable_entries"]
+            )
+            issues.extend(comparison_issues)
+        else:
+            report["comparison"]["outcomes"] = [
+                dict(key=entry["key"], status="not-requested", identifiers=[])
+                for entry in entries
+            ]
+        with open(path, "rb") as stream:
+            current = stream.read(_LINT_MAX_BYTES + 1)
+        if current != raw:
+            raise ValueError("Bibliography snapshot is stale; rerun lint.")
+    except (OSError, ValueError, UnicodeError) as exc:
+        return dict(
+            report,
+            error=str(exc),
+            comparison_complete=False if verify else None,
+        )
+    report["issues"] = [
+        dict(issue, severity="advisory", location=locations[issue["key"]])
+        for issue in issues
+    ]
+    report["entries"] = [
+        dict(
+            key=entry["key"],
+            type=entry["type"],
+            issue_count=sum(issue["key"] == entry["key"] for issue in issues),
+        )
+        for entry in entries
+    ]
+    report.update(
+        ok=True,
+        input_complete=True,
+        advisory_clean=not issues
+        and (not verify or report["comparison_complete"]),
+    )
+    return report
 
 
 def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | None = None,
@@ -6965,6 +7557,7 @@ TOOLS = {
     "fetch_bibtex": fetch_bibtex,
     "bib_add": bib_add,
     "verify_bib": verify_bib,
+    "lint_bib": lint_bib,
     "extract_cites": extract_cites,
     "register_claims": register_claims,
     "fetch_text": fetch_text,

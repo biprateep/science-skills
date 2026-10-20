@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -101,6 +101,7 @@ Never edit anything under `mcp/` during a task.
 | `fetch_bibtex(identifier, key, prefer, journal_format, tex_path, version)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
 | `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
+| `lint_bib(bib_path, keys, verify)` | advisory metadata checks with exact entry locations; offline by default, optional own-identifier registry comparison | metadata review only; neither clean lint nor successful processing establishes identity, provenance, support or readiness |
 | `verification_job(tex_path, bib_path, job_id, operation, budget, priorities, search_unresolved)` | prioritized registry checks with request/search/time/cost admission limits, persistent progress and an ordered support-work queue | identity progress only; remaining work is UNCHECKED and every job has `submission_ready=false` |
 | `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
 | `register_claims(tex_path, sentence_id, atoms)` | register a complete partition of exact sentence spans, explicit citation attachments, and declared uncited scope; derives stable atom IDs | no assertion or citation may disappear |
@@ -128,6 +129,13 @@ fresh per-run grants. Priorities are scheduling advice; every low-priority
 requirement stays visible. Source reading and independent judgments remain
 pending, and the ordinary strict audit is still required. Read
 `references/verification-jobs.md` for budget accounting and resume rules.
+
+For bibliography metadata review, call `lint_bib` and relay its advisory
+issues separately from citation verdicts. Missing fields, date concerns and
+possible publication updates are review prompts, not permission to hand-edit
+an official export. `verify=true` requests optional registry comparison;
+unexpanded macros, inherited fields and unresolved comparisons stay explicit.
+Read `references/bibliography-lint.md`. The ordinary audit remains required.
 
 ### A. Add a citation while writing
 

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,22 @@ class InputValidationTest(unittest.TestCase):
         for value in [[], [None], [""], {}, 42]:
             self.assertIn("error", SERVER.resolve_citation(value))
         self.assertEqual(SERVER.resolve_citation(["not-an-id", "also-invalid"])["n"], 2)
+
+    def test_lint_cli_advice_is_not_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bibliography = pathlib.Path(directory) / "refs.bib"
+            bibliography.write_text("@article{a,title={Example}}")
+            result = subprocess.run(
+                [sys.executable, SERVER.__file__, "call", "lint_bib",
+                 json.dumps({"bib_path": str(bibliography)})],
+                check=True, capture_output=True, text=True,
+            )
+            report = json.loads(result.stdout)
+            self.assertTrue(report["ok"])
+            self.assertTrue(report["advisory_only"])
+            self.assertFalse(report["advisory_clean"])
+            self.assertFalse(report["submission_ready"])
+            self.assertIsNone(report["comparison_complete"])
 
     def test_nested_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -96,6 +113,15 @@ class ProtocolSchemaTest(unittest.TestCase):
                     for field in ("max_requests", "max_searches", "max_seconds", "max_cost_usd", "occurrence_id", "atom_id", "reason", "priority"):
                         self.assertIn(field, json.dumps(job_schema))
                     self.assertEqual(job_schema["properties"]["operation"]["default"], "run")
+                    lint_schema = schemas["lint_bib"]
+                    self.assertEqual(lint_schema["required"], ["bib_path"])
+                    self.assertFalse(lint_schema["properties"]["verify"]["default"])
+                    key_schema = lint_schema["properties"]["keys"]["anyOf"]
+                    self.assertEqual(
+                        next(item for item in key_schema
+                             if item["type"] == "array")["items"]["type"],
+                        "string",
+                    )
                     policy_schema = schemas["audit"]["properties"]["policy"]
                     self.assertEqual(policy_schema["default"], "submission-ready")
                     self.assertEqual(set(policy_schema["enum"]), {"submission-ready", "exploratory"})
@@ -162,6 +188,17 @@ class ProtocolSchemaTest(unittest.TestCase):
                         self.assertTrue(refused_proposal.get("isError", False))
                     bibliography = pathlib.Path(directory) / "refs.bib"
                     bibliography.write_text("@article{a,title={Example},doi={10.1234/example}}")
+                    lint_result = (await session.call_tool("lint_bib", {
+                        "bib_path": str(bibliography), "keys": ["a"],
+                    })).model_dump(by_alias=True)
+                    self.assertFalse(lint_result.get("isError", False))
+                    lint_text = " ".join(item.get("text", "")
+                                         for item in lint_result["content"])
+                    lint_report = json.loads(lint_text)
+                    self.assertTrue(lint_report["advisory_only"])
+                    self.assertFalse(lint_report["submission_ready"])
+                    self.assertEqual(lint_report,
+                                     SERVER.lint_bib(str(bibliography), ["a"]))
                     job_result = (await session.call_tool("verification_job", {
                         "tex_path": str(manuscript), "bib_path": str(bibliography),
                         "budget": {"max_requests": 0, "max_searches": 0},
