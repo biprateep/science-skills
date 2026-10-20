@@ -2385,6 +2385,19 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
     if isinstance(items, (str, dict)):
         items = [items]
     parsed = _parse_bib(text)
+    if not parsed["complete"]:
+        return {"ok": False, "error": "; ".join(parsed["errors"]), "results": []}
+    requested = set()
+    for item in items:
+        if not isinstance(item, (str, dict)):
+            return {"ok": False, "error": "items must be identifiers or objects", "results": []}
+        key = item.get("key") if isinstance(item, dict) else None
+        if key is not None:
+            if not isinstance(key, str) or not key or re.search(r"[\s,{}()=]", key):
+                return {"ok": False, "error": "invalid bibliography key", "results": []}
+            if key in requested:
+                return {"ok": False, "error": f"duplicate key in batch: {key}", "results": []}
+            requested.add(key)
     by_id = {}
     for e in parsed["entries"]:
         ids = _entry_ids(e)
@@ -2411,6 +2424,10 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
                             "note": f"already in the .bib as {dup} — cite that key"})
             continue
         key = want or dup or _default_key(rec, taken)
+        if key in taken and key not in parsed["keys"]:
+            results.append({"identifier": ident, "key": key, "status": "key-conflict",
+                            "note": "key already reserved by this batch"})
+            continue
         if key in parsed["keys"] and not replace:
             have = _entry_ids(parsed["keys"][key])
             same = any(have.get(k) and rec.get(k) and have[k].lower() == rec[k].lower() for k in ("doi", "arxiv", "bibcode", "github"))
@@ -2430,6 +2447,13 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
                 by_id[f"{k}:{rec[k].lower()}"] = key
         results.append(dict({"identifier": ident, "key": key, "status": status, "source": got["source"],
                              "id": _canonical(rec), "title": rec["title"]}, **_repo_advice(rec)))
+    accepted = {"added", "replaced", "exists", "duplicate"}
+    if any(result["status"] not in accepted for result in results):
+        for result in results:
+            if result["status"] in {"added", "replaced"}:
+                result["status"] = "aborted"
+        return {"bib": bib_path, "ok": False, "results": results,
+                "error": "batch validation failed; bibliography unchanged"}
     if replacements or additions:
         new = text
         for e in sorted(parsed["entries"], key=lambda e: -e["start"]):
