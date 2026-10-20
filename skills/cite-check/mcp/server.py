@@ -3244,12 +3244,16 @@ def _locate_quote(text: str, quote: str) -> dict:
     if len(needle) < 15:
         return {"found": False, "match": 0.0, "reason": "quote too short"}
     index = normalized.find(needle)
-    if index < 0:
-        return {"found": False, "match": 0.0,
-                "reason": "not found verbatim in the source text"}
-    start, end = offsets[index], offsets[index + len(needle) - 1] + 1
-    return {"found": True, "match": 1.0, "at": start, "end": end,
-            "source_text": text[start:end]}
+    while index >= 0:
+        start, end = offsets[index], offsets[index + len(needle) - 1] + 1
+        # A match cannot start or end partway through an expanded ligature.
+        # Re-normalizing the entire source span checks both boundaries.
+        if _norm_quote(text[start:end]) == needle:
+            return {"found": True, "match": 1.0, "at": start, "end": end,
+                    "source_text": text[start:end]}
+        index = normalized.find(needle, index + 1)
+    return {"found": False, "match": 0.0,
+            "reason": "not found verbatim in the source text"}
 
 
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
