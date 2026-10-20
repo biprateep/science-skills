@@ -115,7 +115,7 @@ class AtomicClaimsTest(unittest.TestCase):
 
     def audit(self) -> dict:
         """Audit without external registry requests."""
-        return SERVER.audit(str(self.tex), str(self.bib), verify=False)
+        return SERVER.audit(str(self.tex), str(self.bib), verify=False, policy="exploratory")
 
     def test_supported_and_contradicted_atoms_remain_separate(self) -> None:
         registered = self.register()

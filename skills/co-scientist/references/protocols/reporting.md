@@ -106,10 +106,14 @@ It runs the entire sequence with hard gates:
 2. **Inputs and figures:** follows literal `\input`, `\include` and `\subfile`
    paths recursively and checks each figure. Missing or unreadable inputs fail.
 3. **Citations:** calls cite-check on the current document, then runs a fresh
-   `audit` with `require_support: true` and `verify: true` whenever citations or
-   bibliography declarations exist. An incomplete or failing audit blocks the
-   build. A citation-free report needs no bibliography. Prepare the evidence
-   ledger through cite-check before compiling.
+   `audit` with `policy: "submission-ready"`, `require_support: true`, and
+   `verify: true` whenever citations or bibliography declarations exist. The
+   response must name that exact policy and return literal `true` for `ok`,
+   `input_complete`, `complete`, and `submission_ready`. Exploratory results,
+   incomplete assessments, and legacy responses missing readiness fields block
+   the build, even with `allow_unverified: true`. A report with no citations or
+   bibliography declarations skips the audit. Prepare the evidence ledger
+   through cite-check before compiling.
 4. **Compilation:** removes stale output; requires successful LaTeX and
    bibliography-tool exits; runs enough LaTeX passes to resolve references; and
    rejects errors or unresolved citations/references in the final log. Declared
@@ -134,8 +138,12 @@ which wins wherever this section seems to differ:
   any `[cite]` gaps); nothing is typed into it.
 - The support check runs **once, on the final prose** — after co-writer
   (§3a), since a reworded sentence needs a fresh verdict — and then cite-check's
-  `audit` on `report.tex` with `require_support: true` must return `ok: true`.
-  Relay its failures and warnings to the user as it reports them; fix a
+  `audit` on `report.tex` requests `policy: "submission-ready"`,
+  `require_support: true`, and `verify: true`. Its response must retain that
+  policy and return `ok: true`, `input_complete: true`, `complete: true`, and
+  `submission_ready: true`. A complete exploratory assessment can still contain
+  unresolved work and cannot authorize compilation. Relay its failures and
+  warnings to the user as it reports them; fix a
   failure the way cite-check says, never by lowering the bar.
 - Copy each cited paper's outcome into the manifest's `citations` section
   (the field mapping is in the contract).

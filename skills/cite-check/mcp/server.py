@@ -37,9 +37,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Literal
+from typing import Any, Literal
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -4040,241 +4040,847 @@ def ledger_read(workdir: str) -> dict:
 # audit — the gate
 # ---------------------------------------------------------------------------
 
-def _audit_markdown(rep: dict, ver: dict, coverage: dict) -> str:
-    lines = [f"# cite-check audit — {'PASS' if rep['ok'] else 'FAIL'}", "",
-             f"- manuscript: `{rep['tex']}`", f"- bib: {', '.join('`%s`' % b for b in rep['bibs']) or '(none)'}",
-             f"- citation instances: {rep['n_instances']} over {rep['n_keys']} keys",
-             f"- existence: {rep['existence_counts']}", f"- support: {rep['support_counts']} "
-             f"(missing: {rep['support_missing']})", f"- checked: {rep['checked']}", ""]
-    for title, items in (("Failures", rep["failures"]), ("Warnings", rep["warnings"])):
+_AUDIT_POLICIES = ("exploratory", "submission-ready")
+
+
+def _coverage_axis(
+    states: list[str], unresolved: set[str], verified: set[str]
+) -> dict[str, Any]:
+    """Count every expected unit, including unresolved outcomes."""
+    counts = dict(Counter(states))
+    expected = len(states)
+    assessed = sum(state not in unresolved for state in states)
+    accepted = sum(state in verified for state in states)
+    return {
+        "expected": expected,
+        "assessed": assessed,
+        "verified": accepted,
+        "counts": counts,
+        "complete": assessed == expected,
+        "assessment_rate": assessed / expected if expected else None,
+        "verification_rate": accepted / expected if expected else None,
+    }
+
+
+def _incomplete_audit(policy: str, error: str) -> dict[str, Any]:
+    """Report unknown coverage when extraction cannot establish the inputs."""
+    axes: dict[str, dict[str, Any]] = {}
+    for name in ("existence", "provenance", "support"):
+        axes[name] = {
+            "expected": None,
+            "assessed": 0,
+            "verified": 0,
+            "counts": {},
+            "complete": False,
+            "assessment_rate": None,
+            "verification_rate": None,
+        }
+    axes["provenance"].pop("verified")
+    axes["provenance"].pop("verification_rate")
+    axes["provenance"].update(
+        declared=0,
+        declaration_rate=None,
+        assurance="declaration-only; export digest not checked",
+    )
+    axes["support"].update(
+        basis_counts={},
+        unresolved_decompositions=None,
+        atomic_total_known=False,
+        unit="unknown support requirements",
+    )
+    return {
+        "ok": False,
+        "input_complete": False,
+        "complete": False,
+        "submission_ready": False,
+        "policy": policy,
+        "error": error,
+        "coverage": axes,
+        "failures": [{"type": "input-incomplete", "detail": error}],
+        "warnings": [],
+    }
+
+
+def _declared_provenance(entry: dict[str, Any], result: dict[str, Any]) -> str:
+    """Check declaration shape and identity, without a digest assurance."""
+    if not entry:
+        return "UNDEFINED"
+    provenance = entry.get("provenance")
+    if not provenance:
+        return "UNOFFICIAL"
+    sources = {
+        "ads",
+        "crossref",
+        "datacite",
+        "inspire",
+        "arxiv",
+        "github",
+        "citation-cff",
+    }
+    identifier = provenance.get("id", "")
+    if (
+        provenance.get("source") not in sources
+        or not isinstance(identifier, str)
+        or not identifier.strip()
+        or _classify(identifier)[0] == "unknown"
+    ):
+        return "MALFORMED"
+    try:
+        datetime.strptime(provenance.get("fetched", ""), "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return "MALFORMED"
+    ids = result.get("ids") or {}
+    if not isinstance(ids, dict):
+        return "MALFORMED"
+    resolved = result.get("id")
+    aliases = {str(resolved).lower()} if resolved else set()
+    for kind, value in ids.items():
+        if value:
+            aliases.add(f"{kind}:{value}".lower())
+    if aliases and identifier.lower() not in aliases:
+        return "MISMATCH"
+    return "DECLARED"
+
+
+def _audit_file_digest(path: str) -> str | None:
+    """Return a local input digest, or None when its bytes are unavailable."""
+    try:
+        with open(path, "rb") as source:
+            return hashlib.sha256(source.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _audit_ledger(workdir: str) -> dict[str, Any]:
+    """Load ledger structure, rejecting malformed state instead of skipping it.
+
+    Raises:
+        ValueError: Ledger entries or registrations are malformed.
+        OSError: The ledger cannot be read.
+    """
+    ledger = _load_ledger(workdir)
+    if not isinstance(ledger, dict) or not isinstance(
+        ledger.get("entries"), dict
+    ):
+        raise ValueError("ledger must contain an entries object")
+    for entry in ledger["entries"].values():
+        if not isinstance(entry, dict) or not {
+            "id",
+            "key",
+            "claim",
+            "verdict",
+            "basis",
+        } <= set(entry):
+            raise ValueError("malformed support ledger entry")
+        if any(
+            not isinstance(entry[name], str)
+            for name in ("id", "key", "claim", "verdict", "basis")
+        ) or (
+            "source_cache_id" in entry
+            and not isinstance(entry["source_cache_id"], str)
+        ):
+            raise ValueError("support ledger identity fields must be strings")
+    decompositions = ledger.get("decompositions", {})
+    if not isinstance(decompositions, dict):
+        raise ValueError("decompositions must be an object")
+    for registration in decompositions.values():
+        if (
+            not isinstance(registration, dict)
+            or not {
+                "sentence_id",
+                "tex_path",
+                "atoms",
+                "decomposition_id",
+                "file",
+                "claim",
+            }
+            <= set(registration)
+            or not isinstance(registration["atoms"], list)
+        ):
+            raise ValueError("malformed atomic registration")
+        if any(
+            not isinstance(registration[name], str)
+            for name in (
+                "sentence_id",
+                "tex_path",
+                "decomposition_id",
+                "file",
+                "claim",
+            )
+        ):
+            raise ValueError(
+                "atomic registration identity fields must be strings"
+            )
+        for atom in registration["atoms"]:
+            if (
+                not isinstance(atom, dict)
+                or not {
+                    "atom_id",
+                    "text",
+                    "kind",
+                    "citation_ids",
+                }
+                <= set(atom)
+                or not isinstance(atom["citation_ids"], list)
+            ):
+                raise ValueError("malformed registered atom")
+            if (
+                any(
+                    not isinstance(atom[name], str)
+                    for name in ("atom_id", "text", "kind")
+                )
+                or any(
+                    not isinstance(value, str) for value in atom["citation_ids"]
+                )
+                or (
+                    atom["kind"] == "uncited"
+                    and not isinstance(atom.get("reason"), str)
+                )
+            ):
+                raise ValueError("malformed registered atom fields")
+    return ledger
+
+
+def _adequate_support_basis(entry: dict[str, Any], verified_id: str | None) -> bool:
+    """Accept full text or the primary record of a verified GitHub work."""
+    return entry["basis"] == "fulltext" or (
+        entry["basis"] == "readme"
+        and isinstance(verified_id, str)
+        and verified_id.startswith("github:")
+        and entry["id"] == verified_id
+    )
+
+
+def _audit_markdown(rep: dict[str, Any], ver: dict[str, Any], coverage: dict[str, Any]) -> str:
+    label = (
+        "SUBMISSION READY"
+        if rep["submission_ready"]
+        else "EXPLORATORY PROGRESS"
+        if rep["ok"]
+        else "NEEDS ATTENTION"
+    )
+    lines = [
+        f"# cite-check audit — {label}",
+        "",
+        f"- policy: `{rep['policy']}`",
+        f"- input complete: {rep['input_complete']}; "
+        f"assessment complete: {rep['complete']}",
+        f"- submission ready: {rep['submission_ready']}",
+        f"- manuscript: `{rep['tex']}`",
+        f"- bib: {', '.join('`%s`' % b for b in rep['bibs']) or '(none)'}",
+        f"- citation instances: {rep['n_instances']} over {rep['n_keys']} keys",
+        f"- existence: {rep['existence_counts']}",
+        f"- support: {rep['support_counts']} "
+        f"(missing: {rep['support_missing']})",
+        f"- checked: {rep['checked']}",
+        "",
+    ]
+    lines += [
+        "## Coverage",
+        "",
+        "| axis | assessed / expected | outcomes |",
+        "|---|---|---|",
+    ]
+    for name, axis in rep["coverage"].items():
+        lines.append(
+            f"| {name} | {axis['assessed']} / {axis['expected']} | "
+            f"{axis['counts']} |"
+        )
+    lines += [
+        "",
+        "Assessment includes negative and inaccessible outcomes; "
+        "it is not a readiness claim. Provenance is declared, not "
+        "digest-verified.",
+        "",
+    ]
+    for title, items in (
+        ("Failures", rep["failures"]),
+        ("Warnings", rep["warnings"]),
+    ):
         lines += [f"## {title} ({len(items)})", ""]
         for it in items:
             where = (
                 f" ({os.path.basename(it['file'])}:{it.get('line', '—')})"
-                if it.get("file") else ""
+                if it.get("file")
+                else ""
             )
-            lines.append(f"- **{it['type']}** `{it.get('key', '')}`{where}: {it.get('status') or it.get('verdict') or ''} "
-                         f"{it.get('detail') or ''}".rstrip())
+            lines.append(
+                f"- **{it['type']}** `{it.get('key', '')}`{where}: "
+                f"{it.get('status') or it.get('verdict') or ''} "
+                f"{it.get('detail') or ''}".rstrip()
+            )
             if it.get("claim"):
                 lines.append(f"  > {it['claim']}")
             if it.get("atom"):
                 lines.append(f"  Atom `{it['atom_id']}`: {it['atom']}")
         lines.append("")
-    lines += ["## Per key", "", "| key | existence | id | support verdicts |", "|---|---|---|---|"]
+    lines += [
+        "## Per key",
+        "",
+        "| key | existence | id | support verdicts |",
+        "|---|---|---|---|",
+    ]
     for key in sorted(coverage):
         v = ver.get(key, {})
-        lines.append(f"| `{key}` | {v.get('status', '—')} | {v.get('id', '')} | {coverage[key]} |")
+        lines.append(
+            f"| `{key}` | {v.get('status', '—')} | "
+            f"{v.get('id', '')} | {coverage[key]} |"
+        )
     return "\n".join(lines) + "\n"
 
 
-def audit(tex_path: str, bib_path: str | None = None, require_support: bool = True,
-          verify: bool = True) -> dict:
-    """The gate. Fails on: cite keys missing from the .bib; entries whose
-    identifier resolves to a different paper, does not resolve, or cannot be
-    found; citation instances with an UNSUPPORTED / CONTRADICTS verdict, a
-    verdict recorded against a different paper than the entry now resolves
-    to, or (require_support) no verdict at all. Warns on PROBABLE / FOUND
-    entries, PARTIAL / UNVERIFIABLE verdicts, abstract-only SUPPORTS, uncited
-    entries. Writes .cite-check/audit.md and audit.json next to the .tex.
+def audit(
+    tex_path: str,
+    bib_path: str | None = None,
+    require_support: bool = True,
+    verify: bool = True,
+    policy: Literal["exploratory", "submission-ready"] = "submission-ready",
+) -> dict[str, Any]:
+    """Audit citation integrity under an explicit completion policy.
+
+    Args:
+        tex_path: Main manuscript, including input/include files.
+        bib_path: Optional bibliography override.
+        require_support: Fail on missing judgments, also in exploratory mode.
+            False never weakens submission-ready requirements.
+        verify: Run registry verification. False leaves existence unchecked
+            and cannot pass the submission-ready policy.
+        policy: Exploratory progress or the default submission-ready gate.
+
+    Returns:
+        Separate coverage axes and input/assessment completeness. Complete
+        means assessed, including negative or inaccessible outcomes; only
+        submission_ready certifies the strict policy. Writes audit reports.
     """
+    if policy not in _AUDIT_POLICIES:
+        return _incomplete_audit(str(policy), "unknown audit policy")
+    strict = policy == "submission-ready"
     ex = extract_cites(tex_path)
     if ex.get("error"):
-        return ex
+        return _incomplete_audit(policy, ex["error"])
     workdir = os.path.dirname(os.path.abspath(tex_path))
-    expected_bibs = list(dict.fromkeys(
-        [os.path.abspath(b) for b in ([bib_path] if bib_path else ex["bib_files"]) if b]
-    ))
+    expected_bibs = list(
+        dict.fromkeys(
+            [
+                os.path.abspath(b)
+                for b in ([bib_path] if bib_path else ex["bib_files"])
+                if b
+            ]
+        )
+    )
     bibs = [path for path in expected_bibs if os.path.isfile(path)]
-    failures = [{"type": "missing-bib", "detail": path}
-                for path in expected_bibs if path not in bibs]
-    warnings = []
-    if not bibs:
-        failures.append({"type": "no-bib", "detail": "no readable .bib — pass bib_path or declare \\bibliography{…}"})
-    entries = {}
+    failures: list[dict[str, Any]] = [
+        {"type": "missing-bib", "detail": path}
+        for path in expected_bibs
+        if path not in bibs
+    ]
+    warnings: list[dict[str, Any]] = []
+    if not bibs and (expected_bibs or ex["cites"]):
+        failures.append(
+            {
+                "type": "no-bib",
+                "detail": ("no readable .bib — pass bib_path or "
+                           "declare \\bibliography{…}"),
+            }
+        )
+    entries: dict[str, tuple[str, dict[str, Any]]] = {}
+    bib_snapshots = dict.fromkeys(expected_bibs)
     for b in bibs:
         try:
-            with open(b, encoding="utf-8", errors="replace") as fh:
-                parsed = _parse_bib(fh.read())
-        except OSError as exc:
+            with open(b, "rb") as fh:
+                raw = fh.read()
+            bib_snapshots[b] = hashlib.sha256(raw).hexdigest()
+            parsed = _parse_bib(raw.decode("utf-8"))
+        except (OSError, UnicodeError) as exc:
             failures.append({"type": "unreadable-bib", "detail": str(exc)})
             continue
         for error in parsed["errors"]:
             failures.append({"type": "bib-parse", "detail": f"{b}: {error}"})
         for entry in parsed["entries"]:
             if entry["key"] in entries:
-                failures.append({"type": "duplicate-key", "key": entry["key"],
-                                 "detail": "key appears in multiple entries"})
+                failures.append(
+                    {
+                        "type": "duplicate-key",
+                        "key": entry["key"],
+                        "detail": "key appears in multiple entries",
+                    }
+                )
             entries.setdefault(entry["key"], (b, entry))
     cite_keys = set(ex["keys"])
     nocite_all = any(c["key"] == "*" for c in ex["cites"])
     if nocite_all:
         cite_keys.update(entries)
     for k in sorted(cite_keys - set(entries)):
-        failures.append({"type": "undefined-cite", "key": k, "detail": "cited in the .tex but in no .bib"})
+        failures.append(
+            {
+                "type": "undefined-cite",
+                "key": k,
+                "detail": "cited in the .tex but in no .bib",
+            }
+        )
     if not nocite_all:
         for k in sorted(set(entries) - cite_keys):
-            warnings.append({"type": "uncited-entry", "key": k, "detail": "in the .bib but never cited"})
-    ver, unofficial = {}, []
+            warnings.append(
+                {
+                    "type": "uncited-entry",
+                    "key": k,
+                    "detail": "in the .bib but never cited",
+                }
+            )
+    ver = {}
+    bibliography_observation_conflict = False
     if verify:
-        for b in bibs:
-            keys_here = [k for k, (bb, _) in entries.items() if bb == b and k in cite_keys]
+        for bib in bibs:
+            keys_here = [
+                key
+                for key, (path, _) in entries.items()
+                if path == bib and key in cite_keys
+            ]
             if not keys_here:
                 continue
-            rep = verify_bib(b, keys=keys_here, tex_path=tex_path)
-            if rep.get("error"):
-                failures.append({"type": "verify-error", "detail": rep["error"]})
+            if _audit_file_digest(bib) != bib_snapshots[bib]:
+                bibliography_observation_conflict = True
+            result = verify_bib(bib, keys=keys_here, tex_path=tex_path)
+            if _audit_file_digest(bib) != bib_snapshots[bib]:
+                bibliography_observation_conflict = True
+            if not isinstance(result, dict) or result.get("error"):
+                failures.append(
+                    {
+                        "type": "verify-error",
+                        "detail": (
+                            result.get("error")
+                            if isinstance(result, dict)
+                            else "malformed verifier response"
+                        ),
+                    }
+                )
                 continue
-            for r in rep["entries"]:
-                ver[r["key"]] = r
-        for k, r in ver.items():
-            detail = "; ".join(r.get("notes") or [])
-            if r["status"] in _OK_STATUS - {"FOUND"}:
-                pass
-            elif r["status"] in ("PROBABLE", "FOUND"):
-                warnings.append({"type": "existence", "key": k, "status": r["status"], "detail": detail})
-            else:
-                failures.append({"type": "existence", "key": k, "status": r["status"], "detail": detail})
-            if not r.get("provenance"):
-                unofficial.append(k)
-    ledger_state = _load_ledger(workdir)
+            rows = result.get("entries", [])
+            if not isinstance(rows, list):
+                rows = []
+            for entry in rows:
+                if (
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("key"), str)
+                    and entry["key"] in keys_here
+                ):
+                    if not isinstance(entry.get("ids", {}), dict):
+                        entry = dict(entry, status="UNRESOLVED", ids={})
+                    ver[entry["key"]] = entry
+    unofficial, provenance_states = [], []
+    for key in sorted(cite_keys):
+        parsed_entry = entries.get(key, (None, {}))[1]
+        provenance_state = _declared_provenance(parsed_entry, ver.get(key, {}))
+        if provenance_state != "DECLARED":
+            unofficial.append(key)
+        provenance_states.append(provenance_state)
+        if provenance_state != "DECLARED":
+            (
+                failures
+                if strict or provenance_state == "MISMATCH"
+                else warnings
+            ).append(
+                {
+                    "type": "provenance",
+                    "key": key,
+                    "status": provenance_state,
+                    "detail": "no declared official-export provenance",
+                }
+            )
+        result = ver.setdefault(
+            key,
+            {
+                "key": key,
+                "status": (
+                    "UNDEFINED"
+                    if not parsed_entry
+                    else "UNRESOLVED"
+                    if verify
+                    else "UNCHECKED"
+                ),
+            },
+        )
+        status = result.get("status", "UNRESOLVED")
+        if not isinstance(status, str) or status not in {
+            "VERIFIED",
+            "FOUND",
+            "PROBABLE",
+            "MISMATCH",
+            "NOT_FOUND",
+            "UNRESOLVED",
+            "UNCHECKED",
+            "UNDEFINED",
+        }:
+            status = "UNRESOLVED"
+        if status == "VERIFIED" and (
+            not isinstance(result.get("id"), str) or not result["id"].strip()
+        ):
+            status = "UNRESOLVED"
+        result["status"] = status
+        if status != "VERIFIED":
+            blocking = strict or status in {
+                "MISMATCH",
+                "NOT_FOUND",
+                "UNRESOLVED",
+                "UNDEFINED",
+            }
+            (failures if blocking else warnings).append(
+                {
+                    "type": "existence",
+                    "key": key,
+                    "status": status,
+                    "detail": "; ".join(result.get("notes") or []),
+                }
+            )
+    if strict and (not verify or not require_support):
+        failures.append(
+            {
+                "type": "policy-configuration",
+                "detail": (
+                    "submission-ready requires verify=true and "
+                    "require_support=true; use exploratory for partial work"
+                ),
+            }
+        )
+    try:
+        with _file_lock(_project_path(workdir, "ledger.json")):
+            ledger_state = _audit_ledger(workdir)
+            ledger_digest = _audit_file_digest(
+                _project_path(workdir, "ledger.json")
+            )
+    except (OSError, ValueError) as error:
+        return _incomplete_audit(policy, f"cannot audit ledger: {error}")
     ledger = ledger_state["entries"]
-    verdicts, coverage, missing = Counter(), {}, []
+    verdicts: Counter[str] = Counter()
+    coverage: dict[str, str] = {}
+    missing: list[dict[str, Any]] = []
+    support_states, support_bases = [], []
+    supported_adequately = 0
+    source_snapshots: dict[str, dict[str, Any] | None] = {}
+    source_observation_conflict = False
     legacy_counts = Counter(
         (cite["key"], _claim_hash(cite["claim"]))
-        for cite in ex["cites"] if not cite["nocite"]
+        for cite in ex["cites"]
+        if not cite["nocite"]
     )
     requirements = _support_requirements(ex, ledger_state)
     uncited_atoms = []
     for sentence in ex["sentences"]:
         registration = _find_decomposition(sentence, ledger_state)
-        if (not registration
-                or registration["sentence_id"] != sentence["sentence_id"]):
+        if (
+            not registration
+            or registration["sentence_id"] != sentence["sentence_id"]
+        ):
             continue
         for atom in registration["atoms"]:
             if atom["kind"] == "uncited":
                 scope = {
                     "sentence_id": sentence["sentence_id"],
-                    "file": sentence["file"], "claim": sentence["claim"],
-                    "atom_id": atom["atom_id"], "atom": atom["text"],
-                    "reason": atom["reason"], "verified": False,
+                    "file": sentence["file"],
+                    "claim": sentence["claim"],
+                    "atom_id": atom["atom_id"],
+                    "atom": atom["text"],
+                    "reason": atom["reason"],
+                    "verified": False,
                 }
                 uncited_atoms.append(scope)
-                warnings.append(dict(
-                    scope, type="uncited-atom",
-                    detail=("declared uncited scope; not verified: "
-                            + atom["reason"]),
-                ))
+                warnings.append(
+                    dict(
+                        scope,
+                        type="uncited-atom",
+                        detail=(
+                            "declared uncited scope; not verified: "
+                            + atom["reason"]
+                        ),
+                    )
+                )
     for c in requirements:
-        loc = {"key": c["key"], "file": c["file"], "line": c["line"],
-               "claim": c["claim"][:240], "occurrence_id": c["occurrence_id"]}
+        loc = {
+            "key": c["key"],
+            "file": c["file"],
+            "line": c["line"],
+            "claim": c["claim"][:240],
+            "occurrence_id": c["occurrence_id"],
+        }
         if c.get("atom_id"):
             loc.update(atom_id=c["atom_id"], atom=c["atom"]["text"])
         if c.get("decomposition_stale"):
-            failures.append(dict(
-                loc, type="decomposition-stale",
-                detail=("atomic mode requires a current sentence registration; "
-                        "register claims and re-judge"),
-            ))
+            support_states.append("DECOMPOSITION_STALE")
+            failures.append(
+                dict(
+                    loc,
+                    type="decomposition-stale",
+                    detail=(
+                        "atomic mode requires a current sentence registration; "
+                        "register claims and re-judge"
+                    ),
+                )
+            )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
-        L = ledger.get(_support_id(c["occurrence_id"], c.get("atom_id")))
-        if (L is None and not c.get("atom_id")
-                and legacy_counts[(c["key"], _claim_hash(c["claim"]))] == 1):
+        judgment = ledger.get(_support_id(c["occurrence_id"], c.get("atom_id")))
+        if (
+            judgment is None
+            and not c.get("atom_id")
+            and legacy_counts[(c["key"], _claim_hash(c["claim"]))] == 1
+        ):
             legacy = ledger.get(f"{c['key']}|{_claim_hash(c['claim'])}")
             # A legacy judgment is safe only when it maps to one occurrence
             # and any supplied historical source location still matches.
-            if legacy and (legacy.get("file") in (None, c["file"])) and (
-                legacy.get("line") in (None, c["line"])
+            if (
+                legacy
+                and (legacy.get("file") in (None, c["file"]))
+                and (legacy.get("line") in (None, c["line"]))
             ):
-                L = legacy
-        if not L:
+                judgment = legacy
+        if not judgment:
+            support_states.append("MISSING")
             missing.append(c)
             coverage[c["key"]] = coverage.get(c["key"], "") + " MISSING"
             continue
         vid = (ver.get(c["key"]) or {}).get("id")
-        if vid and L["id"] != vid:
-            failures.append(dict(loc, type="support-stale", verdict=L["verdict"],
-                                 detail=f"verdict was judged against {L['id']} but the entry now resolves to {vid} — re-judge"))
+        if vid and judgment["id"] != vid:
+            support_states.append("STALE")
+            failures.append(
+                dict(
+                    loc,
+                    type="support-stale",
+                    verdict=judgment["verdict"],
+                    detail=(f"verdict was judged against {judgment['id']} "
+                            f"but entry resolves to {vid} — re-judge"),
+                )
+            )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
-        current_source = _current_source_identity(L.get("source_cache_id", L["id"]))
+        source_cache_id = judgment.get("source_cache_id", judgment["id"])
+        current_source = _current_source_identity(source_cache_id)
+        if (
+            source_cache_id in source_snapshots
+            and source_snapshots[source_cache_id] != current_source
+        ):
+            source_observation_conflict = True
+        source_snapshots.setdefault(source_cache_id, current_source)
         entry = entries.get(c["key"], (None, {}))[1]
         expected_ref = _entry_ref(entry) if entry else None
-        expected_version = ((ver.get(c["key"]) or {}).get("ref") or {}).get("sha")
-        source_version = (L.get("source_identity") or {}).get("version")
+        expected_version = ((ver.get(c["key"]) or {}).get("ref") or {}).get(
+            "sha"
+        )
+        source_version = (judgment.get("source_identity") or {}).get("version")
         if expected_ref and not expected_version:
             expected_version = expected_ref
         arxiv_version = _entry_arxiv_version(entry) if entry else None
         if arxiv_version:
             expected_version = arxiv_version
-        if (L.get("decomposition_id") != c.get("decomposition_id")
-                or (c.get("atom_id") and L.get("atom") != c["atom"])
-                or not L.get("source_identity")
-                or (expected_version and source_version != expected_version)
-                or L["source_identity"] != current_source
-                or L.get("context_hash") != _claim_hash(c["context"])):
-            failures.append(dict(
-                loc, type="support-stale", verdict=L["verdict"],
-                detail="source, context or evidence policy changed; re-judge"
-            ))
+        if (
+            judgment.get("decomposition_id") != c.get("decomposition_id")
+            or (c.get("atom_id") and judgment.get("atom") != c["atom"])
+            or not judgment.get("source_identity")
+            or (expected_version and source_version != expected_version)
+            or judgment["source_identity"] != current_source
+            or judgment.get("context_hash") != _claim_hash(c["context"])
+        ):
+            support_states.append("STALE")
+            failures.append(
+                dict(
+                    loc,
+                    type="support-stale",
+                    verdict=judgment["verdict"],
+                    detail=("source, context or evidence policy changed; "
+                            "re-judge"),
+                )
+            )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
-        verdicts[L["verdict"]] += 1
-        coverage[c["key"]] = coverage.get(c["key"], "") + " " + L["verdict"] + ("(abs)" if L["basis"] == "abstract" else "")
-        if L["verdict"] in ("UNSUPPORTED", "CONTRADICTS"):
-            failures.append(dict(loc, type="support", verdict=L["verdict"], detail=L.get("note")))
-        elif L["verdict"] in ("PARTIAL", "UNVERIFIABLE"):
-            warnings.append(dict(loc, type="support", verdict=L["verdict"], detail=L.get("note")))
-        elif L["basis"] == "abstract":
-            warnings.append(dict(loc, type="support-basis", verdict=L["verdict"],
-                                 detail="judged from the abstract only — pass pdf_path to fetch_text for a full-text check"))
+        if judgment.get("verdict") not in _VERDICTS:
+            support_states.append("INVALID")
+            failures.append(dict(loc, type="support-invalid"))
+            continue
+        verdict = judgment["verdict"]
+        support_states.append(
+            "INACCESSIBLE" if verdict == "UNVERIFIABLE" else verdict
+        )
+        support_bases.append(judgment["basis"])
+        verdicts[verdict] += 1
+        adequate = _adequate_support_basis(
+            judgment,
+            vid if ver.get(c["key"], {}).get("status") == "VERIFIED" else None,
+        )
+        supported_adequately += verdict == "SUPPORTS" and adequate
+        coverage[c["key"]] = (
+            coverage.get(c["key"], "") + f" {verdict}({judgment['basis']})"
+        )
+        if verdict in ("UNSUPPORTED", "CONTRADICTS"):
+            failures.append(
+                dict(
+                    loc,
+                    type="support",
+                    verdict=verdict,
+                    detail=judgment.get("note"),
+                )
+            )
+        elif verdict in ("PARTIAL", "UNVERIFIABLE"):
+            (failures if strict else warnings).append(
+                dict(
+                    loc,
+                    type="support",
+                    verdict=verdict,
+                    detail=judgment.get("note"),
+                )
+            )
+        elif not adequate:
+            (failures if strict else warnings).append(
+                dict(
+                    loc,
+                    type="support-basis",
+                    verdict=verdict,
+                    detail=(
+                        f"limited evidence basis: {judgment['basis']}; "
+                        "obtain full text or a verified repository's record"
+                    ),
+                )
+            )
     for c in missing:
-        (failures if require_support else warnings).append(
-            {"type": "support-missing", "key": c["key"], "file": c["file"], "line": c["line"],
-             "claim": c["claim"][:240], "occurrence_id": c["occurrence_id"],
-             "atom_id": c.get("atom_id"),
-             "atom": (c.get("atom") or {}).get("text"),
-             "detail": "no support verdict recorded for this atom/occurrence"})
+        (failures if strict or require_support else warnings).append(
+            {
+                "type": "support-missing",
+                "key": c["key"],
+                "file": c["file"],
+                "line": c["line"],
+                "claim": c["claim"][:240],
+                "occurrence_id": c["occurrence_id"],
+                "atom_id": c.get("atom_id"),
+                "atom": (c.get("atom") or {}).get("text"),
+                "detail": ("no support verdict recorded for "
+                           "this atom/occurrence"),
+            }
+        )
     for k in cite_keys:
         coverage.setdefault(k, "")
-    complete = not any(item["type"] in {
-        "missing-bib", "unreadable-bib", "no-bib", "bib-parse", "duplicate-key"
-    } for item in failures)
-    report = {"ok": not failures, "complete": complete, "tex": os.path.abspath(tex_path), "bibs": bibs,
-              "n_instances": ex["n_instances"], "n_keys": len(cite_keys),
-              "existence_counts": dict(Counter(r["status"] for r in ver.values())),
-              "support_counts": dict(verdicts), "support_missing": len(missing),
-              "n_support_requirements": len(requirements),
-              "n_atomic_requirements": sum(
-                  "atom_id" in c for c in requirements
-              ),
-              "n_uncited_atoms": len(uncited_atoms),
-              "uncited_atoms": uncited_atoms,
-              "unofficial_entries": sorted(unofficial), "failures": failures, "warnings": warnings,
-              "checked": _now_iso()}
+    input_complete = not any(
+        item["type"]
+        in {
+            "missing-bib",
+            "unreadable-bib",
+            "no-bib",
+            "bib-parse",
+            "duplicate-key",
+            "undefined-cite",
+        }
+        for item in failures
+    )
+    existence_axis = _coverage_axis(
+        [result["status"] for result in ver.values()],
+        {"UNCHECKED", "UNRESOLVED", "UNDEFINED"},
+        {"VERIFIED"},
+    )
+    provenance_axis = _coverage_axis(
+        provenance_states,
+        {"UNDEFINED"},
+        {"DECLARED"},
+    )
+    provenance_axis["declared"] = provenance_axis.pop("verified")
+    provenance_axis["declaration_rate"] = provenance_axis.pop(
+        "verification_rate"
+    )
+    provenance_axis["assurance"] = "declaration-only; export digest not checked"
+    support_axis = _coverage_axis(
+        support_states,
+        {"MISSING", "STALE", "DECOMPOSITION_STALE", "INVALID"},
+        set(),
+    )
+    support_axis["verified"] = supported_adequately
+    support_axis["verification_rate"] = (
+        supported_adequately / len(requirements) if requirements else None
+    )
+    support_axis["basis_counts"] = dict(Counter(support_bases))
+    support_axis["unresolved_decompositions"] = sum(
+        bool(item.get("decomposition_stale")) for item in requirements
+    )
+    support_axis["atomic_total_known"] = not support_axis[
+        "unresolved_decompositions"
+    ]
+    support_axis["unit"] = (
+        "current atom/occurrence judgments, or unresolved occurrence "
+        "placeholders where decomposition is stale"
+    )
+    axes = {
+        "existence": existence_axis,
+        "provenance": provenance_axis,
+        "support": support_axis,
+    }
+    complete = input_complete and all(
+        axis["complete"] for axis in axes.values()
+    )
+    report = {
+        "ok": not failures,
+        "complete": complete,
+        "input_complete": input_complete,
+        "policy": policy,
+        "submission_ready": strict and not failures and complete,
+        "coverage": axes,
+        "tex": os.path.abspath(tex_path),
+        "bibs": bibs,
+        "n_instances": ex["n_instances"],
+        "n_keys": len(cite_keys),
+        "existence_counts": dict(Counter(r["status"] for r in ver.values())),
+        "support_counts": dict(verdicts),
+        "support_missing": len(missing),
+        "n_support_requirements": len(requirements),
+        "n_atomic_requirements": sum("atom_id" in c for c in requirements),
+        "n_uncited_atoms": len(uncited_atoms),
+        "uncited_atoms": uncited_atoms,
+        "unofficial_entries": sorted(unofficial),
+        "failures": failures,
+        "warnings": warnings,
+        "checked": _now_iso(),
+    }
     coverage = {k: v.strip() or "—" for k, v in coverage.items()}
     with _file_lock(_project_path(workdir, "ledger.json")):
         ledger_changed = (
-            _atomic_digest(_load_ledger(workdir))
-            != _atomic_digest(ledger_state)
+            _audit_file_digest(_project_path(workdir, "ledger.json"))
+            != ledger_digest
         )
-        manuscript_changed = (
-            _atomic_digest(extract_cites(tex_path)) != _atomic_digest(ex)
+        manuscript_changed = _atomic_digest(
+            extract_cites(tex_path)
+        ) != _atomic_digest(ex)
+        bibliography_changed = bibliography_observation_conflict or any(
+            _audit_file_digest(path) != digest
+            for path, digest in bib_snapshots.items()
         )
-        if ledger_changed or manuscript_changed:
-            failures.append({
-                "type": "audit-stale",
-                "detail": ("manuscript or ledger changed during audit; "
-                           "rerun audit"),
-            })
+        sources_changed = source_observation_conflict or any(
+            _current_source_identity(identifier) != snapshot
+            for identifier, snapshot in source_snapshots.items()
+        )
+        if (
+            ledger_changed
+            or manuscript_changed
+            or bibliography_changed
+            or sources_changed
+        ):
+            failures.append(
+                {
+                    "type": "audit-stale",
+                    "detail": (
+                        "manuscript, bibliography, ledger or source "
+                        "changed during audit; "
+                        "rerun audit"
+                    ),
+                }
+            )
             report["ok"] = False
+            report["complete"] = False
+            report["submission_ready"] = False
         md_path = _project_path(workdir, "audit.md")
         _atomic_write(md_path, _audit_markdown(report, ver, coverage))
         report["report"] = md_path
         _write_project(workdir, "audit.json", report)
-    report["summary"] = (f"{'PASS' if report['ok'] else 'FAIL'}: {len(failures)} failure(s), {len(warnings)} warning(s); "
-                         f"{ex['n_instances']} citation instances, {len(missing)} without a support verdict; "
-                         f"existence {report['existence_counts']}")
+    report["summary"] = (
+        f"{policy}: ready={report['submission_ready']}; "
+        f"{len(failures)} failure(s), {len(warnings)} warning(s); "
+        f"{ex['n_instances']} citation instances, "
+        f"{len(missing)} without a support verdict; "
+        f"existence {report['existence_counts']}"
+    )
     return report
 
 

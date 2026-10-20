@@ -35,17 +35,17 @@ class IdentityTest(unittest.TestCase):
                         quotes=[source.read_text()], context=cite["context"]
                     )
                 self.assertTrue(record()["recorded"])
-                self.assertTrue(SERVER.audit(str(tex), str(bib), verify=False)["ok"])
+                self.assertTrue(SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")["ok"])
                 source.write_text("The result is contradicted by our experiment.")
-                report = SERVER.audit(str(tex), str(bib), verify=False)
+                report = SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")
                 self.assertFalse(report["ok"])
                 self.assertEqual(report["failures"][0]["type"], "support-stale")
                 record()
                 tex.write_text(r"Context changed. Result is supported \cite{k}.")
-                self.assertFalse(SERVER.audit(str(tex), str(bib), verify=False)["ok"])
+                self.assertFalse(SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")["ok"])
                 ledger_path = root / ".cite-check" / "ledger.json"
                 ledger = json.loads(ledger_path.read_text())
                 for entry in ledger["entries"].values():
                     entry.pop("source_identity")
                 ledger_path.write_text(json.dumps(ledger))
-                self.assertFalse(SERVER.audit(str(tex), str(bib), verify=False)["ok"])
+                self.assertFalse(SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")["ok"])

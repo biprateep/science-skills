@@ -86,6 +86,9 @@ class ProtocolSchemaTest(unittest.TestCase):
                     support_fields = schemas["record_support"]["properties"]
                     for field in ("tex_path", "occurrence_id", "atom_id"):
                         self.assertIn(field, support_fields)
+                    policy_schema = schemas["audit"]["properties"]["policy"]
+                    self.assertEqual(policy_schema["default"], "submission-ready")
+                    self.assertEqual(set(policy_schema["enum"]), {"submission-ready", "exploratory"})
                     manuscript = pathlib.Path(directory) / "main.tex"
                     manuscript.write_text(r"A result holds \cite{a}.")
                     extraction = SERVER.extract_cites(str(manuscript))
@@ -122,6 +125,17 @@ class ProtocolSchemaTest(unittest.TestCase):
                         )).model_dump(by_alias=True)
                         self.assertTrue(refused.get("isError", False), refused)
                         self.assertFalse(SERVER.register_claims(**invalid)["ok"])
+                    audit_result = (await session.call_tool("audit", {
+                        "tex_path": str(manuscript), "verify": False,
+                        "require_support": False, "policy": "exploratory",
+                    })).model_dump(by_alias=True)
+                    audit_text = " ".join(item.get("text", "") for item in audit_result["content"])
+                    self.assertIn('"submission_ready": false', audit_text)
+                    self.assertIn('"coverage"', audit_text)
+                    refused = (await session.call_tool("audit", {
+                        "tex_path": str(manuscript), "policy": "unknown",
+                    })).model_dump(by_alias=True)
+                    self.assertTrue(refused.get("isError", False))
                     result = (
                         await session.call_tool(
                             "resolve_citation",

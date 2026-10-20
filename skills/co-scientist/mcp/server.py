@@ -762,11 +762,29 @@ def compile_report(workdir: str, name: str = "report", allow_unverified: bool = 
         return {"success": False, "gate": "inputs", "detail": str(exc)}
     if extracted.get("cites") or bibs:
         citation_audit = _cite_check_call(
-            "audit", {"tex_path": tex, "require_support": True, "verify": True}
+            "audit",
+            {
+                "tex_path": tex,
+                "policy": "submission-ready",
+                "require_support": True,
+                "verify": True,
+            },
         )
-        if citation_audit.get("ok") is not True or citation_audit.get("complete") is False:
-            return {"success": False, "gate": "citations", "detail": citation_audit}
-        gates["citations"] = "passed (fresh audit)"
+        required_flags = (
+            "ok",
+            "input_complete",
+            "complete",
+            "submission_ready",
+        )
+        if citation_audit.get("policy") != "submission-ready" or any(
+            citation_audit.get(flag) is not True for flag in required_flags
+        ):
+            return {
+                "success": False,
+                "gate": "citations",
+                "detail": citation_audit,
+            }
+        gates["citations"] = "passed (fresh submission-ready audit)"
     else:
         gates["citations"] = "passed (no citations or bibliography)"
 

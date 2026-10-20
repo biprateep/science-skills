@@ -107,11 +107,11 @@ class MathContextTest(unittest.TestCase):
                 )
                 self.assertTrue(recorded["recorded"])
                 self.assertTrue(
-                    SERVER.audit(str(tex), str(bib), verify=False)["ok"]
+                    SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")["ok"]
                 )
                 tex.write_text(tex.read_text().replace("x=1", "x=100"))
                 self.assertFalse(
-                    SERVER.audit(str(tex), str(bib), verify=False)["ok"]
+                    SERVER.audit(str(tex), str(bib), verify=False, policy="exploratory")["ok"]
                 )
 
 
