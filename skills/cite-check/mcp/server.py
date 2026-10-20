@@ -689,12 +689,39 @@ def _arxiv_parse(body: str) -> list:
     return out
 
 
+class RegistryLookupError(RuntimeError):
+    """A non-definitive registry outcome; never evidence of absence."""
+
+    def __init__(self, registry: str, outcome: str, status: int = 0):
+        self.outcome = outcome
+        super().__init__(f"{registry}: {outcome} (HTTP {status})")
+
+
+def _registry_status(registry: str, status: int) -> bool:
+    if status == 404:
+        return False
+    if status != 200:
+        raise RegistryLookupError(
+            registry, "rate-limited" if status == 429 else "unavailable", status
+        )
+    return True
+
+
 def _arxiv_lookup(ids: list) -> dict:
     found = {}
     for chunk in _chunks(ids, 50):
         status, body = _http(f"{_ARXIV_API}?id_list={','.join(chunk)}&max_results={len(chunk)}")
-        if status != 200:
+        if not _registry_status("arxiv", status):
             continue
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError as exc:
+            raise RegistryLookupError("arxiv", "malformed-response", status) from exc
+        if root.tag != "{http://www.w3.org/2005/Atom}feed" or any(
+            "/api/errors" in entry.findtext("a:id", "", _ATOM)
+            for entry in root.findall("a:entry", _ATOM)
+        ):
+            raise RegistryLookupError("arxiv", "malformed-response", status)
         for rec in _arxiv_parse(body):
             found[rec["arxiv"].lower()] = rec
     return found
@@ -755,7 +782,12 @@ def _cr_record(msg: dict) -> dict:
 
 def _crossref_work(doi: str):
     status, data = _get_json(f"{_CROSSREF}/{urllib.parse.quote(doi, safe='')}")
-    return _cr_record(data["message"]) if status == 200 and data else None
+    if not _registry_status("crossref", status):
+        return None
+    message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(message, dict) or not message.get("DOI"):
+        raise RegistryLookupError("crossref", "malformed-response", status)
+    return _cr_record(message)
 
 
 def _crossref_search(title=None, author=None, words=None, year=None, rows=10) -> list:
@@ -781,9 +813,14 @@ def _crossref_search(title=None, author=None, words=None, year=None, rows=10) ->
 
 def _datacite_doi(doi: str):
     status, data = _get_json(f"https://api.datacite.org/dois/{urllib.parse.quote(doi, safe='')}")
-    if status != 200 or not data:
+    if not _registry_status("datacite", status):
         return None
-    a = data.get("data", {}).get("attributes", {})
+    try:
+        a = data["data"]["attributes"]
+        if not isinstance(a, dict) or not a.get("doi"):
+            raise ValueError("missing DOI")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RegistryLookupError("datacite", "malformed-response", status) from exc
     authors = []
     for c in a.get("creators") or []:
         if c.get("familyName"):
@@ -1437,13 +1474,28 @@ def _resolve_many(identifiers: list) -> list:
     others = sorted({(k, v) for k, v in kinds if k in ("openalex", "inspire")})
     repos = sorted({v for k, v in kinds if k == "github"})
 
-    arxiv_found = _arxiv_lookup(arxiv_ids) if arxiv_ids else {}
+    try:
+        arxiv_found = _arxiv_lookup(arxiv_ids) if arxiv_ids else {}
+    except RuntimeError as exc:
+        arxiv_found = {identifier.lower(): {
+            "error": str(exc), "outcome": getattr(exc, "outcome", "unavailable")
+        } for identifier in arxiv_ids}
 
-    def by_doi(d):
-        try:
-            return d, (_crossref_work(d) or _datacite_doi(d))
-        except RuntimeError as exc:
-            return d, {"error": str(exc)}
+    def by_doi(identifier):
+        errors = []
+        for lookup in (_crossref_work, _datacite_doi):
+            try:
+                record = lookup(identifier)
+                if record:
+                    return identifier, record
+            except RuntimeError as exc:
+                errors.append(exc)
+        if errors:
+            return identifier, {
+                "error": "; ".join(str(error) for error in errors),
+                "outcome": getattr(errors[0], "outcome", "unavailable"),
+            }
+        return identifier, None
 
     def by_other(kv):
         k, v = kv
@@ -1496,11 +1548,13 @@ def _resolve_many(identifiers: list) -> list:
             reason = ("unrecognized identifier — expected an arXiv id, DOI (10.*), ADS bibcode, "
                       "OpenAlex Wnnn, inspire:nnn, or a GitHub repository (github.com/owner/repo)")
         failed = False
+        outcome = rec.get("outcome") if isinstance(rec, dict) else "not-found"
         if isinstance(rec, dict) and rec.get("error"):
             reason, rec, failed = rec["error"], None, not rec.get("final")
         if not rec:
             results.append(dict({"resolved": False, "input": raw, "kind": kind, "reason": reason},
-                                **({"lookup_error": True} if failed else {})))
+                                **({"lookup_error": True, "outcome": outcome or "unavailable"}
+                                   if failed else {"outcome": "not-found"})))
             continue
         rec = dict(rec)
         rec.setdefault("registries", [rec["registry"]])
@@ -2464,7 +2518,7 @@ def verify_bib(bib_path: str, keys: list | None = None, tex_path: str | None = N
             result["notes"] += [f"stale identifier in entry: {b}" for b in bad]
             out.append(result)
         elif order:
-            failed = all((resolved.get(f"{k}:{v}") or {}).get("lookup_error") for k, v in order)
+            failed = any((resolved.get(f"{k}:{v}") or {}).get("lookup_error") for k, v in order)
             out.append({"key": e["key"], "status": "UNRESOLVED" if failed else "NOT_FOUND", "via": None,
                         "notes": bad + (["the lookup itself failed — retry before calling this a fabrication"]
                                         if failed else []), "provenance": e["provenance"]})
