@@ -135,6 +135,23 @@ workflow and obtain the existing strict audit before reporting readiness.
 Changed input, ledger or source snapshots require a fresh job; a stored job
 is never an authorization to reuse stale evidence.
 
+## Reviewing bibliography metadata
+
+Call `lint_bib(bib_path, keys=..., verify=false)` for an offline metadata
+review; omit `keys` to inspect all entries. `verify=true` optionally compares
+entries through their own identifiers, using the ordinary registry cache.
+The tool returns advice without editing the bibliography or changing audit
+outcomes. Its `ok` and `input_complete` describe processing; `advisory_clean`
+does not certify identity, export provenance or claim support, and
+`submission_ready` is always false.
+
+Relay deferred macros/inheritance and incomplete registry comparisons along
+with actionable issues. A published record can be relevant without replacing
+an intentionally cited preprint version. If a metadata change is chosen,
+obtain its official export through `bib_add`/`fetch_bibtex` and rerun the
+ordinary checks; do not fill fields from model memory or lint suggestions.
+See [bibliography-lint.md](bibliography-lint.md) for scope and result fields.
+
 ## Reviewing actionable corrections
 
 Call `correction_report(tex_path, bib_path, annotated=true)` when a user
