@@ -306,3 +306,12 @@ levels. Numeric exponents larger than 10,000 are refused. CAS workers receive
 CPU and memory limits on POSIX platforms; the parent enforces a wall-clock
 limit. These bounds are reliability limits, not a claim that SymPy is a general
 purpose sandbox for arbitrary Python.
+
+The toolbox rejects empty step lists, zero/negative sample counts, nonfinite or
+nonpositive tolerances/timeouts, and invalid domains. A run containing only
+class-U steps is not machine-verified. Class-N checks use only numerical
+methods. Numeric samples respect integer, parity, prime, rational/irrational,
+real/complex and sign assumptions; an incompatible domain fails explicitly.
+Each checked step runs in a fresh subprocess with a wall-clock deadline on
+all platforms. A crashed worker, malformed result or timeout is a failed check;
+there is no unbounded queue read or unguarded in-process fallback.
