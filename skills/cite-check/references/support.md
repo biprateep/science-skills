@@ -2,7 +2,7 @@
 
 An existing paper cited for something it does not say is as much a
 fabrication as a paper that does not exist. This protocol produces one
-**verdict per citation instance** — per (cite key, claim sentence) pair —
+**verdict per citation instance** — bound to its key, claim and context —
 recorded in `<manuscript dir>/.cite-check/ledger.json` through
 `record_support`, which refuses any verdict that is not backed by evidence
 the tool can check.
@@ -11,9 +11,10 @@ the tool can check.
 
 - **Claim** = the sentence in which the citation sits, exactly as
   `extract_cites` returns it (`⟨cite:key⟩` marks the citation's position;
-  `$…$` math is kept; display equations appear as `⟨display equation⟩`).
-  The ledger keys on a hash of this sentence, so pass it verbatim.
-- **Context** = one sentence either side, given to the judge for reading only.
+  inline and display mathematics are preserved). Pass it verbatim.
+- **Context** = the extracted surrounding sentences and mathematics. Give it
+  to the judge and pass it verbatim as `context` to `record_support`; it is
+  part of verdict identity, not reading-only material.
 - A sentence citing several papers (`⟨cite:a,b⟩`) yields one instance per key;
   each paper is judged for the part of the claim it is attached to. "A and B
   showed X" cited to both means each must show X (or its share of X).
@@ -51,8 +52,8 @@ is real, the strength is not.
   offsets. Quotes under 15 normalized characters are rejected.
 - Quote the sentence(s) that carry the claim — a result sentence, a stated
   number, a method description — not a related keyword.
-- `find_passages(identifier, [claim, …])` returns the abstract and the top
-  passages of the paper ranked by overlap with each claim. The judge reads
+- `find_passages(identifier, [claim, …], version=…)` returns the abstract
+  and top passages ranked by overlap with each claim. The judge reads
   those (and more of the text if needed) and quotes from them.
 
 ## Who judges
@@ -79,16 +80,21 @@ Judge prompt template (fill the brackets; return JSON only):
 > say what to search for in the full text. Return:
 > `[{"claim": "...", "verdict": "...", "quotes": ["..."], "note": "..."}]`
 
-The orchestrator then calls `record_support` for each item; a refused record
-(quote not found, note missing) goes back to the judge with the tool's reason.
+The orchestrator then calls `record_support` for each item with the original
+extracted `claim` and `context`, plus the same source version used to retrieve
+the passages. A refused record (quote not found, note missing) goes back to
+the judge with the tool's reason.
 
 ## Efficiency
 
 1. `extract_cites` once; group instances `by_key`.
 2. `verify_bib` once (batched registry calls); only VERIFIED/FOUND keys go on
    to support checking — a MISMATCH entry gets fixed first.
-3. `fetch_text` per paper (cached globally, reused across manuscripts and
-   sessions); `find_passages` with **all** claims for that paper in one call.
+3. `fetch_text` per paper and cited version (cached globally, reused across
+   manuscripts and sessions); `find_passages` with **all** claims for that
+   version in one call. Use the same `version` or versioned identifier for
+   both calls and `record_support`; latest-version text is not a substitute
+   for a pinned citation.
 4. One judge per paper; one `record_support` per instance.
 5. On revision, re-judge instances whose claim, surrounding context, source
    snapshot, or evidence policy changed. `audit` reports missing and stale
