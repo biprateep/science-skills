@@ -75,10 +75,13 @@ digested.
 
 The digest never edits the profile. It proposes; the author rules.
 
-Without `claude` on the machine (or with `CO_WRITER_DIGEST_CMD` unset for
-another agent), do the digest in the session: `cowriter.py harvest`, then
-`cowriter.py packet`, follow `digest.md` in the packet, then `cowriter.py
-file PACKET`. After the update, tell the author how many edits were
+For a digest in the current Codex, Claude, or Antigravity session, run
+`bash <skill>/scripts/update.sh --manual`. This prepares the packet without
+starting another agent, even if Claude is installed or
+`CO_WRITER_DIGEST_CMD` is set. Follow its `digest.md`, write `proposal.md`,
+then run `cowriter.py file PACKET`. Explicit logging works on every agent;
+transcript harvesting is optional enrichment and depends on locally
+available transcript formats. After the update, tell the author how many edits were
 digested and offer "co-writer review".
 
 ## 3. Review (the author, when a proposal is pending)
