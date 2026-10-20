@@ -13,6 +13,9 @@ gate. See skills/cite-check/SKILL.md and references/registries.md.
 """
 
 import concurrent.futures
+import contextlib
+import functools
+import tempfile
 from collections import Counter
 import difflib
 import hashlib
@@ -65,6 +68,66 @@ def _today() -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@contextlib.contextmanager
+def _file_lock(path: str):
+    """Serialize a file transaction across threads and server processes."""
+    lock_path = os.path.abspath(path) + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    with open(lock_path, "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            lock.write(b"0")
+            lock.flush()
+        else:
+            import fcntl
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                if os.name == "nt":
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out locking {path}")
+                time.sleep(0.02)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_write(path: str, content: str | bytes) -> None:
+    """Publish a complete file with a unique same-directory temporary file."""
+    path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(content.encode("utf-8") if isinstance(content, str) else content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _serialized_bibliography(function):
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        path = args[0] if args else kwargs["bib_path"]
+        with _file_lock(os.path.realpath(path)):
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def _cache_file(kind: str, name: str) -> str:
@@ -389,8 +452,9 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
                 status = resp.status
             body = raw if binary else raw.decode("utf-8", errors="replace")
             if cache and not binary and status == 200:
-                with open(path, "w") as fh:
-                    json.dump({"status": status, "body": body, "at": time.time(), "url": url}, fh)
+                _atomic_write(path, json.dumps(
+                    {"status": status, "body": body, "at": time.time(), "url": url}
+                ))
             return status, body
         except urllib.error.HTTPError as exc:
             if exc.code in (429, 500, 502, 503, 504) and attempt < retries:
@@ -404,8 +468,9 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
                 continue
             body = b"" if binary else exc.read().decode("utf-8", errors="replace")
             if cache and not binary and exc.code == 404:
-                with open(path, "w") as fh:
-                    json.dump({"status": 404, "body": "", "at": time.time(), "url": url}, fh)
+                _atomic_write(path, json.dumps(
+                    {"status": 404, "body": "", "at": time.time(), "url": url}
+                ))
             return exc.code, body
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
@@ -1404,8 +1469,7 @@ def _record_cache_put(rec: dict) -> None:
     if cid and (rec.get("repo") or {}).get("partial") and _record_cache_get(cid):
         return              # a search hit must not replace the repository's full record
     if cid:
-        with open(_cache_file("records", _slug(cid) + ".json"), "w") as fh:
-            json.dump(rec, fh)
+        _atomic_write(_cache_file("records", _slug(cid) + ".json"), json.dumps(rec))
 
 
 def _record_cache_get(cid: str, max_age: float | None = None) -> dict | None:
@@ -1417,8 +1481,10 @@ def _record_cache_get(cid: str, max_age: float | None = None) -> dict | None:
 
 
 def _alias_put(kind: str, value: str, cid: str) -> None:
-    with open(_cache_file("records", "alias_" + _slug(f"{kind}_{value}") + ".json"), "w") as fh:
-        json.dump({"id": cid}, fh)
+    _atomic_write(
+        _cache_file("records", "alias_" + _slug(f"{kind}_{value}") + ".json"),
+        json.dumps({"id": cid})
+    )
 
 
 def _alias_get(kind: str, value: str) -> str | None:
@@ -2222,6 +2288,7 @@ def _repo_advice(rec: dict) -> dict:
     return out
 
 
+@_serialized_bibliography
 def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_format: int | None = None,
             tex_path: str | None = None, replace: bool = False, max_author: int = 10) -> dict:
     """Add official entries to a .bib. items: [{"identifier": …, "key": …}] (key
@@ -2297,10 +2364,7 @@ def bib_add(bib_path: str, items: list, prefer: list | None = None, journal_form
             new = new[:start] + replacements[e["key"]] + new[e["end"]:]
         if additions:
             new = new.rstrip("\n") + ("\n\n" if new.strip() else "") + "\n".join(b for _, b in additions)
-        tmp = bib_path + ".tmp"
-        with open(tmp, "w") as fh:
-            fh.write(new)
-        os.replace(tmp, bib_path)
+        _atomic_write(bib_path, new)
     return {"bib": bib_path, "results": results,
             "ok": all(r["status"] in ("added", "replaced", "exists", "duplicate") for r in results)}
 
@@ -2927,14 +2991,13 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
                 text, basis, source = _obtain_text(rec, cid)
         except RuntimeError as exc:
             return {"error": str(exc)}
-        with open(tp, "w") as fh:
-            fh.write(text)
         meta = {"id": cid, "basis": basis, "source": source, "chars": len(text),
                 "fetched": _now_iso(), "title": rec.get("title", ""),
                 "extraction_version": TEXT_EXTRACTION_VERSION,
                 "version": rec.get("pin") or rec.get("arxiv_version")}
-        with open(mp, "w") as fh:
-            json.dump(meta, fh)
+        with _file_lock(tp):
+            _atomic_write(tp, text)
+            _atomic_write(mp, json.dumps(meta))
         meta["path"] = tp
     out = dict(meta)
     out["abstract"] = (rec.get("abstract") or "")[:2500]
@@ -3028,8 +3091,7 @@ def _project_path(workdir: str, name: str) -> str:
 
 def _write_project(workdir: str, name: str, obj) -> str:
     path = _project_path(workdir, name)
-    with open(path, "w") as fh:
-        json.dump(obj, fh, indent=2)
+    _atomic_write(path, json.dumps(obj, indent=2))
     return path
 
 
@@ -3153,14 +3215,15 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     if verdict == "UNVERIFIABLE" and basis == "fulltext":
         return {"recorded": False, "error": "full text is available — read it and decide (SUPPORTS / PARTIAL / "
                                             "UNSUPPORTED / CONTRADICTS); UNVERIFIABLE is only for papers whose text could not be obtained"}
-    ledger = _load_ledger(workdir)
-    lid = f"{key}|{_claim_hash(claim)}"
-    ledger["version"] = 2
-    ledger["entries"][lid] = {"context_hash": _claim_hash(context if context is not None else claim),
-                              "source_identity": _source_identity(meta, text), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
-                              "quotes": checks, "note": note or None, "judge": judge or None,
-                              "file": file, "line": line, "recorded": _now_iso()}
-    _write_project(workdir, "ledger.json", ledger)
+    with _file_lock(_project_path(workdir, "ledger.json")):
+        ledger = _load_ledger(workdir)
+        lid = f"{key}|{_claim_hash(claim)}"
+        ledger["version"] = 2
+        ledger["entries"][lid] = {"context_hash": _claim_hash(context if context is not None else claim),
+                                  "source_identity": _source_identity(meta, text), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
+                                  "quotes": checks, "note": note or None, "judge": judge or None,
+                                  "file": file, "line": line, "recorded": _now_iso()}
+        _write_project(workdir, "ledger.json", ledger)
     return {"recorded": True, "ledger_id": lid, "verdict": verdict, "basis": basis,
             "quotes_found": n_found, "quotes": checks}
 
@@ -3318,8 +3381,7 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
               "checked": _now_iso()}
     coverage = {k: v.strip() or "—" for k, v in coverage.items()}
     md_path = _project_path(workdir, "audit.md")
-    with open(md_path, "w") as fh:
-        fh.write(_audit_markdown(report, ver, coverage))
+    _atomic_write(md_path, _audit_markdown(report, ver, coverage))
     report["report"] = md_path
     _write_project(workdir, "audit.json", report)
     report["summary"] = (f"{'PASS' if report['ok'] else 'FAIL'}: {len(failures)} failure(s), {len(warnings)} warning(s); "
