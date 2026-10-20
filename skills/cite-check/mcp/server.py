@@ -1984,6 +1984,22 @@ def _parse_prov(s: str) -> dict:
     return out
 
 
+def _next_bib_entry(text: str, start: int) -> int:
+    """Find an entry marker outside percent comments between entries."""
+    while start < len(text):
+        marker = re.search(r"[%@]", text[start:])
+        if marker is None:
+            return -1
+        position = start + marker.start()
+        if text[position] == "@":
+            return position
+        newline = text.find("\n", position)
+        if newline < 0:
+            return -1
+        start = newline + 1
+    return -1
+
+
 def _parse_bib(text: str) -> dict:
     """Entries with raw text and span, plus @comment/@string/@preamble blocks.
     A `@comment{cite-check: …}` directly before an entry becomes its provenance."""
@@ -1991,7 +2007,7 @@ def _parse_bib(text: str) -> dict:
     i, last_prov, last_prov_end = 0, None, -1
     head = re.compile(r"@\s*([A-Za-z]+)\s*([{(])")
     while True:
-        at = text.find("@", i)
+        at = _next_bib_entry(text, i)
         if at < 0:
             break
         m = head.match(text, at)
@@ -2631,12 +2647,46 @@ def _braced(text: str, i: int) -> tuple:
     return (text[i + 1:j], j + 1) if j > 0 else ("", i + 1)
 
 
+def _tex_file_arguments(text: str, commands: tuple[str, ...]) -> list[str]:
+    """Read literal filenames, failing on malformed or dynamic declarations."""
+    arguments = []
+    pattern = r"\\(" + "|".join(re.escape(cmd) for cmd in commands) + r")\b"
+    for match in re.finditer(pattern, text):
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index < len(text) and text[index] == "[":
+            closing = text.find("]", index + 1)
+            if closing < 0:
+                raise ValueError(f"unterminated options for \\{match[1]}")
+            index = closing + 1
+            while index < len(text) and text[index].isspace():
+                index += 1
+        if index < len(text) and text[index] == "{":
+            closing = _find_close(text, index)
+            if closing < 0:
+                raise ValueError(f"unterminated filename for \\{match[1]}")
+            argument = text[index + 1:closing].strip()
+        elif match[1] == "input":
+            filename = re.match(r"[^\\{}\s]+", text[index:])
+            argument = filename[0] if filename else ""
+        else:
+            argument = ""
+        if not argument or re.search(r"[\\{}#$]", argument):
+            raise ValueError(
+                f"missing, malformed or dynamic filename for \\{match[1]}"
+            )
+        arguments.append(argument)
+    return arguments
+
+
 def _gather_tex(main_path: str, seen: set | None = None,
                 root: str | None = None) -> list:
     """[(path, comment-stripped text)] for the main file and every
     \\input / \\include / \\subfile it pulls in."""
     seen = seen if seen is not None else set()
     main_path = os.path.abspath(main_path)
+    root = root if root is not None else os.path.dirname(main_path)
     if main_path in seen:
         return []
     if not os.path.isfile(main_path):
@@ -2645,12 +2695,11 @@ def _gather_tex(main_path: str, seen: set | None = None,
     with open(main_path, errors="replace") as fh:
         text = _strip_tex_comments(fh.read())
     files = [(main_path, text)]
-    base = os.path.dirname(main_path)
-    for m in re.finditer(r"\\(?:input|include|subfile)\s*\{([^}]+)\}", text):
-        cand = os.path.join(base, m.group(1).strip())
+    for argument in _tex_file_arguments(text, ("input", "include", "subfile")):
+        cand = os.path.join(root, argument)
         if not os.path.splitext(cand)[1]:
             cand += ".tex"
-        files += _gather_tex(cand, seen, base)
+        files += _gather_tex(cand, seen, root)
     return files
 
 
@@ -2762,11 +2811,17 @@ def extract_cites(tex_path: str) -> dict:
         m = re.search(r"\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}", text)
         if m and not docclass:
             docclass = m.group(1)
-        for m in re.finditer(r"\\(?:bibliography|addbibresource)\s*\{([^}]+)\}", text):
-            for b in m.group(1).split(","):
+        try:
+            declarations = _tex_file_arguments(
+                text, ("bibliography", "addbibresource")
+            )
+        except ValueError as exc:
+            return {"ok": False, "complete": False, "error": f"{path}: {exc}"}
+        for declaration in declarations:
+            for b in declaration.split(","):
                 b = b.strip()
                 if b:
-                    p = os.path.join(os.path.dirname(path), b)
+                    p = os.path.join(os.path.dirname(tex_path), b)
                     bib_files.append(p if p.endswith(".bib") else p + ".bib")
         instances = list(_cite_instances(text))
         parsed_starts = {instance[2] for instance in instances}
@@ -2787,7 +2842,15 @@ def extract_cites(tex_path: str) -> dict:
         out.append(text[last:])
         joined = "".join(out)
         m = re.search(r"\\begin\{document\}", joined)
-        prose = _clean_tex(joined[m.end():] if m else joined)
+        document = joined[m.end():] if m else joined
+        prose = _clean_tex(document)
+        if Counter(_CITE_TOKEN.findall(document)) != Counter(
+            _CITE_TOKEN.findall(prose)
+        ):
+            return {
+                "ok": False, "complete": False,
+                "error": f"citation lost in unsupported TeX structure in {path}",
+            }
 
         def render(s):
             s = _CITE_TOKEN.sub(lambda mm: "\u27e8cite:" + ",".join(tokens[int(mm.group(1))]["keys"]) + "\u27e9", s)
