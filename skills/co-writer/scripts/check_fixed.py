@@ -5,15 +5,16 @@ co-writer may change how a passage is said and nothing else. This script lists,
 as multisets, the things a rewrite must carry through unchanged and prints each
 one that appears in one file and not the other:
 
-  cite      every key inside \cite, \citep, \citet, \citealt, \citealp,
-            \citeauthor, \citeyear (keys, so a key that moves between two
+  cite      every key inside standard LaTeX, natbib and biblatex citation
+            commands (keys, so a key that moves between two
             \cite commands is not flagged; a key that appears or disappears is)
   ref       every target of \ref, \eqref, \pageref, \autoref, \cref, \Cref
   label     every \label
   graphics  every \includegraphics file
   float     every \begin{figure} / \begin{table} (starred or not)
   math      every math body, inline and display, with whitespace removed
-  number    every number in the text
+  number    every signed number in the text, including scientific notation
+  quantity  numbers with common scientific units or explicit unit macros
 
 It reads nothing else. It cannot tell whether a claim changed strength or
 whether a cited paper still supports a rewritten sentence; the cold read and
@@ -38,19 +39,40 @@ import re
 import sys
 
 CITE_CMD = (
-    r"\\cite(?:p|t|alt|alp|author|year|yearpar|num)?\*?"
-    r"(?:\[[^\]]*\])*\{([^}]*)\}"
+    r"\\(?:[Cc]ite(?:p|t|alt|alp|author|year|yearpar|num|title|date|url)?"
+    r"|[Pp]arencite|[Tt]extcite|[Aa]utocite|[Ss]martcite|[Ss]upercite"
+    r"|[Ff]ootcite|[Ff]ootcitetext|[Ff]ullcite|[Ff]ootfullcite"
+    r"|[Nn]ocite|[Pp]arencites|[Tt]extcites|[Aa]utocites|[Ss]martcites"
+    r"|[Ss]upercites|[Ff]ootcites|[Ff]ootcitetexts|[Cc]ites)"
+    r"(?![A-Za-z])\*?"
 )
+CITE_ARGUMENT = r"\s*(?:\[[^\]]*\]\s*)*\{([^}]*)\}"
 REF_CMD = r"\\(?:eq|page|auto|c|C)?ref\*?\{([^}]*)\}"
 LABEL_CMD = r"\\label\{([^}]*)\}"
 GRAPHICS_CMD = r"\\includegraphics\*?(?:\[[^\]]*\])?\{([^}]*)\}"
 FLOAT_ENV = r"\\begin\{(figure\*?|table\*?)\}"
 MATH_ENVS = (
-    r"(equation|align|eqnarray|gather|multline|displaymath|flalign|alignat"
-    r"|split)\*?"
+    r"((?:equation|align|eqnarray|gather|multline|displaymath|flalign|alignat"
+    r"|split)\*?)"
 )
-NUMBER = r"(?<![\w\\{])\d+(?:,\d{3})*(?:\.\d+)?(?![\w}])"
-KINDS = ("cite", "ref", "label", "graphics", "float", "math", "number")
+NUMBER = (
+    r"(?<![\w\\{])[+−±-]?(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)"
+    r"(?:[eE][+−-]?\d+)?(?![\w}])"
+)
+# A finite vocabulary avoids treating ordinary prose following a number as
+# a unit. Arbitrary units can be made explicit with \si{...}/\mathrm{...}.
+UNIT = (
+    r"(?:[yzafpnµumcdhkMGTPEZY]?(?:m|s|g|K|A|Hz|N|Pa|J|W|V|T|F|C|eV)"
+    r"|[kMG]?pc|AU|au|ly|yr|Myr|Gyr|day|days|rad|deg|arcsec|arcmin"
+    r"|Jy|mag|dex|erg|mol|L|litre|liter|percent|%)(?![A-Za-z])"
+)
+QUANTITY = (
+    NUMBER + r"(?:\s|~|\\[,;! ])*"
+    r"((?:\\(?:si|mathrm|textrm|text)\{[^}]+\}|" + UNIT + r"))"
+)
+KINDS = (
+    "cite", "ref", "label", "graphics", "float", "math", "number", "quantity"
+)
 
 
 def strip_comments(tex: str) -> str:
@@ -84,6 +106,27 @@ def math_bodies(tex: str) -> list[str]:
     return [re.sub(r"\s+", "", body) for body in bodies]
 
 
+def citation_arguments(tex: str) -> list[str]:
+    """Returns keys from singular and repeated biblatex citation arguments.
+
+    Args:
+      tex: LaTeX source with comments removed.
+
+    Returns:
+      Each citation's comma-separated key argument, without optional notes.
+    """
+    arguments = []
+    for command in re.finditer(CITE_CMD, tex):
+        position = command.end()
+        plural = command.group().rstrip("*").endswith("s")
+        while match := re.match(CITE_ARGUMENT, tex[position:]):
+            arguments.append(match.group(1))
+            position += match.end()
+            if not plural:
+                break
+    return arguments
+
+
 def _keys(arguments: Iterable[str]) -> collections.Counter[str]:
     """Counts the comma-separated keys of each command argument."""
     keys: collections.Counter[str] = collections.Counter()
@@ -106,13 +149,17 @@ def collect(path: str) -> dict[str, collections.Counter[str]]:
     text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
     tex = strip_comments(text)
     out: dict[str, collections.Counter[str]] = {}
-    out["cite"] = _keys(re.findall(CITE_CMD, tex))
+    out["cite"] = _keys(citation_arguments(tex))
     out["ref"] = _keys(re.findall(REF_CMD, tex))
     out["label"] = collections.Counter(re.findall(LABEL_CMD, tex))
     out["graphics"] = collections.Counter(re.findall(GRAPHICS_CMD, tex))
     out["float"] = collections.Counter(re.findall(FLOAT_ENV, tex))
     out["math"] = collections.Counter(math_bodies(tex))
     out["number"] = collections.Counter(re.findall(NUMBER, tex))
+    out["quantity"] = collections.Counter(
+        re.sub(r"\s+|~|\\[,;! ]", "", match.group())
+        for match in re.finditer(QUANTITY, tex)
+    )
     return out
 
 
