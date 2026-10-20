@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -105,9 +105,10 @@ Never edit anything under `mcp/` during a task.
 | `register_claims(tex_path, sentence_id, atoms)` | register a complete partition of exact sentence spans, explicit citation attachments, and declared uncited scope; derives stable atom IDs | no assertion or citation may disappear |
 | `fetch_text(identifier, pdf_path, text_path, version)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
 | `find_passages(identifier, [claims], version)` | abstract + top passages per claim by content-word overlap | what the judge reads first |
-| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version, tex_path, occurrence_id, atom_id)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
+| `record_support(workdir, key, claim, verdict, identifier, quotes, note, judge, context, version, tex_path, occurrence_id, atom_id, proposed_correction)` | stores a verdict **only** with verbatim quotes (SUPPORTS/PARTIAL/CONTRADICTS) or a note (UNSUPPORTED/UNVERIFIABLE); refuses UNVERIFIABLE when full text exists | the ledger cannot be narrated into a pass |
 | `ledger_read(workdir)` | the manuscript's verdicts | resuming |
 | `audit(tex_path, bib_path, require_support, verify, policy)` | separate existence/provenance/support coverage; default submission-ready gate or explicit exploratory progress; writes `.cite-check/audit.md` | only submission-ready policy plus `ok`, `input_complete`, `complete`, and `submission_ready` all true = done |
+| `correction_report(tex_path, bib_path, policy, annotated, verify, require_support)` | runs a fresh audit and writes exact actionable findings to `.cite-check/corrections.json` / `.md`; optionally links an inert annotated HTML source copy | `report_written` means artifacts exist, never citation readiness; originals are unchanged |
 
 Full argument lists are in each tool's docstring (`server.py call <tool>`
 with bad args prints it). Registry behaviour and thresholds:
@@ -201,6 +202,13 @@ Protocol and judge prompt: `references/support.md`. In short:
 4. Verdicts: SUPPORTS · PARTIAL · UNSUPPORTED · CONTRADICTS · UNVERIFIABLE.
    UNSUPPORTED and CONTRADICTS fail the audit; the fix is a different paper,
    a weaker sentence, or no citation — decided with the user.
+
+For failures, use `correction_report(..., annotated=true)` to produce a
+reviewable copy with exact assertions, context, locations, evidence and next
+actions. The independent judge may supply optional `proposed_correction`
+with a non-support verdict; it is an unapproved draft, never an automatic
+edit or a verified replacement. Read `references/correction-reports.md`
+for the schema, freshness rules and correction workflow.
 
 ### Called by another skill
 

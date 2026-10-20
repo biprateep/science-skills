@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Literal
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -3205,7 +3205,9 @@ def extract_cites(tex_path: str) -> dict:
     return {"complete": True, "main": tex_path, "files": [p for p, _ in files], "documentclass": docclass,
             "bib_files": list(dict.fromkeys(bib_files)), "n_instances": len(cites),
             "n_keys": len(keys), "keys": keys, "cites": cites, "by_key": by_key,
-            "sentences": sentences}
+            "sentences": sentences,
+            "source_digests": {path: hashlib.sha256(raw.encode("utf-8")).hexdigest()
+                               for path, raw in source_snapshots.items()}}
 
 
 # ---------------------------------------------------------------------------
@@ -3935,13 +3937,758 @@ def _support_id(occurrence_id: str, atom_id: str | None = None) -> str:
     return f"occurrence:{occurrence_id}|atom:{atom_id or 'sentence'}"
 
 
-def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
-                   quotes: list[str] | None = None, note: str | None = None, judge: str | None = None,
-                   file: str | None = None, line: int | None = None,
-                   context: str | None = None, version: str | None = None,
-                   tex_path: str | None = None,
-                   occurrence_id: str | None = None,
-                   atom_id: str | None = None) -> dict:
+@dataclasses.dataclass
+class ProposedCorrection:
+    """An unapproved judge-authored recommendation, never an applied edit.
+
+    Attributes:
+        action: The recommended operation; replacement wording is allowed
+            only for revise-claim and does not carry a new citation identity.
+        rationale: Why the original assertion needs attention.
+        replacement_text: Optional assertion wording requiring human review
+            and a fresh support judgment after application.
+    """
+
+    __pydantic_config__ = {"extra": "forbid"}
+
+    action: Literal[
+        "revise-claim", "replace-citation", "remove-claim", "obtain-text"
+    ]
+    rationale: str
+    replacement_text: str | None = None
+
+
+def _validated_correction(
+    proposal: ProposedCorrection | dict[str, Any] | None,
+    verdict: str,
+    occurrence_id: str | None,
+    judge: str | None,
+    found_quotes: int,
+) -> dict[str, Any] | None:
+    """Validate a bound draft without certifying its proposed meaning."""
+    if proposal is None:
+        return None
+    value = (
+        dataclasses.asdict(proposal)
+        if isinstance(proposal, ProposedCorrection)
+        else proposal
+    )
+    if (
+        not isinstance(value, dict)
+        or not {"action", "rationale"} <= set(value)
+        or set(value) - {"action", "rationale", "replacement_text"}
+    ):
+        raise ValueError("proposed_correction needs action and rationale")
+    action = value["action"]
+    if not isinstance(action, str) or action not in {
+        "revise-claim",
+        "replace-citation",
+        "remove-claim",
+        "obtain-text",
+    }:
+        raise ValueError("unknown proposed correction action")
+    rationale = value["rationale"]
+    replacement = value.get("replacement_text")
+    if (
+        not isinstance(rationale, str)
+        or len(rationale.strip()) < 15
+        or (
+            replacement is not None
+            and (not isinstance(replacement, str) or not replacement.strip())
+        )
+    ):
+        raise ValueError("provide a meaningful rationale and nonempty wording")
+    if (
+        verdict == "SUPPORTS"
+        or not occurrence_id
+        or not isinstance(judge, str)
+        or not judge.strip()
+    ):
+        raise ValueError(
+            "corrections require a non-SUPPORTS verdict, explicit occurrence "
+            "and judge identity"
+        )
+    if replacement is not None:
+        if action != "revise-claim" or found_quotes == 0:
+            raise ValueError(
+                "replacement wording needs revise-claim and source quotations"
+            )
+        if _CITE_CMD.search(replacement) or "⟨cite:" in replacement:
+            raise ValueError(
+                "replacement_text is assertion wording only; resolve citation "
+                "changes separately"
+            )
+    return {
+        "action": action,
+        "rationale": rationale.strip(),
+        "replacement_text": replacement,
+        "author": judge,
+        "approval": "unapproved",
+        "replacement_verified": False,
+    }
+
+
+def _correction_action(finding: dict[str, Any]) -> dict[str, str]:
+    """Give an honest next step without inventing scientific replacements."""
+    kind = finding["type"]
+    if kind in {"support-stale", "audit-stale", "report-stale"}:
+        action, instruction = (
+            "re-judge",
+            (
+                "Refresh the changed inputs and obtain a new indepe"
+                "ndent judgment."
+            ),
+        )
+    elif kind == "decomposition-stale":
+        action, instruction = (
+            "register-claims",
+            (
+                "Extract current sentences, register their complete"
+                " atomic spans, "
+                "then judge each attached occurrence."
+            ),
+        )
+    elif kind == "support-missing":
+        action, instruction = (
+            "judge-claim",
+            (
+                "Retrieve this cited work and record an independent support "
+                "judgment for this exact assertion and occurrence."
+            ),
+        )
+    elif kind == "support-basis" or finding.get("verdict") == "UNVERIFIABLE":
+        action, instruction = (
+            "obtain-text",
+            (
+                "Obtain adequate source text and re-judge; do not i"
+                "nfer support "
+                "from inaccessible evidence."
+            ),
+        )
+    elif kind == "support":
+        action, instruction = (
+            "review-assertion",
+            (
+                "Review the disputed assertion against the evidence"
+                ". A human may "
+                "revise or remove it, or identify and verify an alt"
+                "ernative work; "
+                "then extract and judge the changed text again."
+            ),
+        )
+    elif kind in {"existence", "verify-error", "undefined-cite"}:
+        action, instruction = (
+            "resolve-identity",
+            (
+                "Resolve the intended work through the citation tools. Retry "
+                "failed lookups; obtain any replacement bibliograph"
+                "y entry from "
+                "an official export, never from invented metadata."
+            ),
+        )
+    elif kind == "provenance":
+        action, instruction = (
+            "refresh-official-export",
+            (
+                "Check the intended identity and replace the entry through "
+                "bib_add using its official export."
+            ),
+        )
+    elif kind == "uncited-atom":
+        action, instruction = (
+            "review-scope",
+            (
+                "Review the declared uncited scope; it has not been externally "
+                "verified and must not conceal a cited assertion."
+            ),
+        )
+    elif kind == "uncited-entry":
+        action, instruction = (
+            "review-unused-entry",
+            ("Review whether this unused bibliography entry should remain."),
+        )
+    elif kind == "policy-configuration":
+        action, instruction = (
+            "run-required-checks",
+            (
+                "Enable identity and support checks for submission readiness, "
+                "or explicitly use exploratory mode for partial work."
+            ),
+        )
+    else:
+        action, instruction = (
+            "repair-input",
+            (
+                "Inspect the reported input problem, repair it explicitly, and "
+                "rerun the audit before relying on the result."
+            ),
+        )
+    return {"action": action, "instruction": instruction}
+
+
+def _correction_evidence(
+    judgment: dict[str, Any],
+    attributed: bool,
+) -> dict[str, Any] | None:
+    """Recheck source spans locally instead of trusting stored found flags."""
+    metadata = _load_text_meta(judgment.get("source_cache_id", judgment["id"]))
+    if metadata is None:
+        return None
+    try:
+        with open(
+            metadata["path"], encoding="utf-8", errors="replace"
+        ) as source:
+            text = source.read()
+    except OSError:
+        return None
+    if _source_identity(metadata, text) != judgment["source_identity"]:
+        return None
+    quotes = []
+    for quote in judgment.get("quotes", []):
+        if quote["found"]:
+            checked = _locate_quote(text, quote["text"])
+            if not checked["found"]:
+                return None
+            quotes.append(dict(checked, text=quote["text"]))
+    return {
+        "id": judgment["id"],
+        "basis": judgment["basis"],
+        "identity": judgment["source_identity"],
+        "attribution": "verified" if attributed else "unverified",
+        "quotes": quotes,
+        "status": "current-source-spans",
+    }
+
+
+def _correction_items(
+    report: dict[str, Any],
+    extracted: dict[str, Any],
+    judgments: dict[str, dict[str, Any]],
+    verification: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach findings to exact current occurrences, never truncated text."""
+    items = []
+    for severity, findings in (
+        ("failure", report["failures"]),
+        ("warning", report["warnings"]),
+    ):
+        for finding in findings:
+            targets = []
+            for cite in extracted.get("cites", []):
+                if finding.get("occurrence_id") == cite["occurrence_id"]:
+                    targets = [cite]
+                    break
+                if (
+                    not finding.get("occurrence_id")
+                    and finding.get("key")
+                    and finding["key"] == cite["key"]
+                ):
+                    targets.append(cite)
+            for target in targets or [None]:
+                occurrence = target["occurrence_id"] if target else None
+                atom_id = finding.get("atom_id")
+                judgment = (
+                    judgments.get(_support_id(occurrence, atom_id))
+                    if occurrence
+                    else None
+                )
+                if finding["type"] in {
+                    "support-stale",
+                    "decomposition-stale",
+                    "audit-stale",
+                }:
+                    judgment = None
+                key = target["key"] if target else finding.get("key")
+                location = {
+                    "file": target["file"] if target else finding.get("file"),
+                    "line": target["line"] if target else finding.get("line"),
+                    "kind": "citation-command"
+                    if target
+                    else "reported-or-unknown",
+                    "source_byte_start": target.get("source_byte_start")
+                    if target
+                    else None,
+                    "source_byte_end": target.get("source_byte_end")
+                    if target
+                    else None,
+                }
+                source = None
+                proposal = None
+                if judgment:
+                    source = _correction_evidence(
+                        judgment,
+                        verification.get(key, {}).get("status") == "VERIFIED",
+                    )
+                    if (
+                        source is not None
+                        and judgment.get("occurrence_id") == occurrence
+                    ):
+                        stored = judgment.get("proposed_correction")
+                        if stored is not None:
+                            proposal = dict(
+                                stored,
+                                approval="unapproved",
+                                replacement_verified=False,
+                            )
+                sentence: dict[str, Any] = next(
+                    (
+                        value
+                        for value in extracted.get("sentences", [])
+                        if value["sentence_id"] == finding.get("sentence_id")
+                    ),
+                    {},
+                )
+                item = {
+                    "finding_id": _atomic_digest(
+                        [
+                            severity,
+                            finding,
+                            occurrence,
+                            atom_id,
+                        ]
+                    ),
+                    "severity": severity,
+                    "type": finding["type"],
+                    "key": key,
+                    "occurrence_id": occurrence,
+                    "atom_id": atom_id,
+                    "sentence_id": target.get("sentence_id")
+                    if target
+                    else finding.get("sentence_id"),
+                    "location": location,
+                    "bibliography_locations": report.get(
+                        "bibliography_locations", {}
+                    ).get(key, []),
+                    "claim": target["claim"]
+                    if target
+                    else finding.get("claim"),
+                    "context": target["context"]
+                    if target
+                    else sentence.get("context"),
+                    "assertion": finding.get("atom")
+                    or (target["claim"] if target else finding.get("claim")),
+                    "detail": finding.get("detail"),
+                    "verdict": finding.get("verdict"),
+                    "status": finding.get("status"),
+                    "next_action": _correction_action(finding),
+                    "source_evidence": source,
+                    "proposed_correction": proposal,
+                    "applied": False,
+                }
+                items.append(item)
+    return items
+
+
+def _invalidate_corrections(report: dict[str, Any]) -> None:
+    """Suppress evidence and wording when the report's inputs are stale."""
+    for item in report.get("corrections", []):
+        item["source_evidence"] = None
+        item["proposed_correction"] = None
+        item["evidence_status"] = "suppressed-stale-report"
+        item["next_action"] = {
+            "action": "refresh-audit",
+            "instruction": "Inputs changed. Rerun extraction and audit, then re-judge affected assertions before considering corrections.",
+        }
+
+
+def _corrections_markdown(report: dict[str, Any]) -> str:
+    """Render actionable findings while preserving exact quoted strings."""
+    policy = report.get("policy")
+    if policy not in ("exploratory", "submission-ready"):
+        policy = "invalid"
+    lines = [
+        "# Citation correction report",
+        "",
+        (
+            f"Policy: {policy}; submission ready: "
+            f"{report.get('submission_ready', False)}."
+        ),
+        (
+            "Proposals are unapproved drafts, not verified repl"
+            "acements. No edits were applied."
+        ),
+        "",
+    ]
+    for item in report.get("corrections", []):
+        location = item["location"]
+        lines += [
+            f"## {item['type']} — {item['finding_id'][:12]}",
+            "",
+            (
+                f"Occurrence: {item['occurrence_id'] or 'unknown'}; "
+                f"atom: {item['atom_id'] or 'none'}"
+            ),
+            "",
+        ]
+        # JSON string blocks preserve whitespace and cannot open raw HTML.
+        for label, value in (
+            ("Location", location),
+            ("Bibliography locations", item["bibliography_locations"]),
+            ("Assertion", item["assertion"]),
+            ("Original sentence", item["claim"]),
+            ("Context", item["context"]),
+            ("Finding", item["detail"]),
+            ("Evidence", item["source_evidence"]),
+            ("Unapproved proposal", item["proposed_correction"]),
+        ):
+            if value is not None:
+                encoded = json.dumps(value, ensure_ascii=False, indent=2)
+                fence = "`" * max(
+                    3,
+                    max(
+                        (
+                            len(match[0]) + 1
+                            for match in re.finditer(r"`+", encoded)
+                        ),
+                        default=3,
+                    ),
+                )
+                lines += [f"{label}:", f"{fence}json", encoded, fence, ""]
+        lines += [item["next_action"]["instruction"], ""]
+    return "\n".join(lines) + "\n"
+
+
+def _corrections_html(report: dict[str, Any], sources: dict[str, str]) -> str:
+    """Render escaped findings linked to unchanged source-line text."""
+    blocks = [
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">',
+        (
+            '<meta http-equiv="Content-Security-Policy" content'
+            "=\"default-src 'none'; style-src 'unsafe-inline'; b"
+            "ase-uri 'none'; form-action 'none'\">"
+        ),
+        "<title>Citation correction report</title>",
+        (
+            "<style>body{font:16px system-ui;max-width:1100px;m"
+            "argin:2em auto;padding:0 1em}pre{white-space:pre-w"
+            "rap;overflow-wrap:anywhere;background:#f4f4f4;padd"
+            "ing:1em}.finding{border-left:4px solid #a64b00;pad"
+            "ding:1em;margin:1em 0}.line{display:block}.marked{"
+            "background:#fff1c9}.number{color:#666;display:inli"
+            "ne-block;min-width:4em}.badge{font:12px system-ui;"
+            "margin-right:1em}a{color:#704000}</style>"
+        ),
+        "</head><body><h1>Citation correction report</h1>",
+        (
+            "<p>No edits were applied. Proposed wording is unap"
+            "proved and must be independently checked after app"
+            "lication.</p>"
+        ),
+    ]
+    indices = {path: index for index, path in enumerate(sources)}
+    line_findings: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for item in report.get("corrections", []):
+        blocks += [
+            f'<section class="finding" id="finding-{item["finding_id"]}">',
+            f"<h2>{html.escape(item['type'])}</h2>",
+        ]
+        locations = [("Manuscript", item["location"])] + [
+            ("Bibliography", location)
+            for location in item["bibliography_locations"]
+        ]
+        for label, location in locations:
+            path, line = location["file"], location["line"]
+            anchor = None
+            if (
+                path in indices
+                and type(line) is int
+                and 1 <= line <= len(sources[path].splitlines())
+            ):
+                anchor = f"source-{indices[path]}-line-{line}"
+                line_findings.setdefault((path, line), []).append(item)
+            where = html.escape(
+                f"{label}: {path or 'unknown location'}:"
+                f"{line or 'unknown line'}"
+            )
+            blocks.append(
+                f'<p><a href="#{anchor}">{where}</a></p>'
+                if anchor
+                else f"<p>{where}</p>"
+            )
+        for label, value in (
+            ("Disputed assertion", item["assertion"]),
+            ("Original sentence", item["claim"]),
+            ("Context", item["context"]),
+            ("Finding", item["detail"]),
+            ("Next action", item["next_action"]["instruction"]),
+        ):
+            if value is not None:
+                rendered = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(value, ensure_ascii=False, indent=2)
+                )
+                blocks += [
+                    f"<h3>{label}</h3><pre>{html.escape(rendered)}</pre>"
+                ]
+        proposal = item["proposed_correction"]
+        if proposal:
+            blocks.append("<h3>Unapproved judge-authored proposal</h3>")
+            blocks.append(
+                "<pre>"
+                + html.escape(
+                    json.dumps(proposal, ensure_ascii=False, indent=2)
+                )
+                + "</pre>"
+            )
+        evidence = item["source_evidence"]
+        if evidence:
+            blocks += [
+                "<h3>Source evidence</h3>",
+                "<p>Bibliographic attribution: "
+                + html.escape(evidence["attribution"])
+                + "</p>",
+            ]
+            for quote in evidence["quotes"]:
+                blocks.append(
+                    "<pre>" + html.escape(quote["source_text"]) + "</pre>"
+                )
+        blocks += [
+            (
+                "<details><summary>Exact identifiers and evidence m"
+                "etadata</summary><pre>"
+            ),
+            html.escape(json.dumps(item, ensure_ascii=False, indent=2)),
+            "</pre></details></section>",
+        ]
+    for path, content in sources.items():
+        index = indices[path]
+        blocks += [f"<h2>{html.escape(path)}</h2><pre>"]
+        for number, line in enumerate(content.splitlines(keepends=True), 1):
+            findings = line_findings.get((path, number), [])
+            css = "line marked" if findings else "line"
+            blocks.append(
+                f'<span class="{css}" id="source-{index}-line-{number}">'
+                f'<span class="number">{number}</span>'
+            )
+            for item in findings:
+                blocks.append(
+                    f'<a class="badge" href="#finding-{item["finding_id"]}">'
+                    f"{html.escape(item['type'])}</a>"
+                )
+            blocks.append(
+                '<code class="source-text">'
+                + html.escape(line)
+                + "</code></span>"
+            )
+        blocks.append("</pre>")
+    blocks.append("</body></html>")
+    return "".join(blocks)
+
+
+def _correction_snapshot_current(
+    snapshot: dict[str, Any], workdir: str
+) -> bool:
+    """Check only local bound inputs; rendering never repeats registry calls."""
+    return (
+        _audit_file_digest(_project_path(workdir, "ledger.json"))
+        == snapshot["ledger"]
+        and all(
+            _audit_file_digest(path) == digest
+            for path, digest in snapshot["files"].items()
+        )
+        and all(
+            _current_source_identity(identifier) == identity
+            for identifier, identity in snapshot["sources"].items()
+        )
+    )
+
+
+def _correction_preflight(tex_path: str, bib_path: str | None) -> str | None:
+    """Reject report-pipeline output aliases before any audit mutation."""
+    workdir = os.path.dirname(os.path.abspath(tex_path))
+    extracted = extract_cites(tex_path)
+    inputs = set(extracted.get("files", [os.path.abspath(tex_path)]))
+    bibs = (
+        [os.path.abspath(bib_path)]
+        if bib_path
+        else extracted.get("bib_files", [])
+    )
+    inputs.update(bibs)
+    directories = {os.path.join(workdir, PROJECT_DIR)}
+    directories.update(
+        os.path.join(os.path.dirname(bib), PROJECT_DIR) for bib in bibs
+    )
+    outputs: list[str] = []
+    for directory in directories:
+        if os.path.islink(directory):
+            return "report directory is a symlink"
+        outputs.extend(
+            os.path.join(directory, name)
+            for name in (
+                "audit.md",
+                "audit.json",
+                "verify.json",
+                "corrections.json",
+                "corrections.md",
+                "corrections.html",
+                "ledger.json.lock",
+            )
+        )
+    try:
+        ledger = _audit_ledger(workdir)
+    except (OSError, ValueError):
+        ledger = {"entries": {}}
+    for judgment in ledger["entries"].values():
+        metadata = _load_text_meta(
+            judgment.get("source_cache_id", judgment["id"])
+        )
+        if metadata and metadata.get("path"):
+            inputs.add(metadata["path"])
+    resolved_inputs = {os.path.realpath(path) for path in inputs}
+    for output in outputs:
+        if (
+            os.path.islink(output)
+            or os.path.realpath(output) in resolved_inputs
+        ):
+            return (
+                "report pipeline output aliases a manuscript or bib"
+                "liography input"
+            )
+        for source in inputs:
+            if (
+                os.path.exists(output)
+                and os.path.exists(source)
+                and os.path.samefile(output, source)
+            ):
+                return "report pipeline output is hard-linked to an input"
+    return None
+
+
+def correction_report(
+    tex_path: str,
+    bib_path: str | None = None,
+    policy: Literal["exploratory", "submission-ready"] = "submission-ready",
+    annotated: bool = False,
+    verify: bool = True,
+    require_support: bool = True,
+) -> dict[str, Any]:
+    """Create corrections from one fresh audit without editing inputs.
+
+    Args:
+        tex_path: Main manuscript path.
+        bib_path: Optional bibliography override, as in audit.
+        policy: The explicit audit policy; strict by default.
+        annotated: Also write an escaped static HTML copy of source files.
+        verify: Perform registry identity checks.
+        require_support: Require recorded support in exploratory mode too.
+
+    Returns:
+        Audit results, actionable corrections and written artifact paths.
+        Scientific proposals remain unapproved and are never applied.
+    """
+    workdir = os.path.dirname(os.path.abspath(tex_path))
+    destination = os.path.join(workdir, PROJECT_DIR)
+    preflight_error = _correction_preflight(tex_path, bib_path)
+    if preflight_error:
+        return {
+            "ok": False,
+            "submission_ready": False,
+            "report_written": False,
+            "error": preflight_error,
+            "artifacts": {},
+        }
+    report = audit(tex_path, bib_path, require_support, verify, policy)
+    if "corrections" not in report:
+        report["corrections"] = _correction_items(report, {}, {}, {})
+    snapshot = report.get("snapshot")
+    if snapshot is None:
+        paths = [os.path.abspath(tex_path)]
+        if bib_path:
+            paths.append(os.path.abspath(bib_path))
+        snapshot = {
+            "files": {path: _audit_file_digest(path) for path in paths},
+            "ledger": _audit_file_digest(_project_path(workdir, "ledger.json")),
+            "sources": {},
+        }
+        report["snapshot"] = snapshot
+        report["annotation_status"] = "unavailable-incomplete-input"
+        annotated = False
+    outputs = {
+        "json": os.path.join(destination, "corrections.json"),
+        "markdown": os.path.join(destination, "corrections.md"),
+    }
+    if annotated:
+        outputs["annotated"] = os.path.join(destination, "corrections.html")
+    input_paths = set(snapshot["files"])
+    for path in outputs.values():
+        if os.path.islink(path) or os.path.realpath(path) in {
+            os.path.realpath(value) for value in input_paths
+        }:
+            return dict(
+                report,
+                ok=False,
+                error="report output aliases an input",
+                artifacts={},
+                report_written=False,
+            )
+    sources = {}
+    for path in report.get("source_files", []):
+        try:
+            with open(path, "rb") as source:
+                raw = source.read()
+            if hashlib.sha256(raw).hexdigest() != snapshot["files"].get(path):
+                raise ValueError("source changed during report rendering")
+            sources[path] = raw.decode("utf-8")
+        except (OSError, ValueError) as error:
+            _invalidate_corrections(report)
+            return dict(
+                report,
+                ok=False,
+                submission_ready=False,
+                complete=False,
+                error=str(error),
+                artifacts={},
+                report_written=False,
+            )
+    markdown = _corrections_markdown(report)
+    annotated_text = _corrections_html(report, sources) if annotated else None
+    report.update(artifacts=outputs, report_written=True)
+    with _file_lock(_project_path(workdir, "ledger.json")):
+        if _correction_preflight(
+            tex_path, bib_path
+        ) is not None or not _correction_snapshot_current(snapshot, workdir):
+            _invalidate_corrections(report)
+            return dict(
+                report,
+                ok=False,
+                submission_ready=False,
+                complete=False,
+                error="report-stale: inputs changed; rerun",
+                artifacts={},
+                report_written=False,
+            )
+        for key in [name for name in outputs if name != "json"] + ["json"]:
+            path = outputs[key]
+            if key == "json":
+                _atomic_write(
+                    path, json.dumps(report, ensure_ascii=False, indent=2)
+                )
+            elif key == "markdown":
+                _atomic_write(path, markdown)
+            elif annotated_text is not None:
+                _atomic_write(path, annotated_text)
+    return dict(report, artifacts=outputs, report_written=True)
+
+
+def record_support(
+    workdir: str,
+    key: str,
+    claim: str,
+    verdict: str,
+    identifier: str,
+    quotes: list[str] | None = None,
+    note: str | None = None,
+    judge: str | None = None,
+    file: str | None = None,
+    line: int | None = None,
+    context: str | None = None,
+    version: str | None = None,
+    tex_path: str | None = None,
+    occurrence_id: str | None = None,
+    atom_id: str | None = None,
+    proposed_correction: ProposedCorrection | None = None,
+) -> dict:
     """Record a support verdict for one (cite key, claim sentence) pair.
 
     verdict ∈ SUPPORTS | PARTIAL | UNSUPPORTED | CONTRADICTS | UNVERIFIABLE.
@@ -3954,27 +4701,44 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     span while claim/context retain the full original. Atomic mode requires
     an atom_id even for a registered single-span sentence. Legacy calls only
     satisfy unambiguous sentences in manuscripts outside atomic mode.
+    proposed_correction optionally records an unapproved independent-judge
+    draft for a non-support verdict; it never applies or verifies new wording.
     """
     if bool(tex_path) != bool(occurrence_id) or (atom_id and not occurrence_id):
-        return {"recorded": False,
-                "error": ("tex_path and occurrence_id are required together; "
-                          "atoms need both")}
+        return {
+            "recorded": False,
+            "error": (
+                "tex_path and occurrence_id are required together; "
+                "atoms need both"
+            ),
+        }
     target = {}
     if tex_path and occurrence_id:
         tex_path = os.path.abspath(tex_path)
         try:
             target = _support_target(
-                workdir, tex_path, occurrence_id, atom_id, key, claim, context,
+                workdir,
+                tex_path,
+                occurrence_id,
+                atom_id,
+                key,
+                claim,
+                context,
                 _load_ledger(workdir),
             )
         except ValueError as error:
             return {"recorded": False, "error": str(error)}
-    if quotes is not None and (not isinstance(quotes, list)
-                              or any(not isinstance(quote, str) for quote in quotes)):
+    if quotes is not None and (
+        not isinstance(quotes, list)
+        or any(not isinstance(quote, str) for quote in quotes)
+    ):
         return {"recorded": False, "error": "quotes must be a list of strings"}
     verdict = (verdict or "").strip().upper()
     if verdict not in _VERDICTS:
-        return {"recorded": False, "error": f"verdict must be one of {list(_VERDICTS)}"}
+        return {
+            "recorded": False,
+            "error": f"verdict must be one of {list(_VERDICTS)}",
+        }
     rec = _full_record(identifier)
     if rec is None:
         return {"recorded": False, "error": f"cannot resolve {identifier}"}
@@ -3997,14 +4761,33 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     n_found = sum(1 for c in checks if c["found"])
     note = (note or "").strip()
     if verdict in ("SUPPORTS", "PARTIAL", "CONTRADICTS") and n_found == 0:
-        return {"recorded": False, "basis": basis, "quotes": checks,
-                "error": f"{verdict} needs at least one quote found verbatim in the paper's "
-                         f"{'text' if basis == 'fulltext' else basis} — quote the paper, not your paraphrase"}
-    if verdict in ("PARTIAL", "CONTRADICTS", "UNSUPPORTED", "UNVERIFIABLE") and len(note) < 15:
-        return {"recorded": False, "error": f"{verdict} needs a note (≥ 15 characters) saying what the paper does and does not say"}
+        return {
+            "recorded": False,
+            "basis": basis,
+            "quotes": checks,
+            "error": f"{verdict} needs at least one quote found verbatim in the paper's "
+            f"{'text' if basis == 'fulltext' else basis} — quote the paper, not your paraphrase",
+        }
+    if (
+        verdict in ("PARTIAL", "CONTRADICTS", "UNSUPPORTED", "UNVERIFIABLE")
+        and len(note) < 15
+    ):
+        return {
+            "recorded": False,
+            "error": f"{verdict} needs a note (≥ 15 characters) saying what the paper does and does not say",
+        }
     if verdict == "UNVERIFIABLE" and basis == "fulltext":
-        return {"recorded": False, "error": "full text is available — read it and decide (SUPPORTS / PARTIAL / "
-                                            "UNSUPPORTED / CONTRADICTS); UNVERIFIABLE is only for papers whose text could not be obtained"}
+        return {
+            "recorded": False,
+            "error": "full text is available — read it and decide (SUPPORTS / PARTIAL / "
+            "UNSUPPORTED / CONTRADICTS); UNVERIFIABLE is only for papers whose text could not be obtained",
+        }
+    try:
+        correction = _validated_correction(
+            proposed_correction, verdict, occurrence_id, judge, n_found
+        )
+    except ValueError as error:
+        return {"recorded": False, "error": str(error)}
     with _file_lock(_project_path(workdir, "ledger.json")):
         ledger = _load_ledger(workdir)
         # Revalidate inside the transaction: registration may have changed
@@ -4026,6 +4809,8 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
                                   "quotes": checks, "note": note or None, "judge": judge or None,
                                   "file": file, "line": line, "recorded": _now_iso()}
         ledger["entries"][lid].update(target)
+        if correction is not None:
+            ledger["entries"][lid]["proposed_correction"] = correction
         _write_project(workdir, "ledger.json", ledger)
     return {"recorded": True, "ledger_id": lid, "verdict": verdict, "basis": basis,
             "quotes_found": n_found, "quotes": checks}
@@ -4180,6 +4965,43 @@ def _audit_ledger(workdir: str) -> dict[str, Any]:
             and not isinstance(entry["source_cache_id"], str)
         ):
             raise ValueError("support ledger identity fields must be strings")
+    for entry in ledger["entries"].values():
+        quotes = entry.get("quotes", [])
+        if not isinstance(quotes, list) or any(
+            not isinstance(quote, dict)
+            or type(quote.get("found")) is not bool
+            or not isinstance(quote.get("text"), str)
+            for quote in quotes
+        ):
+            raise ValueError("malformed stored quotation checks")
+        proposal = entry.get("proposed_correction")
+        if proposal is not None:
+            if (
+                not isinstance(proposal, dict)
+                or set(proposal)
+                != {
+                    "action",
+                    "rationale",
+                    "replacement_text",
+                    "author",
+                    "approval",
+                    "replacement_verified",
+                }
+                or proposal["approval"] != "unapproved"
+                or proposal["replacement_verified"] is not False
+                or proposal["author"] != entry.get("judge")
+            ):
+                raise ValueError("malformed stored correction proposal")
+            _validated_correction(
+                {
+                    name: proposal[name]
+                    for name in ("action", "rationale", "replacement_text")
+                },
+                entry["verdict"],
+                entry.get("occurrence_id"),
+                entry.get("judge"),
+                sum(quote["found"] for quote in quotes),
+            )
     decompositions = ledger.get("decompositions", {})
     if not isinstance(decompositions, dict):
         raise ValueError("decompositions must be an object")
@@ -4379,24 +5201,44 @@ def audit(
         failures.append(
             {
                 "type": "no-bib",
-                "detail": ("no readable .bib — pass bib_path or "
-                           "declare \\bibliography{…}"),
+                "detail": (
+                    "no readable .bib — pass bib_path or "
+                    "declare \\bibliography{…}"
+                ),
             }
         )
     entries: dict[str, tuple[str, dict[str, Any]]] = {}
+    bibliography_locations: dict[str, list[dict[str, Any]]] = {}
     bib_snapshots = dict.fromkeys(expected_bibs)
     for b in bibs:
         try:
             with open(b, "rb") as fh:
                 raw = fh.read()
             bib_snapshots[b] = hashlib.sha256(raw).hexdigest()
-            parsed = _parse_bib(raw.decode("utf-8"))
+            bib_text = raw.decode("utf-8")
+            parsed = _parse_bib(bib_text)
         except (OSError, UnicodeError) as exc:
             failures.append({"type": "unreadable-bib", "detail": str(exc)})
             continue
         for error in parsed["errors"]:
             failures.append({"type": "bib-parse", "detail": f"{b}: {error}"})
         for entry in parsed["entries"]:
+            bibliography_locations.setdefault(entry["key"], []).append(
+                {
+                    "file": b,
+                    "line": bib_text.count("\n", 0, entry["start"]) + 1,
+                    "kind": "bibliography-entry",
+                    "start": entry["start"],
+                    "end": entry["end"],
+                    "offset_unit": "unicode-codepoint",
+                    "source_byte_start": len(
+                        bib_text[: entry["start"]].encode("utf-8")
+                    ),
+                    "source_byte_end": len(
+                        bib_text[: entry["end"]].encode("utf-8")
+                    ),
+                }
+            )
             if entry["key"] in entries:
                 failures.append(
                     {
@@ -4556,6 +5398,7 @@ def audit(
     missing: list[dict[str, Any]] = []
     support_states, support_bases = [], []
     supported_adequately = 0
+    current_judgments = {}
     source_snapshots: dict[str, dict[str, Any] | None] = {}
     source_observation_conflict = False
     legacy_counts = Counter(
@@ -4646,8 +5489,10 @@ def audit(
                     loc,
                     type="support-stale",
                     verdict=judgment["verdict"],
-                    detail=(f"verdict was judged against {judgment['id']} "
-                            f"but entry resolves to {vid} — re-judge"),
+                    detail=(
+                        f"verdict was judged against {judgment['id']} "
+                        f"but entry resolves to {vid} — re-judge"
+                    ),
                 )
             )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
@@ -4685,8 +5530,9 @@ def audit(
                     loc,
                     type="support-stale",
                     verdict=judgment["verdict"],
-                    detail=("source, context or evidence policy changed; "
-                            "re-judge"),
+                    detail=(
+                        "source, context or evidence policy changed; re-judge"
+                    ),
                 )
             )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
@@ -4695,6 +5541,9 @@ def audit(
             support_states.append("INVALID")
             failures.append(dict(loc, type="support-invalid"))
             continue
+        current_judgments[_support_id(c["occurrence_id"], c.get("atom_id"))] = (
+            judgment
+        )
         verdict = judgment["verdict"]
         support_states.append(
             "INACCESSIBLE" if verdict == "UNVERIFIABLE" else verdict
@@ -4750,8 +5599,9 @@ def audit(
                 "occurrence_id": c["occurrence_id"],
                 "atom_id": c.get("atom_id"),
                 "atom": (c.get("atom") or {}).get("text"),
-                "detail": ("no support verdict recorded for "
-                           "this atom/occurrence"),
+                "detail": (
+                    "no support verdict recorded for this atom/occurrence"
+                ),
             }
         )
     for k in cite_keys:
@@ -4834,6 +5684,16 @@ def audit(
         "warnings": warnings,
         "checked": _now_iso(),
     }
+    report["bibliography_locations"] = bibliography_locations
+    report["corrections"] = _correction_items(
+        report, ex, current_judgments, ver
+    )
+    report["source_files"] = list(dict.fromkeys(ex["files"] + bibs))
+    report["snapshot"] = {
+        "files": {**ex["source_digests"], **bib_snapshots},
+        "ledger": ledger_digest,
+        "sources": source_snapshots,
+    }
     coverage = {k: v.strip() or "—" for k, v in coverage.items()}
     with _file_lock(_project_path(workdir, "ledger.json")):
         ledger_changed = (
@@ -4870,6 +5730,7 @@ def audit(
             report["ok"] = False
             report["complete"] = False
             report["submission_ready"] = False
+            _invalidate_corrections(report)
         md_path = _project_path(workdir, "audit.md")
         _atomic_write(md_path, _audit_markdown(report, ver, coverage))
         report["report"] = md_path
@@ -4936,6 +5797,7 @@ TOOLS = {
     "record_support": record_support,
     "ledger_read": ledger_read,
     "audit": audit,
+    "correction_report": correction_report,
 }
 
 

@@ -81,3 +81,11 @@ Before publishing a report, the audit rechecks manuscript, bibliography,
 ledger, and assessed source snapshots. Concurrent changes yield
 `audit-stale`, `complete=false`, and `submission_ready=false`; retry against
 the current files. Generated reports stay under `.cite-check/`.
+
+## Actionable findings
+
+Audit JSON includes full `corrections` alongside the compact failure list.
+Use [correction_report](correction-reports.md) for JSON, Markdown and optional
+annotated HTML artifacts from a fresh audit. `report_written` is independent
+of `ok` and readiness. Missing or stale evidence receives next actions, never
+fabricated replacement text; a stale publication suppresses quotes and drafts.
