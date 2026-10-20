@@ -1,3 +1,0 @@
-skills/jupytext/examples/minimal_example.py:1: ERROR no-style       no use_style() / plt.style.use() / rcParams.update() before plotting
-
-1 error(s), 0 warning(s)
