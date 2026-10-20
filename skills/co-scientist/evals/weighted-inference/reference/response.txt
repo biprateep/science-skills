@@ -1,0 +1,20 @@
+{
+  "weights": [
+    "4/5",
+    "1/5"
+  ],
+  "mean": "54/5",
+  "variance": "16/5",
+  "unweighted_mean": "12",
+  "unweighted_variance": "5",
+  "universal_unweighted_claim": false,
+  "sqrt_claim": false,
+  "counterexample": {
+    "x": -3,
+    "lhs": 3,
+    "rhs": -3
+  },
+  "sqrt_valid_domain": "x >= 0",
+  "unknown_covariance": "insufficient_information",
+  "derivation": "Minimize w1^2*4 + w2^2*16 subject to w1+w2=1. Weights are proportional to inverse variance. sqrt(x^2)=abs(x), which equals x exactly for nonnegative real x."
+}

@@ -35,3 +35,8 @@ skills/co-writer/eval/runs/
 
 # Local audit notes and generated review artifacts
 /reviews/
+
+# Evaluation runs contain prompts, responses, generated artifacts and telemetry.
+/.eval-runs/
+/evals/runners.local.json
+/evals/baselines.local/

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "skill": "jupytext",
+  "cases": [
+    {
+      "id": "runnable-percent",
+      "description": "Starter coverage: percent header/cell structure and execution on supplied, changed, and empty inputs; not editor integration or conversion round trips.",
+      "prompt": "runnable-percent/prompt.md",
+      "inputs": "runnable-percent/input",
+      "reference": "runnable-percent/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "percent-structure",
+          "kind": "command",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/jupytext/evals/grade.py",
+            "{workspace}",
+            "structure"
+          ],
+          "timeout_s": 15
+        },
+        {
+          "id": "notebook-behavior",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/jupytext/evals/grade.py",
+            "{workspace}",
+            "behavior"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    }
+  ]
+}

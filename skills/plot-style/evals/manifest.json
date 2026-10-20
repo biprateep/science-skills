@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "skill": "plot-style",
+  "cases": [
+    {
+      "id": "review-defaults-and-overrides",
+      "description": "Starter coverage: house configuration review with a valid control and explicit palette/two-column overrides; not rendering, font availability, or image quality.",
+      "prompt": "review-defaults-and-overrides/prompt.md",
+      "inputs": "review-defaults-and-overrides/input",
+      "reference": "review-defaults-and-overrides/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "a",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/A",
+          "expected": []
+        },
+        {
+          "id": "b",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/B",
+          "expected": [
+            "font",
+            "legend_frame",
+            "save_bounds",
+            "save_dpi",
+            "tick_direction",
+            "tick_sides",
+            "width"
+          ]
+        },
+        {
+          "id": "c",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/C",
+          "expected": []
+        }
+      ]
+    }
+  ]
+}

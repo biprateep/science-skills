@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "skill": "co-writer",
+  "cases": [
+    {
+      "id": "preserve-fixed-content",
+      "description": "Starter coverage: fixed LaTeX content and two explicit hedges during a constrained prose edit; not broad voice or semantic equivalence scoring.",
+      "prompt": "preserve-fixed-content/prompt.md",
+      "inputs": "preserve-fixed-content/input",
+      "reference": "preserve-fixed-content/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "fixed-content",
+          "kind": "command",
+          "dimension": "constraint_adherence",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/co-writer/scripts/check_fixed.py",
+            "{repo}/skills/co-writer/evals/preserve-fixed-content/input/before.tex",
+            "{workspace}/rewrite.tex"
+          ],
+          "timeout_s": 15
+        },
+        {
+          "id": "rewrite-boundaries",
+          "kind": "command",
+          "dimension": "task_success",
+          "critical": true,
+          "argv": [
+            "{python}",
+            "{repo}/skills/co-writer/evals/grade.py",
+            "{workspace}"
+          ],
+          "timeout_s": 15
+        }
+      ]
+    }
+  ]
+}
