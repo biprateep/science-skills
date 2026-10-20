@@ -2633,6 +2633,13 @@ _ABBREV = ("e.g", "i.e", "et al", "cf", "vs", "viz", "ca", "approx", "resp", "Fi
            "Vol", "vol", "pp", "p", "Phys", "Rev", "Astrophys", "Astron", "Ann", "Proc", "J", "Ser", "Lett",
            "Suppl", "Chap", "Ch", "St", "Univ", "Inc", "Ltd", "approx", "min", "max")
 _CITE_TOKEN = re.compile(r"\u27e8cite#(\d+)\u27e9")
+_TEX_MATH = re.compile(
+    r"\\begin\{(?P<math_env>(?:equation|align|gather|multline|eqnarray|"
+    r"displaymath|flalign|alignat)\*?)\}.*?\\end\{(?P=math_env)\}"
+    r"|\\\[.*?\\\]|\$\$.*?\$\$|\\\(.*?\\\)"
+    r"|(?<!\\)\$(?!\$)(?:\\.|[^$\\])*\$",
+    re.S,
+)
 
 
 def _strip_tex_comments(text: str) -> str:
@@ -2750,12 +2757,15 @@ def _replace_cmd_arg(text: str, cmd: str, fn) -> str:
 
 
 def _clean_tex(t: str) -> str:
-    """LaTeX → readable prose; ⟨cite#n⟩ tokens and $inline math$ survive."""
-    t = re.sub(r"\\begin\{(equation|align|gather|multline|eqnarray|displaymath|flalign|alignat)\*?\}.*?\\end\{\1\*?\}",
-               " \u27e8display equation\u27e9 ", t, flags=re.S)
-    t = re.sub(r"\\\[.*?\\\]|\$\$.*?\$\$", " \u27e8display equation\u27e9 ", t, flags=re.S)
+    """LaTeX → readable prose, preserving citations and mathematical content."""
     math = []
-    t = re.sub(r"\$[^$\n]+\$", lambda m: (math.append(m.group(0)), f"\u27e8m{len(math) - 1}\u27e9")[1], t)
+    t = _TEX_MATH.sub(
+        lambda match: (
+            math.append(re.sub(r"\s+", " ", match[0])),
+            f"\u27e8m{len(math) - 1}\u27e9"
+        )[1],
+        t,
+    )
     t = re.sub(r"\\(?:includegraphics|label|vspace|hspace|bibliographystyle|bibliography|addbibresource|"
                r"graphicspath|usepackage|documentclass|setlength|newcommand|renewcommand|def|input|include|"
                r"subfile|affiliation|affil|author|email|correspondingauthor|orcid|keywords|received|revised|accepted|"
@@ -2787,7 +2797,9 @@ def _split_sentences(paragraph: str) -> list:
         prot = re.sub(r"\b" + re.escape(ab) + r"\.", ab.replace(".", "<DOT>") + "<DOT>", prot)
     prot = re.sub(r"\b([A-Z])\.", r"\1<DOT>", prot)              # initials
     prot = re.sub(r"(\d)\.(\d)", r"\1<DOT>\2", prot)              # decimals
-    prot = re.sub(r"\$([^$]*)\$", lambda m: "$" + m.group(1).replace(".", "<DOT>") + "$", prot)
+    prot = _TEX_MATH.sub(
+        lambda match: match[0].replace(".", "<DOT>"), prot
+    )
     parts = re.split(r"(?<=[.!?])\s+(?=[\"'(\[\u27e8$A-Z0-9\\])", prot)
     return [p.replace("<DOT>", ".").strip() for p in parts if p.strip()]
 
@@ -2856,19 +2868,22 @@ def extract_cites(tex_path: str) -> dict:
             s = _CITE_TOKEN.sub(lambda mm: "\u27e8cite:" + ",".join(tokens[int(mm.group(1))]["keys"]) + "\u27e9", s)
             return re.sub(r"\u27e9 (?=[,.;:)\]])", "\u27e9", s)
 
+        sents = []
         for para in re.split(r"\n\s*\n", prose):
-            if "\u27e8cite#" not in para:
-                continue
-            sents = _split_sentences(re.sub(r"\s+", " ", para).strip())
-            for si, sent in enumerate(sents):
-                for tm in _CITE_TOKEN.finditer(sent):
-                    t = tokens[int(tm.group(1))]
-                    claim = render(sent)
-                    context = " ".join(render(x) for x in sents[max(0, si - 1):si + 2])
-                    for key in t["keys"]:
-                        cites.append({"key": key, "cmd": t["cmd"], "file": path, "line": t["line"],
-                                      "claim": claim, "context": context,
-                                      "nocite": t["cmd"].lower() == "nocite" or key == "*"})
+            sents.extend(_split_sentences(re.sub(r"\s+", " ", para).strip()))
+        for si, sent in enumerate(sents):
+            for tm in _CITE_TOKEN.finditer(sent):
+                t = tokens[int(tm.group(1))]
+                claim = render(sent)
+                context = " ".join(
+                    render(value) for value in sents[max(0, si - 1):si + 2]
+                )
+                for key in t["keys"]:
+                    cites.append({
+                        "key": key, "cmd": t["cmd"], "file": path,
+                        "line": t["line"], "claim": claim, "context": context,
+                        "nocite": t["cmd"].lower() == "nocite" or key == "*",
+                    })
     keys = sorted({c["key"] for c in cites if c["key"] != "*"})
     by_key = {}
     for i, c in enumerate(cites):
