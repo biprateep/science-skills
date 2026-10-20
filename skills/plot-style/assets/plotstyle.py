@@ -573,9 +573,9 @@ def better_step(
     wish matplotlib's `step` command plotted.
 
     Args:
-      bin_edges: The bin edges. This should be one element longer than the
-        bin heights y.
-      y: The bin heights.
+      bin_edges: Finite, strictly increasing bin edges, one element longer
+        than the bin heights y.
+      y: The bin heights, as a one-dimensional iterable.
       yerr: Asymmetric error on y, as a (lower, upper) pair of bin values,
         drawn as a shaded band.
       ax: The axes where this should be plotted; the current axes if None.
@@ -584,14 +584,25 @@ def better_step(
     Returns:
       The axes plotted on.
     """
-    new_x = _interleave(bin_edges[:-1], bin_edges[1:])
-    new_y = _interleave(y, y)
+    edges = np.asarray(bin_edges, dtype=float)
+    heights = np.asarray(list(y), dtype=float)
+    _validate_edges(edges)
+    if heights.ndim != 1 or heights.size != edges.size - 1:
+        raise ValueError("y must have one value per bin")
+    bounds = None
+    if yerr is not None:
+        bounds = tuple(np.asarray(list(bound), dtype=float) for bound in yerr)
+        if len(bounds) != 2 or any(
+            bound.shape != heights.shape for bound in bounds
+        ):
+            raise ValueError("yerr must contain lower and upper values per bin")
+    new_x = _interleave(edges[:-1], edges[1:])
+    new_y = np.repeat(heights, 2)
     if ax is None:
         ax = plt.gca()
     lines = ax.plot(new_x, new_y, **kwargs)
-    if yerr is not None:
-        lower = np.array(_interleave(yerr[0], yerr[0]))
-        upper = np.array(_interleave(yerr[1], yerr[1]))
+    if bounds is not None:
+        lower, upper = (np.repeat(bound, 2) for bound in bounds)
         ax.fill_between(
             new_x, upper, lower, alpha=0.1, color=lines[0].get_color()
         )
@@ -662,6 +673,17 @@ def stacked_hist(
     )
 
 
+def _validate_edges(edges: _FloatArray) -> None:
+    """Reject nonfinite, unordered, or degenerate bin edges."""
+    if (
+        edges.ndim != 1
+        or edges.size < 2
+        or not np.all(np.isfinite(edges))
+        or not np.all(edges[1:] > edges[:-1])
+    ):
+        raise ValueError("bin edges must be finite and strictly increasing")
+
+
 def binned_quantiles(
     x: npt.ArrayLike,  # noqa: GS030 - matplotlib's x, y and np.percentile's q; a rename would break callers.
     y: npt.ArrayLike,
@@ -672,41 +694,71 @@ def binned_quantiles(
 ) -> tuple[_FloatArray, _FloatArray]:
     """Quantiles of y in bins of x.
 
-    Points where x or y is not finite are left out.
+    Points where x or y is not finite are left out. Explicit bins exclude
+    points outside their range; the rightmost edge belongs to the last bin.
 
     Args:
       x: The coordinate that is binned, shape (n,).
       y: The values whose quantiles are taken, shape (n,).
-      nbins: The number of bins, unless bins gives the edges.
+      nbins: Positive integer number of bins, unless bins gives the edges.
       equal_count: Whether to put an equal number of points in each bin (the
         pd.qcut behaviour), so the scatter band is equally well determined
         everywhere; False gives equal-width bins.
-      bins: Explicit bin edges, overriding nbins and equal_count.
-      q: The percentiles to compute, each between 0 and 100.
+      bins: Finite, strictly increasing explicit edges, overriding nbins and
+        equal_count. Required when there are no finite pairs or x is constant.
+      q: A nonempty sequence of finite percentiles between 0 and 100.
 
     Returns:
       A tuple (edges, values): the bin edges, and the percentiles of each
       bin with shape (len(q), len(edges) - 1). Empty bins come back as NaN.
     """
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    good = np.isfinite(x) & np.isfinite(y)
-    x, y = x[good], y[good]
+    coordinates = np.asarray(x, dtype=float)
+    observations = np.asarray(y, dtype=float)
+    if (
+        coordinates.ndim != 1
+        or observations.ndim != 1
+        or coordinates.shape != observations.shape
+    ):
+        raise ValueError("x and y must be one-dimensional and equally sized")
+    percentiles = np.asarray(q, dtype=float)
+    if (
+        percentiles.ndim != 1
+        or not percentiles.size
+        or not np.all(np.isfinite(percentiles))
+        or np.any((percentiles < 0) | (percentiles > 100))
+    ):
+        raise ValueError("q must contain finite percentiles between 0 and 100")
+    good = np.isfinite(coordinates) & np.isfinite(observations)
+    coordinates, observations = coordinates[good], observations[good]
 
     if bins is not None:
         edges = np.asarray(bins, dtype=float)
-    elif equal_count:
-        edges = np.quantile(x, np.linspace(0.0, 1.0, nbins + 1))
     else:
-        edges = np.linspace(x.min(), x.max(), nbins + 1)
-    edges = np.unique(edges)
+        if (
+            isinstance(nbins, (bool, np.bool_))
+            or not isinstance(nbins, (int, np.integer))
+            or nbins < 1
+        ):
+            raise ValueError("nbins must be a positive integer")
+        if not coordinates.size or coordinates.min() == coordinates.max():
+            raise ValueError("empty or constant x requires explicit bin edges")
+        if equal_count:
+            edges = np.quantile(coordinates, np.linspace(0.0, 1.0, nbins + 1))
+        else:
+            edges = np.linspace(coordinates.min(), coordinates.max(), nbins + 1)
+        # Repeated quantiles occur naturally for discrete data.
+        edges = np.unique(edges)
+    _validate_edges(edges)
 
-    bin_index = np.clip(np.digitize(x, edges) - 1, 0, len(edges) - 2)
-    values = np.full((len(q), len(edges) - 1), np.nan)
+    inside = (coordinates >= edges[0]) & (coordinates <= edges[-1])
+    coordinates, observations = coordinates[inside], observations[inside]
+    bin_index = np.searchsorted(edges, coordinates, side="right") - 1
+    bin_index[coordinates == edges[-1]] = edges.size - 2
+    values = np.full((percentiles.size, len(edges) - 1), np.nan)
     for i in range(len(edges) - 1):
         in_bin = bin_index == i
         if in_bin.any():
-            values[:, i] = np.percentile(y[in_bin], q)
+            values[:, i] = np.percentile(observations[in_bin], percentiles)
     return edges, values
 
 
