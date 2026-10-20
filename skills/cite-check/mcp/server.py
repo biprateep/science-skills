@@ -2955,42 +2955,43 @@ def _claim_hash(claim: str) -> str:
     return hashlib.sha1(t.encode()).hexdigest()[:12]
 
 
-def _norm_quote(s: str) -> str:
-    s = _ascii(html.unescape(s or "")).lower()
-    s = re.sub(r"[^a-z0-9]+", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+def _quote_characters(text: str) -> tuple[str, list[int]]:
+    """Normalize whitespace and typographic ligatures, retaining source offsets."""
+    ligatures = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
+                 "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"}
+    characters, offsets = [], []
+    for offset, character in enumerate(text):
+        replacement = " " if character.isspace() else ligatures.get(
+            character, character
+        )
+        for item in replacement:
+            if item == " " and (not characters or characters[-1] == " "):
+                continue
+            characters.append(item)
+            offsets.append(offset)
+    if characters and characters[-1] == " ":
+        characters.pop()
+        offsets.pop()
+    return "".join(characters), offsets
+
+
+def _norm_quote(text: str) -> str:
+    return _quote_characters(text)[0]
 
 
 def _locate_quote(text: str, quote: str) -> dict:
-    """Is `quote` in `text` verbatim (after normalisation) or near-verbatim
-    (≥ 0.85 similarity, which absorbs PDF-extraction damage: ligatures,
-    broken hyphens, dropped superscripts)?"""
-    nt, nq = _norm_quote(text), _norm_quote(quote)
-    if len(nq) < 15:
-        return {"found": False, "match": 0.0, "reason": "quote too short (< 15 characters after normalisation)"}
-    idx = nt.find(nq)
-    if idx >= 0:
-        return {"found": True, "match": 1.0, "at": idx}
-    L, best = len(nq), (0.0, -1)
-    stride = max(1, L // 6)
-    sm = difflib.SequenceMatcher(None, "", nq, autojunk=False)
-    for i in range(0, max(1, len(nt) - L + 1), stride):
-        sm.set_seq1(nt[i:i + L])
-        if sm.real_quick_ratio() < 0.85 or sm.quick_ratio() < 0.85:
-            continue
-        r = sm.ratio()
-        if r > best[0]:
-            best = (r, i)
-    if best[1] >= 0:
-        for i in range(max(0, best[1] - stride), min(len(nt) - L, best[1] + stride) + 1):
-            sm.set_seq1(nt[i:i + L])
-            r = sm.ratio()
-            if r > best[0]:
-                best = (r, i)
-    if best[0] >= 0.85:
-        return {"found": True, "match": round(best[0], 3), "at": best[1]}
-    return {"found": False, "match": round(best[0], 3),
-            "reason": f"not found verbatim in the paper text (best fuzzy match {best[0]:.2f})"}
+    """Certify an exact source span after conservative extraction normalization."""
+    normalized, offsets = _quote_characters(text)
+    needle = _norm_quote(quote)
+    if len(needle) < 15:
+        return {"found": False, "match": 0.0, "reason": "quote too short"}
+    index = normalized.find(needle)
+    if index < 0:
+        return {"found": False, "match": 0.0,
+                "reason": "not found verbatim in the source text"}
+    start, end = offsets[index], offsets[index + len(needle) - 1] + 1
+    return {"found": True, "match": 1.0, "at": start, "end": end,
+            "source_text": text[start:end]}
 
 
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
