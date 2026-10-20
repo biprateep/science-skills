@@ -11,7 +11,9 @@ The CLI form exists so a harness session that registered the server mid-run
 its shell tool. See skills/co-scientist/SKILL.md — "MCP Toolbox".
 """
 
+import ast
 import json
+import math
 import os
 import random
 import re
@@ -61,19 +63,118 @@ def _build_symbols(symbols: dict | None):
             if word not in _ASSUMPTION_WORDS:
                 raise ValueError(f"unknown assumption {word!r} for symbol {name!r}")
             kwargs[word] = True
-        table[name] = sp.symbols(name, **kwargs)
+        if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+            raise ValueError("symbol names must be public identifiers")
+        table[name] = sp.Symbol(name, **kwargs)
     return table
 
+
+
+def _math_expression(source: str, symbols: dict):
+    """Construct mathematics from an allowlisted AST, without Python evaluation.
+
+    Args:
+        source: Mathematical expression, at most 10,000 characters.
+        symbols: Explicit SymPy symbols and assumptions.
+
+    Returns:
+        A SymPy expression; tuples are accepted only as function arguments.
+
+    Raises:
+        ValueError: The expression uses syntax outside the mathematical grammar.
+    """
+    import sympy as sp
+
+    if not isinstance(source, str) or not source or len(source) > 10000:
+        raise ValueError("expression must contain 1 to 10,000 characters")
+    functions = {
+        name: getattr(sp, name) for name in (
+            "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+            "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+            "exp", "log", "sqrt", "Abs", "sign", "floor", "ceiling",
+            "factorial", "gamma", "erf", "conjugate", "re", "im",
+            "integrate", "diff", "limit", "summation", "product",
+            "Integral", "Derivative", "Limit", "Sum", "Product",
+        )
+    }
+    constants = {"pi": sp.pi, "E": sp.E, "I": sp.I, "oo": sp.oo}
+    try:
+        tree = ast.parse(source, mode="eval")
+    except (SyntaxError, RecursionError) as exc:
+        raise ValueError("invalid mathematical syntax") from exc
+    if sum(1 for _ in ast.walk(tree)) > 1000:
+        raise ValueError("expression exceeds the syntax complexity limit")
+
+    def construct(node: ast.AST, depth: int = 0):
+        if depth > 64:
+            raise ValueError("expression nesting exceeds 64 levels")
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            if isinstance(node.value, float) and not math.isfinite(node.value):
+                raise ValueError("numeric literals must be finite")
+            return sp.Number(node.value)
+        if isinstance(node, ast.Name) and not node.id.startswith("_"):
+            if node.id in symbols:
+                return symbols[node.id]
+            if node.id in constants:
+                return constants[node.id]
+            if node.id in functions:
+                raise ValueError("a function name requires arguments")
+            return sp.Symbol(node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(
+            node.op, (ast.UAdd, ast.USub)
+        ):
+            value = construct(node.operand, depth + 1)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left = construct(node.left, depth + 1)
+            right = construct(node.right, depth + 1)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.Pow):
+                # Prevent enormous eager integer allocations before CAS tactics.
+                if right.is_number and abs(right) > 10000:
+                    raise ValueError("numeric exponent exceeds 10,000")
+                return left ** right
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id not in functions or node.keywords:
+                raise ValueError("only approved mathematical calls are allowed")
+            args = []
+            for arg in node.args:
+                if isinstance(arg, ast.Tuple):
+                    args.append(tuple(construct(v, depth + 1) for v in arg.elts))
+                else:
+                    args.append(construct(arg, depth + 1))
+            return functions[node.func.id](*args)
+        raise ValueError(f"unsupported mathematical syntax: {type(node).__name__}")
+
+    return construct(tree.body)
+
+
+def _limit_worker_resources(timeout: float) -> None:
+    """Bound CAS CPU and address space on platforms with POSIX resource limits."""
+    try:
+        import resource
+    except ImportError:
+        return  # Parent still enforces the portable wall-clock process timeout.
+    cpu_seconds = max(1, math.ceil(timeout))
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+    memory_bytes = 2 * 1024 ** 3
+    resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
 
 def _check_one_step(lhs_s, rhs_s, cls, symbols, seed, tolerance, samples, domain,
                     numeric_only=False):
     """Run the tactic ladder (cas_verification.md §4) on one transition."""
     import sympy as sp
-    from sympy.parsing.sympy_parser import parse_expr
 
     table = _build_symbols(symbols)
-    lhs = parse_expr(lhs_s, local_dict=table)
-    rhs = parse_expr(rhs_s, local_dict=table)
+    lhs = _math_expression(lhs_s, table)
+    rhs = _math_expression(rhs_s, table)
     diff = lhs - rhs
     free = sorted(diff.free_symbols, key=lambda s: s.name)
 
@@ -127,8 +228,9 @@ def _check_one_step(lhs_s, rhs_s, cls, symbols, seed, tolerance, samples, domain
     return False, "none", "all tactics exhausted"
 
 
-def _step_worker(q, kwargs):
+def _step_worker(q, kwargs, timeout):
     try:
+        _limit_worker_resources(timeout)
         q.put(_check_one_step(**kwargs))
     except Exception as exc:  # parse errors, bad assumptions, ...
         q.put(("error", "error", f"{type(exc).__name__}: {exc}"))
@@ -142,7 +244,7 @@ def _check_with_timeout(kwargs, timeout):
     except ValueError:
         return _check_one_step(**kwargs)  # non-fork platform: no timeout guard
     q = ctx.Queue()
-    p = ctx.Process(target=_step_worker, args=(q, kwargs))
+    p = ctx.Process(target=_step_worker, args=(q, kwargs, timeout))
     p.start()
     p.join(timeout)
     if p.is_alive():
