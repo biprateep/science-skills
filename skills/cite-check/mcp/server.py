@@ -693,6 +693,10 @@ def _slug(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s)[:120]
 
 
+def _cache_key(identifier: str) -> str:
+    return hashlib.sha256(identifier.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # registry clients — every function returns the same record shape:
 #   {registry, title, authors[], year, venue, doi, arxiv, bibcode, openalex,
@@ -1255,7 +1259,7 @@ def _zenodo_names_repo(doi: str, full_name: str) -> bool:
     return any(re.search(re.escape(want) + r"(?:\.git)?(?:[/#?]|$)", (u or "").lower()) for u in urls)
 
 
-def _github_get(full: str):
+def _github_get(full: str, ref: str | None = None):
     """Repository record for owner/repo, or None when GitHub has no public
     repository there. Follows renames; reports private repositories."""
     status, r = _gh_json(f"/repos/{full}")
@@ -1277,9 +1281,11 @@ def _github_get(full: str):
             "moved_from": full if full_name.lower() != full.lower() else None,
             "citation_file": None, "cff": None, "preferred_citation": None, "readme_ids": [],
             "software_doi_source": None, "notes": []}
+    if ref:
+        info["description"] = ""  # repository settings are not historical evidence
     title, authors, year, doi, abstract = r.get("name"), [], None, None, info["description"]
 
-    status, text = _http(f"{_GITHUB_RAW}/{full_name}/HEAD/CITATION.cff")
+    status, text = _http(f"{_GITHUB_RAW}/{full_name}/{ref or 'HEAD'}/CITATION.cff")
     if status == 200 and text.strip():
         info["citation_file"] = "CITATION.cff"
         cff, problem = _cff_load(text)
@@ -1306,7 +1312,7 @@ def _github_get(full: str):
                     "year": _year(pc.get("year") or pc.get("date-published")), "type": pc.get("type"),
                     "ids": _cff_ids(pc), "source": "CITATION.cff preferred-citation"}
     if not info["preferred_citation"]:
-        status, text = _http(f"{_GITHUB_RAW}/{full_name}/HEAD/CITATION.bib")
+        status, text = _http(f"{_GITHUB_RAW}/{full_name}/{ref or 'HEAD'}/CITATION.bib")
         entries = _parse_bib(text)["entries"] if status == 200 else []
         if entries:
             e = entries[0]
@@ -1317,7 +1323,8 @@ def _github_get(full: str):
                 "year": _year(e["fields"].get("year")), "type": e["type"], "ids": _entry_ids(e),
                 "source": "CITATION.bib"}
 
-    status, readme = _gh_api(f"/repos/{full_name}/readme", accept="application/vnd.github.html+json")
+    query = "?" + urllib.parse.urlencode({"ref": ref}) if ref else ""
+    status, readme = _gh_api(f"/repos/{full_name}/readme{query}", accept="application/vnd.github.html+json")
     if status == 200:
         info["readme_ids"] = _readme_ids(readme)
     if not doi:
@@ -1355,9 +1362,11 @@ def _github_ref(full: str, ref: str) -> dict:
     for cand in dict.fromkeys([ref, bare, "v" + bare]):
         params = urllib.parse.urlencode({"sha": cand, "per_page": 1})
         status, data = _gh_json(f"/repos/{full}/commits?{params}")
+        if status not in (200, 404, 422):
+            raise RegistryLookupError("github", "unavailable", status)
         if status == 200 and isinstance(data, list) and data:
             c = data[0]
-            return {"found": True, "ref": cand, "sha": c["sha"][:12],
+            return {"found": True, "ref": cand, "sha": c["sha"],
                     "date": ((c.get("commit") or {}).get("committer") or {}).get("date", "")[:10]}
     return {"found": False, "ref": ref}
 
@@ -1452,6 +1461,9 @@ def _github_bibtex(rec: dict) -> tuple:
             fields.append(("doi", rec["doi"]))
         fields += [("publisher", "GitHub"), ("url", repo.get("html_url") or f"https://github.com/{full}"),
                    ("year", pin["year"])]
+    if rec.get("pinned_sha"):
+        fields = [(key, value) for key, value in fields if key != "url"]
+        fields.append(("url", f"https://github.com/{full}/tree/{rec['pinned_sha']}"))
     body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields if v)
     return f"@software{{{_slug(full.replace('/', '_'))},\n{body}\n}}", source
 
@@ -1469,11 +1481,11 @@ def _record_cache_put(rec: dict) -> None:
     if cid and (rec.get("repo") or {}).get("partial") and _record_cache_get(cid):
         return              # a search hit must not replace the repository's full record
     if cid:
-        _atomic_write(_cache_file("records", _slug(cid) + ".json"), json.dumps(rec))
+        _atomic_write(_cache_file("records", _cache_key(cid) + ".json"), json.dumps(rec))
 
 
 def _record_cache_get(cid: str, max_age: float | None = None) -> dict | None:
-    path = _cache_file("records", _slug(cid) + ".json")
+    path = _cache_file("records", _cache_key(cid) + ".json")
     if os.path.exists(path) and (max_age is None or time.time() - os.path.getmtime(path) < max_age):
         with open(path) as fh:
             return json.load(fh)
@@ -1482,13 +1494,13 @@ def _record_cache_get(cid: str, max_age: float | None = None) -> dict | None:
 
 def _alias_put(kind: str, value: str, cid: str) -> None:
     _atomic_write(
-        _cache_file("records", "alias_" + _slug(f"{kind}_{value}") + ".json"),
+        _cache_file("records", "alias_" + _cache_key(f"{kind}_{value}") + ".json"),
         json.dumps({"id": cid})
     )
 
 
 def _alias_get(kind: str, value: str) -> str | None:
-    path = _cache_file("records", "alias_" + _slug(f"{kind}_{value}") + ".json")
+    path = _cache_file("records", "alias_" + _cache_key(f"{kind}_{value}") + ".json")
     if os.path.exists(path):
         with open(path) as fh:
             return json.load(fh).get("id")
@@ -2110,6 +2122,8 @@ def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author
     CITATION.cff or its GitHub record."""
     tried = []
     order = prefer or _DEFAULT_PREFER
+    if rec.get("arxiv_version"):
+        order = ["arxiv"]
     if rec.get("github") and rec.get("pin"):
         order = ["github"]          # a DOI export would cite the latest version, not the one asked for
     for src in order:
@@ -2148,7 +2162,7 @@ def _official_bibtex(rec: dict, prefer=None, journal_format: int = 2, max_author
                         bib = body
                         break
             elif src == "arxiv" and rec.get("arxiv"):
-                status, body = _http(f"https://arxiv.org/bibtex/{rec['arxiv']}")
+                status, body = _http(f"https://arxiv.org/bibtex/{rec.get('arxiv_version') or rec['arxiv']}")
                 bib = body if status == 200 and body.lstrip().startswith("@") else None
             elif src == "github" and rec.get("github"):
                 bib, label = _github_bibtex(rec)
@@ -2232,13 +2246,36 @@ def _default_key(rec: dict, existing: set) -> str:
 
 
 def _with_pin(rec: dict, identifier: str, version: str | None) -> dict:
-    """A repository record pinned to the version asked for (argument, or the
-    tag / branch / commit in the identifier's URL)."""
+    """Fetch software metadata at an immutable commit; retain arXiv version."""
+    if rec.get("arxiv"):
+        match = re.search(_ARXIV_CORE + r"v\d+", str(identifier), re.I)
+        requested = version or (match.group(0) if match else None)
+        if requested:
+            if re.fullmatch(r"v\d+", requested, re.I):
+                requested = rec["arxiv"] + requested
+            if (not _ARXIV_RE.fullmatch(requested)
+                    or _strip_arxiv_version(requested) != rec["arxiv"]):
+                raise ValueError("invalid arXiv version")
+            return dict(rec, arxiv_version=requested)
     if not rec.get("github"):
         return rec
-    m = _GITHUB_REF.search(str(identifier or ""))
-    pin = (version or "").strip() or (urllib.parse.unquote(m.group(1)) if m else None)
-    return dict(rec, pin=pin) if pin else rec
+    match = _GITHUB_REF.search(str(identifier or ""))
+    requested = version or (urllib.parse.unquote(match.group(1)) if match else None)
+    repo = rec.get("repo") or {}
+    full = repo.get("full_name") or rec["github"]
+    ref = _github_ref(full, requested or repo.get("default_branch") or "HEAD")
+    if not ref.get("found"):
+        raise ValueError(f"repository version does not exist: {requested}")
+    pinned = _github_get(full, ref=ref["sha"])
+    if not pinned or pinned.get("error"):
+        raise RuntimeError("cannot fetch pinned repository metadata")
+    return dict(pinned, pin=ref["sha"], pinned_sha=ref["sha"],
+                requested_version=requested or ref["sha"])
+
+
+def _text_identity(rec: dict) -> str:
+    version = rec.get("pinned_sha") or rec.get("arxiv_version")
+    return _canonical(rec) + ("@" + version if version else "")
 
 
 def fetch_bibtex(identifier: str, key: str | None = None, prefer: list | None = None,
@@ -2440,6 +2477,19 @@ def _compare_repo(entry: dict, pub: dict) -> dict:
     or a title that names it); an entry titled as the paper the repository
     asks to be cited is FOUND — that paper is what the entry should be. A
     cited version must exist as a tag, branch or commit."""
+    requested = _entry_ref(entry)
+    if requested:
+        try:
+            raw = _github_get(pub["ids"]["github"])
+            if not raw or raw.get("error"):
+                raise RuntimeError("repository unavailable")
+            pinned = _with_pin(raw, pub["id"], requested)
+            pub = _public(pinned, pub["id"], "github")
+        except (RuntimeError, ValueError) as exc:
+            return {"key": entry["key"], "status": "UNRESOLVED",
+                    "via": pub["id"], "id": pub["id"], "ids": pub["ids"],
+                    "notes": [f"cited version could not be checked: {exc}"],
+                    "provenance": entry["provenance"]}
     f, repo = entry["fields"], pub.get("repo") or {}
     full = repo.get("full_name") or pub["ids"]["github"]
     title, authors, year = f.get("title", ""), _split_bib_authors(f.get("author", "")), _year(f.get("year"))
@@ -2914,7 +2964,7 @@ def _download_pdf(url: str, dest: str) -> bool:
 
 
 def _text_paths(cid: str) -> tuple:
-    return _cache_file("text", _slug(cid) + ".txt"), _cache_file("text", _slug(cid) + ".json")
+    return _cache_file("text", _cache_key(cid) + ".txt"), _cache_file("text", _cache_key(cid) + ".json")
 
 
 def _load_text_meta(cid: str) -> dict | None:
@@ -2952,21 +3002,24 @@ def _obtain_text(rec: dict, cid: str) -> tuple:
             rec = _merge_records(rec, oa)
             _record_cache_put(rec)
     if rec.get("arxiv"):
+        arxiv_id = rec.get("arxiv_version") or rec["arxiv"]
         try:
-            status, body = _http(f"https://arxiv.org/html/{rec['arxiv']}", cache=False, timeout=60)
+            status, body = _http(f"https://arxiv.org/html/{arxiv_id}", cache=False, timeout=60)
         except RuntimeError:
             status, body = 0, ""
         if status == 200 and "ltx_document" in body:
             text = _tidy_text(_html_to_text(body))
             if len(text) > 2000:
                 return text, "fulltext", "arxiv-html"
-        pdf = _cache_file("pdf", _slug(cid) + ".pdf")
-        if _download_pdf(f"https://arxiv.org/pdf/{rec['arxiv']}", pdf):
+        pdf = _cache_file("pdf", _cache_key(cid) + ".pdf")
+        if _download_pdf(f"https://arxiv.org/pdf/{arxiv_id}", pdf):
             text = _tidy_text(_pdf_to_text(pdf))
             if len(text) > 2000:
                 return text, "fulltext", "arxiv-pdf"
+    if rec.get("arxiv_version"):
+        return "", "none", f"arxiv:{rec['arxiv_version']} unavailable"
     for url in rec.get("pdf_urls") or []:
-        pdf = _cache_file("pdf", _slug(cid) + ".pdf")
+        pdf = _cache_file("pdf", _cache_key(cid) + ".pdf")
         if _download_pdf(url, pdf):
             text = _tidy_text(_pdf_to_text(pdf))
             if len(text) > 2000:
@@ -2981,17 +3034,19 @@ def _github_text(rec: dict) -> tuple:
     full = repo.get("full_name") or rec["github"]
     head = "\n\n".join(x for x in dict.fromkeys([rec.get("title", ""), repo.get("description") or "",
                                                   rec.get("abstract") or ""]) if x)
-    status, body = _gh_api(f"/repos/{full}/readme", accept="application/vnd.github.html+json")
+    query = "?" + urllib.parse.urlencode({"ref": rec["pinned_sha"]}) if rec.get("pinned_sha") else ""
+    status, body = _gh_api(f"/repos/{full}/readme{query}", accept="application/vnd.github.html+json")
     readme = _tidy_text(_html_to_text(body)) if status == 200 else ""
     if len(readme) > 200:
-        return head + "\n\n" + readme, "readme", f"github-readme:{full}"
+        return head + "\n\n" + readme, "readme", f"github-readme:{full}@{rec.get('pinned_sha', 'HEAD')}"
     if head.strip():
         return head, "abstract", f"github:{full}"
     return "", "none", None
 
 
 def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | None = None,
-               refresh: bool = False, max_chars: int = 0) -> dict:
+               refresh: bool = False, max_chars: int = 0,
+               version: str | None = None) -> dict:
     """Get the cited paper's text for support checking and cache it: arXiv
     HTML → arXiv PDF → open-access PDF → abstract only. For paywalled papers
     pass pdf_path (or text_path) to ingest your own copy. Returns basis
@@ -3003,7 +3058,11 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
     if rec is None:
         r = resolve_citation(identifier)
         return {"error": f"cannot resolve {identifier}: {r.get('reason') or r.get('error')}"}
-    cid = _canonical(rec)
+    try:
+        rec = _with_pin(rec, identifier, version)
+    except (RuntimeError, ValueError) as exc:
+        return {"error": str(exc)}
+    cid = _text_identity(rec)
     tp, mp = _text_paths(cid)
     meta = None if (refresh or pdf_path or text_path) else _load_text_meta(cid)
     if meta and meta.get("basis") == "none":
@@ -3024,7 +3083,8 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
                 text, basis, source = _obtain_text(rec, cid)
         except RuntimeError as exc:
             return {"error": str(exc)}
-        meta = {"id": cid, "basis": basis, "source": source, "chars": len(text),
+        meta = {"id": _canonical(rec), "cache_id": cid,
+                "requested_version": rec.get("requested_version") or rec.get("arxiv_version"), "basis": basis, "source": source, "chars": len(text),
                 "fetched": _now_iso(), "title": rec.get("title", ""),
                 "extraction_version": TEXT_EXTRACTION_VERSION,
                 "version": rec.get("pin") or rec.get("arxiv_version")}
@@ -3037,7 +3097,7 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
             _atomic_write(mp, json.dumps(meta))
         meta["path"] = snapshot
     out = dict(meta)
-    out["abstract"] = (rec.get("abstract") or "")[:2500]
+    out["abstract"] = ("" if rec.get("arxiv_version") else (rec.get("abstract") or "")[:2500])
     if max_chars and out["basis"] != "none":
         with open(out["path"], encoding="utf-8", errors="replace") as fh:
             out["text"] = fh.read()[:max_chars]
@@ -3061,14 +3121,15 @@ def _sentences(text: str) -> list:
     return [s for s in out if len(s) >= 25]
 
 
-def find_passages(identifier: str, claims: list, k: int = 6, window: int = 2) -> dict:
+def find_passages(identifier: str, claims: list, k: int = 6, window: int = 2,
+                  version: str | None = None) -> dict:
     """For each claim, the top-k passages (windows of `window` sentences) of
     the cited paper ranked by content-word and bigram overlap, plus the
     abstract. This is what the judge reads before quoting evidence.
     """
     if isinstance(claims, str):
         claims = [claims]
-    meta = fetch_text(identifier)
+    meta = fetch_text(identifier, version=version)
     if meta.get("error"):
         return meta
     text = ""
@@ -3214,7 +3275,7 @@ def _locate_quote(text: str, quote: str) -> dict:
 def record_support(workdir: str, key: str, claim: str, verdict: str, identifier: str,
                    quotes: list | None = None, note: str | None = None, judge: str | None = None,
                    file: str | None = None, line: int | None = None,
-                   context: str | None = None) -> dict:
+                   context: str | None = None, version: str | None = None) -> dict:
     """Record a support verdict for one (cite key, claim sentence) pair.
 
     verdict ∈ SUPPORTS | PARTIAL | UNSUPPORTED | CONTRADICTS | UNVERIFIABLE.
@@ -3230,8 +3291,13 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
     rec = _full_record(identifier)
     if rec is None:
         return {"recorded": False, "error": f"cannot resolve {identifier}"}
+    try:
+        rec = _with_pin(rec, identifier, version)
+    except (RuntimeError, ValueError) as exc:
+        return {"recorded": False, "error": str(exc)}
     cid = _canonical(rec)
-    meta = _load_text_meta(cid) or fetch_text(identifier)
+    cache_id = _text_identity(rec)
+    meta = _load_text_meta(cache_id) or fetch_text(identifier, version=version)
     if meta.get("error"):
         return {"recorded": False, "error": meta["error"]}
     basis = meta["basis"]
@@ -3257,7 +3323,8 @@ def record_support(workdir: str, key: str, claim: str, verdict: str, identifier:
         lid = f"{key}|{_claim_hash(claim)}"
         ledger["version"] = 2
         ledger["entries"][lid] = {"context_hash": _claim_hash(context if context is not None else claim),
-                                  "source_identity": _source_identity(meta, text), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
+                                  "source_identity": _source_identity(meta, text),
+                                  "source_cache_id": meta.get("cache_id", cid), "key": key, "id": cid, "claim": claim, "verdict": verdict, "basis": basis,
                                   "quotes": checks, "note": note or None, "judge": judge or None,
                                   "file": file, "line": line, "recorded": _now_iso()}
         _write_project(workdir, "ledger.json", ledger)
@@ -3382,8 +3449,18 @@ def audit(tex_path: str, bib_path: str | None = None, require_support: bool = Tr
                                  detail=f"verdict was judged against {L['id']} but the entry now resolves to {vid} — re-judge"))
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
-        current_source = _current_source_identity(L["id"])
+        current_source = _current_source_identity(L.get("source_cache_id", L["id"]))
+        entry = entries.get(c["key"], (None, {}))[1]
+        expected_ref = _entry_ref(entry) if entry else None
+        expected_version = ((ver.get(c["key"]) or {}).get("ref") or {}).get("sha")
+        source_version = (L.get("source_identity") or {}).get("version")
+        if expected_ref and not expected_version:
+            expected_version = expected_ref
+        arxiv_match = re.search(_ARXIV_CORE + r"v\d+", str(entry.get("fields", {})), re.I)
+        if arxiv_match:
+            expected_version = arxiv_match.group(0)
         if (not L.get("source_identity")
+                or (expected_version and source_version != expected_version)
                 or L["source_identity"] != current_source
                 or L.get("context_hash") != _claim_hash(c["context"])):
             failures.append(dict(

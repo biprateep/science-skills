@@ -125,3 +125,14 @@ isolated sentence. Claim identity preserves mathematical case and Unicode.
 Verdicts bind to the source content digest, source version, extraction version
 and quote policy. The audit rejects changed context, replaced source text and
 legacy verdicts without this binding; obtain a fresh judgment.
+
+## Versioned sources
+
+For a software version, pass the same `version` or GitHub tree URL to
+`fetch_text`, `find_passages` and `record_support`. GitHub CFF and README
+content is fetched at the resolved full commit hash; source snapshots and
+exported URLs keep that pin. arXiv version suffixes select separate source
+caches, and unavailable versioned text never falls back to a newer version.
+The work identifier remains stable while its evidence version is separate.
+Legacy cache filenames are deliberately ignored because their lossy keys
+cannot prove which identifier created them; they can be removed locally.

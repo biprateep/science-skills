@@ -108,19 +108,21 @@ expect 'all("⟨cite:" in c["claim"] for c in r["cites"])' "extract: every claim
 # network: the fixture text is ingested under the real arXiv id of the paper.
 mkdir -p "$W/cache/records"
 "$PY" - "$W/cache/records" <<'PYEOF'
-import json, sys, os
+import hashlib, json, sys, os
 d = sys.argv[1]
+def cache_key(value):
+    return hashlib.sha256(value.encode()).hexdigest()
 rec = {"registry": "arxiv", "registries": ["arxiv"], "title": "Attention Is All You Need",
        "authors": ["Ashish Vaswani", "Noam Shazeer"], "year": 2017, "venue": "arXiv", "doi": None,
        "arxiv": "1706.03762", "bibcode": None, "openalex": None, "inspire": None, "abstract": "x",
        "type": "preprint", "url": "https://arxiv.org/abs/1706.03762", "citation_count": None, "pdf_urls": []}
-json.dump(rec, open(os.path.join(d, "arXiv_1706.03762.json"), "w"))
-json.dump({"id": "arXiv:1706.03762"}, open(os.path.join(d, "alias_arxiv_1706.03762.json"), "w"))
+json.dump(rec, open(os.path.join(d, cache_key("arXiv:1706.03762") + ".json"), "w"))
+json.dump({"id": "arXiv:1706.03762"}, open(os.path.join(d, "alias_" + cache_key("arxiv_1706.03762") + ".json"), "w"))
 epr = dict(rec, registry="crossref", registries=["crossref"], title="Can Quantum-Mechanical Description of Physical Reality Be Considered Complete?",
            authors=["Einstein, A.", "Podolsky, B.", "Rosen, N."], year=1935, venue="Physical Review",
            doi="10.1103/physrev.47.777", arxiv=None, abstract="", url="https://doi.org/10.1103/PhysRev.47.777")
-json.dump(epr, open(os.path.join(d, "doi_10.1103_physrev.47.777.json"), "w"))
-json.dump({"id": "doi:10.1103/physrev.47.777"}, open(os.path.join(d, "alias_doi_10.1103_physrev.47.777.json"), "w"))
+json.dump(epr, open(os.path.join(d, cache_key("doi:10.1103/physrev.47.777") + ".json"), "w"))
+json.dump({"id": "doi:10.1103/physrev.47.777"}, open(os.path.join(d, "alias_" + cache_key("doi_10.1103/physrev.47.777") + ".json"), "w"))
 PYEOF
 
 check "text: ingest local copy" 0 "$PY" "$SERVER" call fetch_text "{\"identifier\": \"arXiv:1706.03762\", \"text_path\": \"$W/sample_paper.txt\"}"
