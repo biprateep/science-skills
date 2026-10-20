@@ -289,3 +289,20 @@ Statistical and probabilistic derivations are machine-checkable too — use
 - If symbolic verification is genuinely infeasible for the *entire* result,
   say so in the checkpoint and rely on the numeric chain — but this is the
   exception and needs a stated reason, not a default.
+
+### Toolbox expression boundary
+
+`verify_derivation` accepts mathematical expressions, not Python programs. Its
+parser builds SymPy objects from numeric literals, public symbol names,
+`+ - * / **`, and approved mathematical calls (trigonometric functions,
+`exp`, `log`, `sqrt`, `Abs`, `gamma`, `erf`, `integrate`, `diff`, `limit`,
+`summation`, `product`, and their unevaluated calculus constructors). Tuple
+arguments express integration or summation limits. Declare assumptions through
+`symbols`; do not use `Symbol(...)`, imports, attributes, strings, indexing,
+comprehensions, or arbitrary function calls. Unsupported syntax fails explicitly.
+
+Expressions are limited to 10,000 characters, 1,000 syntax nodes and 64 nested
+levels. Numeric exponents larger than 10,000 are refused. CAS workers receive
+CPU and memory limits on POSIX platforms; the parent enforces a wall-clock
+limit. These bounds are reliability limits, not a claim that SymPy is a general
+purpose sandbox for arbitrary Python.
