@@ -1493,10 +1493,19 @@ def _github_bibtex(rec: dict) -> tuple:
             return None, "github"
         rec, repo = dict(full_rec, pin=rec.get("pin")), full_rec["repo"]
     cff, version = repo.get("cff"), rec.get("pin")
+    frozen_pin = None
+    if rec.get("pinned_sha"):
+        requested = rec.get("requested_version") or rec["pinned_sha"]
+        date = rec.get("pinned_date") or ""
+        frozen_pin = {
+            "version": None if requested == rec["pinned_sha"] else requested,
+            "note": f"Commit {rec['pinned_sha']} ({date})",
+            "year": date[:4],
+        }
     fields = []
     if cff and cff.get("title") and cff.get("authors"):
         source = "citation-cff"
-        pin = _github_pin(full, repo, version) if version else None
+        pin = frozen_pin or (_github_pin(full, repo, version) if version else None)
         if version and not pin:
             return None, source
         fields += [("author", " and ".join(("{%s}" % _bib_escape(n)) if ent else _bib_escape(n)
@@ -1513,7 +1522,7 @@ def _github_bibtex(rec: dict) -> tuple:
         fields.append(("year", year) if year else ("note", f"Accessed {_today()}"))
     else:
         source = "github"
-        pin = _github_pin(full, repo, version)
+        pin = frozen_pin or _github_pin(full, repo, version)
         if not pin:
             return None, source
         owner = repo.get("owner_name") or repo.get("owner") or full.split("/")[0]
@@ -2315,6 +2324,8 @@ def _rewrite_key(bibtex: str, key: str) -> str:
 def _prov_comment(rec: dict, source: str) -> str:
     title = re.sub(r"[{}@\n\"]", " ", rec.get("title", ""))[:100].strip()
     pin = f"; version={rec['pin']}" if rec.get("github") and rec.get("pin") else ""
+    if rec.get("pinned_sha"):
+        pin += f"; commit={rec['pinned_sha']}"
     body = f'cite-check: source={source}; id={_canonical(rec)}{pin}; fetched={_today()}; title="{title}"'
     return "@comment{" + body.replace("@", "(at)") + "}"
 
@@ -2353,7 +2364,8 @@ def _with_pin(rec: dict, identifier: str, version: str | None) -> dict:
     pinned = _github_get(full, ref=ref["sha"])
     if not pinned or pinned.get("error"):
         raise RuntimeError("cannot fetch pinned repository metadata")
-    return dict(pinned, pin=ref["sha"], pinned_sha=ref["sha"],
+    return dict(pinned, pin=requested or ref["sha"], pinned_sha=ref["sha"],
+                pinned_date=ref.get("date"),
                 requested_version=requested or ref["sha"])
 
 
@@ -3254,7 +3266,7 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
                 "requested_version": rec.get("requested_version") or rec.get("arxiv_version"), "basis": basis, "source": source, "chars": len(text),
                 "fetched": _now_iso(), "title": rec.get("title", ""),
                 "extraction_version": TEXT_EXTRACTION_VERSION,
-                "version": rec.get("pin") or rec.get("arxiv_version")}
+                "version": rec.get("pinned_sha") or rec.get("arxiv_version")}
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         snapshot = os.path.join(os.path.dirname(tp), digest + ".txt")
         meta["text_sha256"] = digest
