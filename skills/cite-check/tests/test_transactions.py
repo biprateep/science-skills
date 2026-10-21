@@ -45,8 +45,8 @@ class TransactionsTest(unittest.TestCase):
             def resolve(identifier):
                 return SERVER._record(registry="crossref", doi=identifier, title=identifier)
             def export(record, *args):
-                return {"bibtex": '@article{x,doi={' + record["doi"] + '}}', "source": "crossref"}
-            with unittest.mock.patch.object(SERVER, "_full_record", side_effect=resolve), unittest.mock.patch.object(SERVER, "_official_bibtex", side_effect=export):
+                return test_evidence.official_export_fixture('@article{x,doi={' + record["doi"] + '}}', record)
+            with unittest.mock.patch.object(SERVER, "CACHE_DIR", directory), unittest.mock.patch.object(SERVER, "_full_record", side_effect=resolve), unittest.mock.patch.object(SERVER, "_official_bibtex", side_effect=export):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
                     results = list(pool.map(lambda index: SERVER.bib_add(
                         str(target), [{"identifier": f"10.1234/{index}", "key": f"k{index}"}]

@@ -324,6 +324,7 @@ class CorrectionReportsTest(unittest.TestCase):
     def test_symlinked_output_directory_is_refused(self) -> None:
         target = self.root / "other"
         target.mkdir()
+        (self.root / ".cite-check").rename(self.root / "original-cite-check")
         (self.root / ".cite-check").symlink_to(target, target_is_directory=True)
         with unittest.mock.patch.object(SERVER, "audit") as audit:
             report = self.report()

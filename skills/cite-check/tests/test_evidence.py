@@ -4,6 +4,7 @@ import importlib.util
 import pathlib
 import typing
 import unittest
+import unittest.mock
 
 import engine_test_support
 
@@ -22,6 +23,48 @@ def source_intake(path: pathlib.Path) -> dict[str, typing.Any]:
         dict[str, typing.Any],
         quality.make_intake(path.read_bytes(), "local-text"),
     )
+
+
+def official_export_fixture(
+    raw: str, record: dict[str, typing.Any], source: str = "crossref"
+) -> dict[str, typing.Any]:
+    """Represent a synthetic registry response through the real sanitizer."""
+    bibliography = importlib.import_module("cite_check_engine.bibliography")
+    entry = SERVER._parse_bib(raw)["entries"][0]
+    return {
+        "bibtex": bibliography._sanitize_bibtex(entry, record),
+        "raw_export": raw,
+        "source": source,
+        "origin": "tool-generated-software-entry"
+        if source in {"github", "citation-cff"}
+        else "registry-export-text",
+        "tried": [],
+    }
+
+
+def official_bib_fixture(
+    raw: str,
+    record: dict[str, typing.Any],
+    bib_path: pathlib.Path,
+    source: str = "crossref",
+) -> str:
+    """Issue real receipts for synthetic data; never mock provenance checks."""
+    bibliography = importlib.import_module("cite_check_engine.bibliography")
+    got = official_export_fixture(raw, record, source)
+    request = {
+        "identifier": SERVER._canonical(record),
+        "version": record.get("requested_version"),
+        "prefer": ["github" if source == "citation-cff" else source],
+        "journal_format": 2,
+        "max_author": 10,
+    }
+    with unittest.mock.patch.object(
+        SERVER, "CACHE_DIR", str(bib_path.parent / "fixture-export-cache")
+    ):
+        proof = bibliography._make_export_proof(
+            record, got, got["bibtex"], request, str(bib_path)
+        )
+    return bibliography._prov_comment(record, source, proof) + "\n" + got["bibtex"]
 
 
 class EvidenceTest(unittest.TestCase):

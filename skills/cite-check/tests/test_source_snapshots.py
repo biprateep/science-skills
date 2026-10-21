@@ -41,8 +41,8 @@ class SourceSnapshotsTest(unittest.TestCase):
             shared.write_text("")
             link.symlink_to(shared)
             record = SERVER._record(registry="crossref", doi="10.1234/example")
-            exported = {"bibtex": '@article{x,doi={10.1234/example}}', "source": "crossref"}
-            with unittest.mock.patch.object(SERVER, "_full_record", return_value=record), unittest.mock.patch.object(SERVER, "_official_bibtex", return_value=exported):
+            exported = test_evidence.official_export_fixture('@article{x,doi={10.1234/example}}', record)
+            with unittest.mock.patch.object(SERVER, "CACHE_DIR", directory), unittest.mock.patch.object(SERVER, "_full_record", return_value=record), unittest.mock.patch.object(SERVER, "_official_bibtex", return_value=exported):
                 self.assertTrue(SERVER.bib_add(str(link), [{"identifier": "10.1234/example", "key": "x"}])["ok"])
             self.assertTrue(link.is_symlink())
             self.assertIn("10.1234/example", shared.read_text())

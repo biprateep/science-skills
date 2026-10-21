@@ -27,8 +27,8 @@ class BibliographyBatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = pathlib.Path(directory) / "refs.bib"
             record = SERVER._record(registry="crossref", doi="10.1234/one", title="Example")
-            exported = {"bibtex": '@article{x,doi={10.1234/one}}', "source": "crossref"}
-            with unittest.mock.patch.object(SERVER, "_full_record", side_effect=[record, None]), unittest.mock.patch.object(SERVER, "_official_bibtex", return_value=exported):
+            exported = test_evidence.official_export_fixture('@article{x,doi={10.1234/one}}', record)
+            with unittest.mock.patch.object(SERVER, "CACHE_DIR", directory), unittest.mock.patch.object(SERVER, "_full_record", side_effect=[record, None]), unittest.mock.patch.object(SERVER, "_official_bibtex", return_value=exported):
                 result = SERVER.bib_add(str(target), [
                     {"identifier": "10.1234/one", "key": "one"},
                     {"identifier": "10.1234/missing", "key": "two"},

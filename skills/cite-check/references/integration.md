@@ -230,9 +230,10 @@ native MCP and CLI expose identical parameters. See
 
 - `submission_ready == true` under `policy="submission-ready"`, with `ok`,
   `input_complete`, and `complete` also literal true, means every current
-  cited entry is VERIFIED with meaningful declared export provenance and
-  every support requirement has fresh adequate SUPPORTS evidence. The
-  declaration is not yet cryptographic export-digest assurance.
+  cited entry is VERIFIED with a valid digest-bound official export receipt
+  and every support requirement has fresh adequate SUPPORTS evidence from a
+  usable source. Receipts establish local export integrity, not a registry's
+  digital signature; see `export-provenance.md`.
 - `complete` means every requirement has an assessed outcome; negative
   verdicts and inaccessible-source triage count as assessed. Exploratory
   `ok` can report usable progress and always has `submission_ready=false`.
