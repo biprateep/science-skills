@@ -425,7 +425,8 @@ def _job_load(path: str, identifier: str) -> dict[str, Any]:
             "deadline_overshoot_seconds",
             "stop_reason",
         }
-        if not isinstance(usage, dict) or set(usage) != usage_fields:
+        if (not isinstance(usage, dict)
+                or set(usage) not in (usage_fields, usage_fields | {"coalesced_waits"})):
             raise ValueError("invalid usage accounting")
         for name in (
             "requests",
@@ -436,6 +437,8 @@ def _job_load(path: str, identifier: str) -> dict[str, Any]:
         ):
             if type(usage.get(name)) is not int or usage[name] < 0:
                 raise ValueError("invalid usage counter")
+        if type(usage.get("coalesced_waits", 0)) is not int or usage.get("coalesced_waits", 0) < 0:
+            raise ValueError("invalid coalesced wait counter")
         for name in ("elapsed_seconds", "deadline_overshoot_seconds"):
             if (
                 type(usage.get(name)) not in (int, float)
@@ -535,11 +538,12 @@ def _job_result(job: dict[str, Any], path: str) -> dict[str, Any]:
         for item in job["identity_queue"]
     ]
     total = {
-        name: sum(run["usage"][name] for run in job["runs"])
+        name: sum(run["usage"].get(name, 0) for run in job["runs"])
         for name in (
             "requests",
             "searches",
             "http_cache_hits",
+            "coalesced_waits",
             "unknown_price_requests",
             "elapsed_seconds",
         )
