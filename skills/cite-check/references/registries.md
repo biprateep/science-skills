@@ -15,9 +15,16 @@ from an export endpoint, never composed.
 | **OpenAlex** | broad graph of works | W-id, DOI | `search=` + year filter | none (→ Crossref/DataCite via DOI) | abstract for many paywalled papers; open-access PDF URLs | none; `mailto` polite pool |
 | **INSPIRE-HEP** | high-energy physics | arXiv id, DOI, recid | `t "…" and a <surname> and date …` | `?format=bibtex` (INSPIRE keys) | abstract | none |
 | **GitHub** | public software repositories | `owner/repo` (URL, `github:`, `git@github.com:` forms) | repository name/description — **opt-in** (`registries=["github"]`) | none: the repository's software DOI → DataCite/ADS; else `@software` laid out from `CITATION.cff` or the GitHub record (below) | README + description + `CITATION.cff` abstract (basis `readme`) | none; 60 requests/hour, 5000 with a token |
+| **Semantic Scholar** | broad scientific literature | discovery record only | bounded paper search — **opt-in** (`semanticscholar`) | not used; resolve suggested DOI/arXiv through an existing official source | metadata only in this adapter | optional API key; rate limits may apply |
+| **PubMed** | biomedical literature | discovery record only | ESearch + batched ESummary — **opt-in** (`pubmed`) | not used; resolve suggested DOI through an existing official source | metadata only in this adapter | public access; no API key in this adapter |
+| **dblp** | computer science publications | discovery record only | bounded publication search — **opt-in** (`dblp`) | not used; resolve suggested DOI/arXiv through an existing official source | metadata only in this adapter | public access; service challenges remain errors |
 
-Not used: **Semantic Scholar** (HTTP 429 without a key), **DBLP** (behind an
-anti-bot challenge; unusable from scripts), **Google Scholar** (no API).
+The three additional discovery sources return separate, explicitly unverified
+candidates. Their native IDs and reported aliases cannot populate canonical
+record caches or silently certify a citation. Defaults and official-export
+sources are unchanged. See [literature-sources.md](literature-sources.md).
+
+Google Scholar is not used; this toolbox has no supported API adapter for it.
 
 ## Measured failure modes the tool defends against
 
@@ -155,6 +162,7 @@ them explicitly.
 | **NASA ADS API token** | ADS search, bibcode resolution, ADS BibTeX export | <https://ui.adsabs.harvard.edu/user/settings/token> (free account) |
 | **contact e-mail** | Crossref's and OpenAlex's "polite pools": faster, more reliable answers | any address you own; it is sent only in the User-Agent / `mailto` parameter of those two APIs |
 | **GitHub token** | 5000 GitHub API requests/hour instead of 60 (≈ 15 repositories on a cold cache) | <https://github.com/settings/personal-access-tokens/new> — fine-grained, public repositories read-only, no permissions; tested against `/rate_limit` before it is kept |
+| **Semantic Scholar API key** | optional authentication for explicitly selected Semantic Scholar discovery searches | <https://www.semanticscholar.org/product/api>; stored as `semanticscholar`, sent only in `x-api-key` |
 
 **Where secrets live.** A token is tested against ADS before it is stored
 (a rejected token is not kept), then written to the OS keychain when there
@@ -176,6 +184,7 @@ convention) → not configured. `ping` reports `ads_token_source` and
 |---|---|
 | `ADS_API_TOKEN` (also `ADS_DEV_KEY`, `ADS_TOKEN`) | overrides the stored ADS token for this process |
 | `GITHUB_TOKEN` (also `GH_TOKEN`) | overrides the stored GitHub token for this process |
+| `SEMANTIC_SCHOLAR_API_KEY` (also `S2_API_KEY`) | overrides the stored Semantic Scholar key for opt-in discovery |
 | `CITE_CHECK_MAILTO` | overrides the stored contact address |
 | `CITE_CHECK_KEYRING` | `auto` (default): keychain if present, else file · `file`: always the 0600 file · `off`: ignore stored keys, environment only |
 | `CITE_CHECK_CACHE` | cache directory (default `$XDG_CACHE_HOME/cite-check` or `~/.cache/cite-check`) |

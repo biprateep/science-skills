@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.8.0"
+  version: "0.9.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -96,7 +96,7 @@ Never edit anything under `mcp/` during a task.
 
 | Tool | Does | Trust it for |
 |---|---|---|
-| `search_citation(title, author, year, hint, context, query)` | multi-registry search, duplicates merged, **ranked by cite-check's own scoring** (registry ranking is measurably wrong) | finding the real id of a paper you can describe; a `confidence: high` candidate |
+| `search_citation(title, author, year, hint, context, query, registries)` | locally ranked registry candidates; opt-in Semantic Scholar, PubMed and dblp discovery records keep separate provenance and suggested identifiers | candidate selection only; search ranking and suggested aliases are not verification |
 | `resolve_citation(identifier \| [ids])` | arXiv / DOI / bibcode / OpenAlex / INSPIRE / GitHub repository → metadata + cross-linked ids; batched. A repository also returns `repo`: archived / fork / moved, CITATION.cff, `preferred_citation` (the paper its authors ask for), software DOI, README identifiers, and `ref` for a URL naming a tag / branch / commit | existence of an id; nothing more |
 | `fetch_bibtex(identifier, key, prefer, journal_format, tex_path, version)` | official BibTeX from ADS → Crossref → DataCite → INSPIRE → arXiv → GitHub (first that has it), key rewritten, encoding-only cleanup | the only source of `.bib` text |
 | `bib_add(bib_path, items, replace, tex_path)` | fetch + insert with `@comment{cite-check: …}` provenance; detects duplicates and key conflicts; `replace=true` swaps a hand-written entry for the official one | writing the `.bib` |
