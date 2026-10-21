@@ -38,8 +38,6 @@ jobs:
             requirement: 'mcp>=2,<3'
             integration: false
     env:
-      CITE_CHECK_CACHE: ${{ runner.temp }}/citation-cache
-      XDG_CONFIG_HOME: ${{ runner.temp }}/citation-config
       CITE_CHECK_KEYRING: file
       PYTHONHASHSEED: '0'
       ADS_API_TOKEN: ''
@@ -53,6 +51,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Isolate citation cache and configuration
+        run: |
+          printf 'CITE_CHECK_CACHE=%s/citation-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XDG_CONFIG_HOME=%s/citation-config\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install declared test dependencies and selected SDK
         run: >-
           python -m pip install
