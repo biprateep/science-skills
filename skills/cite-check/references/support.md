@@ -112,7 +112,13 @@ returns `audit-stale`; rerun it before relying on the result.
 | **PARTIAL** | the paper supports part of the claim, or a weaker/narrower version (different sample, conditional result, "suggests" where the sentence says "shows") | ≥ 1 verbatim quote **and** a note saying which part is not covered |
 | **UNSUPPORTED** | the paper is real but does not say this (wrong paper for the claim, claim over-reaches, the number is not in it) | a note saying what was searched and what the paper does say |
 | **CONTRADICTS** | the paper says the opposite | ≥ 1 verbatim quote **and** a note |
-| **UNVERIFIABLE** | no text could be obtained (paywalled, no open-access copy, no PDF supplied) — **refused when full text is available** | a note |
+| **UNVERIFIABLE** | no text could be obtained (paywalled, no open-access copy, no PDF supplied) — **refused when usable full text is available** | a note |
+
+Inspect the source `quality` result before judging. Unreadable, poor, truncated
+or unknown-quality extraction cannot establish support; obtain a readable copy
+or record UNVERIFIABLE with an explanation. See `extraction-quality.md` for
+quality diagnostics, cache migration and the distinction between a shortened
+preview and incomplete acquisition.
 
 The **basis** (`fulltext` / `readme` / `abstract` / `none`) is recorded
 from the text cache, not from the caller. `readme` is a GitHub repository's

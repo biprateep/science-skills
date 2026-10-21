@@ -229,8 +229,10 @@ class BudgetTransportTest(unittest.TestCase):
         self.assertEqual(usage["model_calls"], 0)
 
     def test_cached_response_uses_no_network_grant(self) -> None:
+        opener = unittest.mock.Mock()
+        opener.open.return_value = Response(b"cached")
         with unittest.mock.patch.object(
-            SERVER.urllib.request, "urlopen", return_value=Response(b"cached")
+            SERVER.urllib.request, "build_opener", return_value=opener
         ):
             SERVER._http(PUBLIC_URL)
         controller = self.budget(max_requests=0)
@@ -333,7 +335,7 @@ class VerificationJobsTest(unittest.TestCase):
         self.addCleanup(patch.stop)
         patch = unittest.mock.patch.object(
             SERVER.urllib.request,
-            "urlopen",
+            "build_opener",
             side_effect=AssertionError("test attempted live network"),
         )
         patch.start()

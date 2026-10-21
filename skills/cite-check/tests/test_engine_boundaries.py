@@ -615,13 +615,16 @@ class EngineBoundariesTest(unittest.TestCase):
             ],
         )
         source = self.root / "source.txt"
-        quote = "The rate rises."
+        quote = "The rate rises in this experiment."
         source.write_text(quote, encoding="utf-8")
         metadata = {
             "id": "doi:10.1234/example",
             "basis": "fulltext",
             "source": "local:source.txt",
             "path": str(source),
+            "intake": importlib.import_module("test_evidence").source_intake(
+                source
+            ),
         }
         snapshot = identifiers._source_identity(metadata, quote)
         with (

@@ -139,6 +139,14 @@ CONTEXT2_JSON=$("$PY" -c 'import json,sys; print(json.dumps(next(c["context"] fo
 check "ledger: SUPPORTS with verbatim quote" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM1\", \"context\": $CONTEXT1_JSON, \"verdict\": \"SUPPORTS\", \"quotes\": [\"dispensing with recurrence and convolutions entirely\"]}"
 check "ledger: SUPPORTS with paraphrase refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"SUPPORTS\", \"quotes\": [\"the model was trained on ImageNet\"]}"
 check "ledger: UNVERIFIABLE refused when text exists" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"vaswani2017\", \"identifier\": \"arXiv:1706.03762\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNVERIFIABLE\", \"note\": \"could not obtain the text\"}"
+# The negative-verdict fixture also needs readable source evidence. This is
+# synthetic test text, not an acquired copy of the cited paper.
+cat > "$W/unrelated_paper.txt" <<'TEXT'
+Synthetic offline fixture: this paper discusses quantum mechanical descriptions
+of physical reality and correlations between separated systems. It does not
+study machine translation datasets or sequence transduction models.
+TEXT
+check "text: ingest negative-verdict fixture" 0 "$PY" "$SERVER" call fetch_text "{\"identifier\": \"10.1103/PhysRev.47.777\", \"text_path\": \"$W/unrelated_paper.txt\"}"
 check "ledger: UNSUPPORTED without note refused" 1 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNSUPPORTED\"}"
 check "ledger: UNSUPPORTED with note" 0 "$PY" "$SERVER" call record_support "{\"workdir\": \"$W\", \"key\": \"einstein1935\", \"identifier\": \"10.1103/PhysRev.47.777\", \"claim\": \"$CLAIM2\", \"context\": $CONTEXT2_JSON, \"verdict\": \"UNSUPPORTED\", \"note\": \"EPR is about quantum mechanics, not machine translation\"}"
 check "ledger: read" 0 "$PY" "$SERVER" call ledger_read "{\"workdir\": \"$W\"}"

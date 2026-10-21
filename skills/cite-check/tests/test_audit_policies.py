@@ -31,6 +31,7 @@ class AuditPoliciesTest(unittest.TestCase):
             "id": "doi:10.1234/example",
             "basis": "fulltext",
             "path": str(self.source),
+            "intake": test_evidence.source_intake(self.source),
             "source": "local:source.txt",
         }
         self.verification: list[dict[str, Any]] = [

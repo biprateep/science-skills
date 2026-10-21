@@ -27,6 +27,7 @@ class IdentityTest(unittest.TestCase):
             meta = {"id": "doi:10.1/example", "basis": "fulltext",
                     "source": "local:source.txt", "path": str(source),
                     "extraction_version": SERVER.TEXT_EXTRACTION_VERSION}
+            meta["intake"] = test_evidence.source_intake(source)
             with unittest.mock.patch.object(SERVER, "_full_record", return_value={"doi": "10.1/example"}), unittest.mock.patch.object(SERVER, "_load_text_meta", return_value=meta):
                 cite = SERVER.extract_cites(str(tex))["cites"][0]
                 def record():
