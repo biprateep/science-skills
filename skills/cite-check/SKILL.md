@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.12.0"
+  version: "0.13.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -33,7 +33,7 @@ three with code rather than with confidence:
    branch or commit.
 2. **Provenance** — BibTeX entries are fetched from the registry that owns
    the record (ADS, Crossref, DataCite, INSPIRE, arXiv) and stamped with a
-   provenance comment. A repository with no DOI export gets an `@software`
+   provenance comment and a digest-bound export receipt. A repository with no DOI export gets an `@software`
    entry laid out by the toolbox from its authors' `CITATION.cff`, or from
    its GitHub record with the release or commit pinned. Nobody, human or
    model, types a `.bib` entry.
@@ -51,6 +51,8 @@ the module and validation boundaries in `references/engine.md`. Source quality,
 bounded acquisition and preview limits are described in
 `references/extraction-quality.md`. Connection reuse, request isolation and
 retry accounting are documented in `references/acquisition-efficiency.md`.
+Export receipt validation and migration from older provenance comments are
+documented in `references/export-provenance.md`.
 
 This skill is **harness-agnostic**: it needs `<run-shell>` with Python 3.10+
 and network access, file read/write, and — for the support check —

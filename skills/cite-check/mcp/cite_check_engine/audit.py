@@ -8,6 +8,7 @@ from typing import Any, Literal
 from cite_check_engine import models as _engine_models
 from cite_check_engine import acquisition as _engine_acquisition
 from cite_check_engine import bibliography as _engine_bibliography
+from cite_check_engine import export_provenance as _engine_export_provenance
 from cite_check_engine import evidence as _engine_evidence
 from cite_check_engine import findings as _engine_findings
 from cite_check_engine import identifiers as _engine_identifiers
@@ -50,12 +51,10 @@ def _incomplete_audit(policy: str, error: str) -> dict[str, Any]:
             "assessment_rate": None,
             "verification_rate": None,
         }
-    axes["provenance"].pop("verified")
-    axes["provenance"].pop("verification_rate")
     axes["provenance"].update(
         declared=0,
         declaration_rate=None,
-        assurance="declaration-only; export digest not checked",
+        assurance="local-export-digest; not a registry signature",
     )
     axes["support"].update(
         basis_counts={},
@@ -313,7 +312,10 @@ def audit(
         bibliography_locations.setdefault(key, []).extend(
             item for item in ex["inline_bibliography"] if item["key"] == key
         )
-    unofficial, provenance_states = [], []
+    unofficial, provenance_states, declaration_states = [], [], []
+    provenance_checks: dict[str, Any] = {}
+    export_snapshots: dict[str, str | None] = {}
+    export_observation_conflict = False
     for key in sorted(cite_keys):
         parsed_entry = entries.get(key, (None, {}))[1]
         provenance_state = (
@@ -321,10 +323,21 @@ def audit(
             if key in inline_keys
             else _declared_provenance(parsed_entry, ver.get(key, {}))
         )
+        declaration_states.append(provenance_state)
         if provenance_state != "DECLARED":
             unofficial.append(key)
+        if provenance_state == "DECLARED":
+            checked = _engine_bibliography._check_export_provenance(parsed_entry, entries[key][0])
+            provenance_state = checked["status"]
+            for path, digest in checked.get("snapshots", {}).items():
+                if path in export_snapshots and export_snapshots[path] != digest:
+                    export_observation_conflict = True
+                export_snapshots[path] = digest
+            provenance_checks[key] = {name: value for name, value in checked.items() if name != "snapshots"}
+        else:
+            provenance_checks[key] = {"status": provenance_state, "detail": "no valid official-export declaration"}
         provenance_states.append(provenance_state)
-        if provenance_state != "DECLARED":
+        if provenance_state != "VERIFIED":
             (
                 failures
                 if strict or provenance_state == "MISMATCH"
@@ -334,7 +347,7 @@ def audit(
                     "type": "provenance",
                     "key": key,
                     "status": provenance_state,
-                    "detail": "no declared official-export provenance",
+                    "detail": provenance_checks[key]["detail"],
                 }
             )
         result = ver.setdefault(
@@ -647,14 +660,14 @@ def audit(
     )
     provenance_axis = _coverage_axis(
         provenance_states,
-        {"UNDEFINED"},
-        {"DECLARED"},
+        {"UNDEFINED", "DECLARED", "MISSING"},
+        {"VERIFIED"},
     )
-    provenance_axis["declared"] = provenance_axis.pop("verified")
-    provenance_axis["declaration_rate"] = provenance_axis.pop(
-        "verification_rate"
+    provenance_axis["declared"] = declaration_states.count("DECLARED")
+    provenance_axis["declaration_rate"] = (
+        provenance_axis["declared"] / len(declaration_states) if declaration_states else None
     )
-    provenance_axis["assurance"] = "declaration-only; export digest not checked"
+    provenance_axis["assurance"] = "local-export-digest; not a registry signature"
     support_axis = _coverage_axis(
         support_states,
         {"MISSING", "STALE", "DECOMPOSITION_STALE", "INVALID"},
@@ -713,6 +726,7 @@ def audit(
         "n_uncited_atoms": len(uncited_atoms),
         "uncited_atoms": uncited_atoms,
         "unofficial_entries": sorted(unofficial),
+        "provenance_checks": provenance_checks,
         "failures": failures,
         "warnings": warnings,
         "checked": _engine_persistence._now_iso(),
@@ -740,6 +754,7 @@ def audit(
         "files": {**ex["source_digests"], **bib_snapshots},
         "ledger": ledger_digest,
         "sources": source_snapshots,
+        "exports": export_snapshots,
         "input_backend": ex.get("extraction_metadata", {}).get("extractor")
         if ex.get("input_format") == "pdf"
         else None,
@@ -761,8 +776,13 @@ def audit(
             _engine_acquisition._current_source_identity(identifier) != snapshot
             for identifier, snapshot in source_snapshots.items()
         )
+        exports_changed = export_observation_conflict or any(
+            _engine_export_provenance.fingerprint(path) != digest
+            for path, digest in export_snapshots.items()
+        )
         if (
-            ledger_changed
+            exports_changed
+            or ledger_changed
             or manuscript_changed
             or bibliography_changed
             or sources_changed
@@ -771,7 +791,7 @@ def audit(
                 {
                     "type": "audit-stale",
                     "detail": (
-                        "manuscript, bibliography, ledger or source "
+                        "manuscript, bibliography, export receipt, ledger or source "
                         "changed during audit; "
                         "rerun audit"
                     ),

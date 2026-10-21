@@ -44,12 +44,13 @@ class InputFixture(unittest.TestCase):
             "intake": test_evidence.source_intake(self.source),
             "source": "local:evidence.txt",
         }
-        provenance = SERVER._prov_comment(self.record, "crossref")
         self.bib.write_text(
             "\n".join(
-                provenance + f"\n@article{{{key},title={{Example}},"
-                "doi={10.1234/example},author={Doe, Jane},year={2020}}"
-                for key in ("a", "b")
+                test_evidence.official_bib_fixture(
+                    f"@article{{{key},title={{Example}},"
+                    "doi={10.1234/example},author={Doe, Jane},year={2020}}",
+                    self.record, self.bib,
+                ) for key in ("a", "b")
             ),
             encoding="utf-8",
         )
@@ -469,6 +470,7 @@ class TextManuscriptInputsTest(InputFixture):
         self.extract(text)
         destination = self.root / "elsewhere"
         destination.mkdir()
+        (self.root / ".cite-check").rename(self.root / "original-cite-check")
         (self.root / ".cite-check").symlink_to(
             destination, target_is_directory=True
         )

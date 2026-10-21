@@ -609,8 +609,10 @@ class SourceQualityTest(ExtractionFixture):
         )
         bibliography = self.root / "refs.bib"
         bibliography.write_text(
-            SERVER._prov_comment(self.record, "crossref")
-            + "\n@article{a,title={Example},doi={10.1234/quality-fixture}}",
+            test_evidence.official_bib_fixture(
+                "@article{a,title={Example},doi={10.1234/quality-fixture}}",
+                self.record, bibliography,
+            ),
             encoding="utf-8",
         )
         cite = SERVER.extract_cites(str(manuscript))["cites"][0]
@@ -690,8 +692,10 @@ class SourceQualityTest(ExtractionFixture):
         )
         bibliography = self.root / "refs.bib"
         bibliography.write_text(
-            SERVER._prov_comment(self.record, "crossref")
-            + "\n@article{a,title={Example},doi={10.1234/quality-fixture}}",
+            test_evidence.official_bib_fixture(
+                "@article{a,title={Example},doi={10.1234/quality-fixture}}",
+                self.record, bibliography,
+            ),
             encoding="utf-8",
         )
         cite = SERVER.extract_cites(str(manuscript))["cites"][0]

@@ -59,12 +59,13 @@ class AuditPoliciesTest(unittest.TestCase):
         return {"entries": [dict(item) for item in self.verification]}
 
     def write_bib(self, provenance: str | None = None) -> None:
-        """Write a fixture declaration without performing network lookup."""
+        """Issue valid fixture receipts, or retain an explicit negative marker."""
+        raw = "@article{a,title={Example},doi={10.1234/example}}"
         if provenance is None:
-            provenance = SERVER._prov_comment(self.record, "crossref")
-        self.bib.write_text(
-            provenance + "\n@article{a,title={Example},doi={10.1234/example}}"
-        )
+            block = test_evidence.official_bib_fixture(raw, self.record, self.bib)
+        else:
+            block = provenance + "\n" + raw
+        self.bib.write_text(block)
 
     def support(self, verdict: str = "SUPPORTS") -> None:
         """Record source-bound evidence using the public API."""
@@ -97,8 +98,8 @@ class AuditPoliciesTest(unittest.TestCase):
             self.assertEqual((axis["expected"], axis["assessed"]), (1, 1))
         provenance = report["coverage"]["provenance"]
         self.assertEqual(provenance["declared"], 1)
-        self.assertNotIn("verified", provenance)
-        self.assertIn("digest not checked", provenance["assurance"])
+        self.assertEqual(provenance["verified"], 1)
+        self.assertIn("local-export-digest", provenance["assurance"])
 
     def test_exploratory_success_never_means_submission_ready(self) -> None:
         self.support()
@@ -185,8 +186,15 @@ class AuditPoliciesTest(unittest.TestCase):
                 self.assertTrue(self.audit(policy="exploratory")["ok"])
 
     def test_verified_repository_primary_record_is_adequate(self) -> None:
-        self.record = {"github": "owner/repo", "title": "repo"}
-        self.metadata.update(id="github:owner/repo", basis="readme")
+        sha = "a" * 40
+        self.record = {
+            "github": "owner/repo", "title": "repo", "pin": sha,
+            "pinned_sha": sha, "requested_version": sha,
+        }
+        self.metadata.update(
+            id="github:owner/repo", basis="readme", version=sha,
+            cache_id="github:owner/repo@" + sha,
+        )
         self.verification = [
             {
                 "key": "a",
@@ -196,8 +204,11 @@ class AuditPoliciesTest(unittest.TestCase):
             }
         ]
         self.bib.write_text(
-            SERVER._prov_comment(self.record, "citation-cff")
-            + "\n@software{a,title={repo},url={https://github.com/owner/repo}}"
+            test_evidence.official_bib_fixture(
+                "@software{a,title={repo},url={https://github.com/owner/repo/tree/"
+                + sha + "},note={Commit " + sha + "}}",
+                self.record, self.bib, "github",
+            )
         )
         self.support()
         self.assertTrue(self.audit()["submission_ready"])
@@ -234,10 +245,10 @@ class AuditPoliciesTest(unittest.TestCase):
     def test_valid_alias_provenance_matches_resolved_work(self) -> None:
         self.support()
         self.verification[0]["ids"]["arxiv"] = "1234.5678"
-        self.write_bib(
-            "@comment{cite-check: source=arxiv; "
-            "id=arXiv:1234.5678; fetched=2026-01-01}"
-        )
+        self.bib.write_text(test_evidence.official_bib_fixture(
+            "@article{a,title={Example},doi={10.1234/example},eprint={1234.5678}}",
+            {"arxiv": "1234.5678", "title": "Example"}, self.bib, "arxiv",
+        ))
         self.assertTrue(self.audit()["submission_ready"])
 
     def test_missing_or_malformed_registry_rows_are_unresolved(self) -> None:
@@ -300,7 +311,7 @@ class AuditPoliciesTest(unittest.TestCase):
         self.assertFalse(report["submission_ready"])
         for axis in report["coverage"].values():
             self.assertIsNone(axis["expected"])
-        self.assertNotIn("verified", report["coverage"]["provenance"])
+        self.assertEqual(report["coverage"]["provenance"]["verified"], 0)
         self.assertFalse(report["coverage"]["support"]["atomic_total_known"])
 
     def test_corrupt_ledger_is_an_incomplete_audit(self) -> None:

@@ -2,9 +2,11 @@
 
 import concurrent.futures
 import dataclasses
+import datetime
 from collections import Counter
 import hashlib
 import html
+import json
 import os
 import re
 import typing
@@ -13,6 +15,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 from cite_check_engine import models as _engine_models
+from cite_check_engine import export_provenance as _engine_export_provenance
+from cite_check_engine import quality as _engine_quality
 from cite_check_engine import budgets as _engine_budgets
 from cite_check_engine import credentials as _engine_credentials
 from cite_check_engine import discovery as _engine_discovery
@@ -91,6 +95,8 @@ def _official_bibtex(rec: _engine_models.Work, prefer=None, journal_format: int 
                 bib, label = _engine_registry_clients._github_bibtex(rec)
             else:
                 continue
+        except _engine_budgets.BudgetExhaustedError:
+            raise
         except RuntimeError as exc:
             tried.append(f"{src}: {exc}")
             continue
@@ -98,23 +104,31 @@ def _official_bibtex(rec: _engine_models.Work, prefer=None, journal_format: int 
             tried.append(f"{src}: version '{rec['pin']}' is not a tag, branch or commit of {rec['github']}"
                          if src == "github" and rec.get("pin") else f"{src}: no export")
             continue
-        parsed = _engine_parsing._parse_bib(bib)["entries"]
-        if not parsed:
-            tried.append(f"{src}: unparsable export")
+        if not isinstance(bib, str) or len(bib.encode("utf-8")) > _engine_export_provenance.MAX_EXPORT_BYTES or "\ufffd" in bib:
+            tried.append(f"{src}: invalid or oversized export text")
             continue
-        entry = parsed[0]
+        parsed = _engine_parsing._parse_bib(bib)
+        if not parsed["complete"] or len(parsed["entries"]) != 1:
+            tried.append(f"{src}: export must contain one complete entry")
+            continue
+        entry = parsed["entries"][0]
         if rec.get("arxiv_version") and _engine_parsing._entry_arxiv_version(entry) != rec["arxiv_version"]:
             tried.append(
                 f"{src}: official export omits the requested version "
                 f"{rec['arxiv_version']} — refusing to drop the pin"
             )
             continue
+        if not _export_identity_matches(entry, rec):
+            tried.append(f"{src}: export identifier conflicts with resolved record")
+            continue
         sim = _engine_text._title_sim(rec.get("title", ""), entry["fields"].get("title", ""))
         if rec.get("title") and entry["fields"].get("title") and sim < 0.6 and not (
                 rec.get("github") and _names_repo(entry["fields"]["title"], typing.cast(str, rec["github"]))):
             tried.append(f"{src}: export title mismatch ({sim})")
             continue
-        return {"bibtex": _sanitize_bibtex(entry, rec), "source": label, "title_similarity": sim, "tried": tried}
+        return {"bibtex": _sanitize_bibtex(entry, rec), "raw_export": bib,
+                "origin": "tool-generated-software-entry" if src == "github" else "registry-export-text",
+                "source": label, "title_similarity": sim, "tried": tried}
     return {"bibtex": None, "source": None, "tried": tried}
 
 _MONTHS = {"jan": "jan", "january": "jan", "feb": "feb", "february": "feb", "mar": "mar", "march": "mar",
@@ -153,13 +167,254 @@ def _sanitize_bibtex(entry: dict, rec: typing.Mapping[str, typing.Any]) -> str:
 def _rewrite_key(bibtex: str, key: str) -> str:
     return re.sub(r"^(\s*@\w+\s*[{(]\s*)[^,\s]*(\s*,)", lambda m: m.group(1) + key + m.group(2), bibtex, count=1)
 
-def _prov_comment(rec: typing.Mapping[str, typing.Any], source: str) -> str:
-    title = re.sub(r"[{}@\n\"]", " ", rec.get("title", ""))[:100].strip()
-    pin = f"; version={rec['pin']}" if rec.get("github") and rec.get("pin") else ""
+def _prov_comment(
+    rec: typing.Mapping[str, typing.Any],
+    source: str,
+    proof: dict[str, typing.Any] | None = None,
+) -> str:
+    title = re.sub(r"[{}@;\n\"]", " ", rec.get("title", ""))[:100].strip()
+    pin = (
+        f"; version={urllib.parse.quote(str(rec['pin']), safe='')}"
+        if rec.get("github") and rec.get("pin")
+        else ""
+    )
     if rec.get("pinned_sha"):
         pin += f"; commit={rec['pinned_sha']}"
-    body = f'cite-check: source={source}; id={_engine_identifiers._canonical(rec)}{pin}; fetched={_engine_persistence._today()}; title="{title}"'
+    proof_fields = ""
+    fetched = _engine_persistence._today()
+    if proof:
+        proof_fields = (
+            f"; receipt={proof['receipt']}; raw_sha256={proof['raw_sha256']}"
+            f"; entry_sha256={proof['entry_sha256']}; export_policy={proof['policy']}"
+        )
+        fetched = proof["created"][:10]
+    body = f'cite-check: source={source}; id={_engine_identifiers._canonical(rec)}{pin}; fetched={fetched}{proof_fields}; title="{title}"'
     return "@comment{" + body.replace("@", "(at)") + "}"
+
+
+def _export_identity_matches(
+    entry: dict[str, typing.Any], rec: typing.Mapping[str, typing.Any]
+) -> bool:
+    """Reject explicit conflicting IDs; missing export fields are not invented."""
+    ids = _engine_parsing._entry_ids(entry)
+    for kind in ("doi", "arxiv", "bibcode", "github"):
+        if (
+            ids.get(kind)
+            and rec.get(kind)
+            and str(ids[kind]).lower() != str(rec[kind]).lower()
+        ):
+            return False
+    if (
+        rec.get("arxiv_version")
+        and _engine_parsing._entry_arxiv_version(entry) != rec["arxiv_version"]
+    ):
+        return False
+    if rec.get("pinned_sha"):
+        sha = rec["pinned_sha"]
+        url = urllib.parse.urlparse(entry["fields"].get("url", ""))
+        expected = f"/{rec.get('github')}/tree/{sha}"
+        if (
+            not isinstance(sha, str)
+            or not re.fullmatch(r"[a-f0-9]{40}", sha)
+            or url.scheme != "https"
+            or url.hostname != "github.com"
+            or urllib.parse.unquote(url.path).lower() != expected.lower()
+            or url.query
+            or url.fragment
+        ):
+            return False
+    return True
+
+
+def _make_export_proof(
+    rec: typing.Mapping[str, typing.Any],
+    got: dict[str, typing.Any],
+    bib: str,
+    request: dict[str, typing.Any],
+    bib_path: str | None = None,
+    tex_path: str | None = None,
+) -> dict[str, typing.Any]:
+    """Capture the actual export and the exact allowed emitted-entry result."""
+    raw = got.get("raw_export")
+    if not isinstance(raw, str):
+        raise ValueError("original official export is unavailable")
+    parsed = _engine_parsing._parse_bib(bib)
+    if (
+        not parsed["complete"]
+        or len(parsed["entries"]) != 1
+        or parsed["entries"][0]["raw"] != bib
+    ):
+        raise ValueError(
+            "emitted bibliography must be exactly one complete entry"
+        )
+    if (
+        max(len(raw.encode("utf-8")), len(bib.encode("utf-8")))
+        > _engine_export_provenance.MAX_EXPORT_BYTES
+    ):
+        raise ValueError("export entry exceeds the 1 MiB bound")
+    record = {
+        name: rec[name]
+        for name in (
+            *_engine_resolution._ID_KEYS,
+            "title",
+            "authors",
+            "repo",
+            "pin",
+            "pinned_sha",
+            "pinned_date",
+            "requested_version",
+            "arxiv_version",
+        )
+        if name in rec
+    }
+    payload = {
+        "policy": _engine_export_provenance.POLICY,
+        "transform": _engine_export_provenance.TRANSFORM,
+        "source": got["source"],
+        "origin": got["origin"],
+        "record": record,
+        "request": request,
+        "raw_export": raw,
+        "raw_sha256": _engine_export_provenance.digest(raw),
+        "entry": bib,
+        "entry_sha256": _engine_export_provenance.digest(bib),
+        "key": parsed["entries"][0]["key"],
+        "created": _engine_persistence._now_iso(),
+    }
+    _check_receipt_facts(payload)
+    proof = _engine_export_provenance.publish(
+        payload, bib_path, [tex_path] if tex_path else []
+    )
+    proof["created"] = payload["created"]
+    return proof
+
+
+def _check_receipt_facts(payload: dict[str, typing.Any]) -> None:
+    """Check request/record binding without re-resolving mutable versions."""
+    rec, request = payload["record"], payload["request"]
+    if (
+        payload["source"] not in _DEFAULT_PREFER + ["citation-cff"]
+        or set(request)
+        != {"identifier", "version", "prefer", "journal_format", "max_author"}
+        or not isinstance(request["identifier"], str)
+        or not request["identifier"].strip()
+        or (
+            request["version"] is not None
+            and not isinstance(request["version"], str)
+        )
+        or (
+            request["prefer"] is not None
+            and (
+                not isinstance(request["prefer"], list)
+                or any(
+                    not isinstance(value, str) for value in request["prefer"]
+                )
+            )
+        )
+        or type(request["journal_format"]) is not int
+        or type(request["max_author"]) is not int
+        or not isinstance(rec.get("title"), str)
+        or (
+            rec.get("authors") is not None
+            and (
+                not isinstance(rec["authors"], list)
+                or any(not isinstance(value, str) for value in rec["authors"])
+            )
+        )
+    ):
+        raise ValueError("invalid source, request or record snapshot")
+    datetime.datetime.strptime(payload["created"], "%Y-%m-%dT%H:%M:%SZ")
+    kind, value = _engine_identifiers._classify(request["identifier"])
+    if (
+        kind == "unknown"
+        or not isinstance(rec.get(kind), str)
+        or str(rec[kind]).lower() != value.lower()
+    ):
+        raise ValueError(
+            "export request identifier differs from record aliases"
+        )
+    if rec.get("github"):
+        match = _engine_identifiers._GITHUB_REF.search(request["identifier"])
+        requested = request["version"] or (
+            urllib.parse.unquote(match.group(1)) if match else None
+        )
+        if requested and requested != rec.get("requested_version"):
+            raise ValueError(
+                "requested repository version differs from receipt"
+            )
+        sha, pin = rec.get("pinned_sha"), rec.get("pin")
+        if (
+            not isinstance(sha, str)
+            or not re.fullmatch(r"[a-f0-9]{40}", sha)
+            or not isinstance(pin, str)
+            or not pin
+            or pin != rec.get("requested_version")
+            or (not requested and pin != sha)
+        ):
+            raise ValueError(
+                "repository pin facts are incomplete or inconsistent"
+            )
+    elif rec.get("arxiv"):
+        match = re.search(
+            _engine_identifiers._ARXIV_CORE + r"v\d+",
+            request["identifier"],
+            re.I,
+        )
+        requested = request["version"] or (match.group(0) if match else None)
+        if requested:
+            if re.fullmatch(r"v[1-9]\d*", requested, re.I):
+                requested = rec["arxiv"] + requested
+            if requested.lower() != str(rec.get("arxiv_version", "")).lower():
+                raise ValueError("requested arXiv version differs from receipt")
+
+
+def _check_export_provenance(
+    entry: dict[str, typing.Any], bib_path: str
+) -> dict[str, typing.Any]:
+    """Replay allowed transformations offline against a bound local receipt."""
+    checked = _engine_export_provenance.inspect(entry, bib_path)
+    payload = checked.pop("payload", None)
+    if payload is None:
+        return checked
+    try:
+        _check_receipt_facts(payload)
+        rec, prov = payload["record"], entry["provenance"]
+        if (
+            payload["source"] != prov.get("source")
+            or _engine_identifiers._canonical(rec) != prov.get("id")
+            or payload["created"][:10] != prov.get("fetched")
+            or (rec.get("pinned_sha") or None) != (prov.get("commit") or None)
+            or (
+                str(rec.get("pin"))
+                if rec.get("github") and rec.get("pin")
+                else None
+            )
+            != (
+                urllib.parse.unquote(prov["version"])
+                if prov.get("version")
+                else None
+            )
+        ):
+            raise ValueError(
+                "export receipt source, identity or version differs"
+            )
+        software = payload["source"] in {"github", "citation-cff"}
+        if software != (payload["origin"] == "tool-generated-software-entry"):
+            raise ValueError("export origin differs from source")
+        raw = _engine_parsing._parse_bib(payload["raw_export"])
+        if not raw["complete"] or len(raw["entries"]) != 1:
+            raise ValueError("receipt raw export is not one complete entry")
+        original = raw["entries"][0]
+        if not _export_identity_matches(original, rec):
+            raise ValueError("raw export identifier or pin differs")
+        replay = _rewrite_key(_sanitize_bibtex(original, rec), payload["key"])
+        if replay != payload["entry"]:
+            raise ValueError(
+                "emitted entry does not derive from the recorded export"
+            )
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        checked.update(status="MISMATCH", detail=str(error))
+    return checked
 
 def _default_key(rec: typing.Mapping[str, typing.Any], existing: set) -> str:
     fam = re.sub(r"[^a-z]", "", _engine_text._surname(rec["authors"][0]) if rec.get("authors") else "") or "anon"
@@ -182,6 +437,8 @@ def fetch_bibtex(identifier: str, key: str | None = None, prefer: list[str] | No
     auto-detected from tex_path's documentclass when omitted. bibtex=null means
     no registry exports one: do not hand-write it.
     """
+    if key is not None and (not isinstance(key, str) or not key or re.search(r"[\s,{}()=]", key)):
+        return {"bibtex": None, "resolved": False, "reason": "invalid bibliography key"}
     rec = _engine_resolution._full_record(identifier)
     if rec is None:
         r = _engine_resolution.resolve_citation(identifier)
@@ -198,9 +455,16 @@ def fetch_bibtex(identifier: str, key: str | None = None, prefer: list[str] | No
                 "reason": ("no registry offers a BibTeX export for this record — do not hand-write "
                            "one; cite a version that has a DOI or arXiv id, or record the gap")}
     bib = _rewrite_key(got["bibtex"], key) if key else got["bibtex"]
+    try:
+        proof = _make_export_proof(rec, got, bib, {
+            "identifier": identifier, "version": version, "prefer": prefer,
+            "journal_format": jf, "max_author": max_author,
+        }, tex_path=tex_path)
+    except (OSError, ValueError, TypeError, _engine_quality.SourceLimitError) as error:
+        return {"bibtex": None, "resolved": True, "reason": str(error)}
     return dict({"bibtex": bib, "key": _engine_parsing._parse_bib(bib)["entries"][0]["key"], "source": got["source"],
                  "id": _engine_identifiers._canonical(rec), "ids": {k: typing.cast(typing.Mapping[str, typing.Any], rec)[k] for k in _engine_resolution._ID_KEYS if rec.get(k)},
-                 "title": rec["title"], "provenance": _prov_comment(rec, got["source"]), "tried": got["tried"]},
+                 "title": rec["title"], "provenance": _prov_comment(rec, got["source"], proof), "export_provenance": proof, "tried": got["tried"]},
                 **_repo_advice(rec))
 
 def _repo_advice(rec: typing.Mapping[str, typing.Any]) -> dict:
@@ -232,8 +496,11 @@ def bib_add(bib_path: str, items: list[_engine_models.BibliographyItem | str], p
     bib_path = os.path.realpath(bib_path)
     text = ""
     if os.path.exists(bib_path):
-        with open(bib_path, errors="replace") as fh:
-            text = fh.read()
+        try:
+            with open(bib_path, encoding="utf-8", newline="") as fh:
+                text = fh.read()
+        except (OSError, UnicodeError) as error:
+            return {"ok": False, "error": str(error), "results": []}
     if isinstance(items, (str, dict)):
         items = [items]
     if not isinstance(items, list) or not items:
@@ -307,7 +574,16 @@ def bib_add(bib_path: str, items: list[_engine_models.BibliographyItem | str], p
         if not got["bibtex"]:
             results.append({"identifier": ident, "key": key, "status": "no-official-bibtex", "tried": got["tried"]})
             continue
-        block = _prov_comment(rec, got["source"]) + "\n" + _rewrite_key(got["bibtex"], key).strip() + "\n"
+        emitted = _rewrite_key(got["bibtex"], key).strip()
+        try:
+            proof = _make_export_proof(rec, got, emitted, {
+                "identifier": ident, "version": item.get("version"),
+                "prefer": prefer, "journal_format": jf, "max_author": max_author,
+            }, bib_path, tex_path)
+        except (OSError, ValueError, TypeError, _engine_quality.SourceLimitError) as error:
+            results.append({"identifier": ident, "key": key, "status": "provenance-error", "note": str(error)})
+            continue
+        block = _prov_comment(rec, got["source"], proof) + "\n" + emitted + "\n"
         status = "replaced" if key in parsed["keys"] else "added"
         (replacements.__setitem__(key, block) if status == "replaced" else additions.append((key, block)))
         taken.add(key)
@@ -315,7 +591,7 @@ def bib_add(bib_path: str, items: list[_engine_models.BibliographyItem | str], p
             if rec.get(k):
                 by_id[f"{k}:{typing.cast(typing.Mapping[str, typing.Any], rec)[k].lower()}"] = key
         results.append(dict({"identifier": ident, "key": key, "status": status, "source": got["source"],
-                             "id": _engine_identifiers._canonical(rec), "title": rec["title"]}, **_repo_advice(rec)))
+                             "id": _engine_identifiers._canonical(rec), "title": rec["title"], "export_provenance": proof}, **_repo_advice(rec)))
     accepted = {"added", "replaced", "exists", "duplicate"}
     if any(result["status"] not in accepted for result in results):
         for result in results:
@@ -1119,8 +1395,11 @@ def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | Non
     bib_path = os.path.abspath(bib_path)
     if not os.path.exists(bib_path):
         return {"error": f"{bib_path} not found"}
-    with open(bib_path, errors="replace") as fh:
-        parsed = _engine_parsing._parse_bib(fh.read())
+    try:
+        with open(bib_path, encoding="utf-8", newline="") as fh:
+            parsed = _engine_parsing._parse_bib(fh.read())
+    except (OSError, UnicodeError) as error:
+        return {"ok": False, "complete": False, "error": str(error), "entries": [], "n": 0}
     if not parsed["complete"]:
         return {"ok": False, "complete": False, "error": "; ".join(parsed["errors"]),
                 "entries": [], "n": 0, "parse_errors": parsed["errors"]}

@@ -22,14 +22,15 @@ establish readiness. Re-run the audit on the final manuscript.
 
 Every cited bibliography entry must be `VERIFIED`, with a well-formed
 provenance declaration naming a known export source, identifier, and fetch
-date. Its identifier must match the verified work or one of its resolved
-aliases. This is **declared provenance, not export-digest verification**:
-the present policy does not prove that the entry's bytes remain unchanged.
-`FOUND`/`PROBABLE`, missing declarations, malformed declarations, and
-identifier disagreements require resolution before submission.
+date, plus a valid digest-bound export receipt. Its identifier must match the
+verified work or one of its resolved aliases. The receipt checks the original
+export, permitted tool transformations and exact current entry. Legacy
+comments alone, missing/corrupt receipts, edited entries, `FOUND`/`PROBABLE`,
+and identifier disagreements require resolution before submission. See
+`export-provenance.md` for storage, migration and the local-integrity limits.
 
 Every current atom/occurrence must have a fresh `SUPPORTS` judgment from
-full text. A verified canonical GitHub repository may instead use its
+full text with usable extraction quality. A verified canonical GitHub repository may instead use its
 primary README/CITATION.cff record (`basis="readme"`); the judge still must
 check the exact cited property and version. A README cannot certify a paper.
 Abstract-only `SUPPORTS` remains limited evidence and does not establish
@@ -58,9 +59,11 @@ assessments happen to meet all evidence criteria.
   result rows. Counts distinguish `VERIFIED`, `FOUND`, `PROBABLE`,
   `MISMATCH`, `NOT_FOUND`, `UNRESOLVED`, `UNCHECKED`, and `UNDEFINED`.
 - **Provenance:** every cited key, checked directly from parsed entries even
-  with `verify=false`. Counts distinguish `DECLARED`, `UNOFFICIAL`,
-  `MALFORMED`, `MISMATCH`, and `UNDEFINED`. `declared` and `declaration_rate`
-  never claim cryptographic verification; `assurance` states the limit.
+  with `verify=false`. Counts distinguish digest-verified entries, legacy
+  declarations, missing or corrupt receipts, edited entries and identity
+  disagreements. `declared` and `declaration_rate` remain separate from
+  verified counts; `assurance` describes local export-integrity checking,
+  not a registry's digital signature.
 - **Support:** every current atom/citation attachment, or a whole-sentence
   occurrence outside atomic mode. Missing and stale work stays expected;
   inaccessible triage is `INACCESSIBLE`. `basis_counts` distinguishes the
