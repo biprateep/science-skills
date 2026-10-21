@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "skill": "slides-style",
+  "cases": [
+    {
+      "id": "review-deck-scenarios",
+      "description": "Starter coverage: rule review of three described decks, one compliant with every house exception, one breaking eight rules, one breaking three; not building, rendering or visual judgement.",
+      "prompt": "review-deck-scenarios/prompt.md",
+      "inputs": "review-deck-scenarios/input",
+      "reference": "review-deck-scenarios/reference",
+      "capabilities": [
+        "filesystem"
+      ],
+      "tags": [
+        "starter",
+        "offline"
+      ],
+      "timeout_s": 120,
+      "checks": [
+        {
+          "id": "a",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/A",
+          "expected": []
+        },
+        {
+          "id": "b",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/B",
+          "expected": [
+            "bullets",
+            "chrome",
+            "font",
+            "notes",
+            "shrink",
+            "sub-bullets",
+            "text-size",
+            "title-bold"
+          ]
+        },
+        {
+          "id": "c",
+          "kind": "json_equals",
+          "dimension": "task_success",
+          "critical": true,
+          "pointer": "/C",
+          "expected": [
+            "bullets",
+            "chart",
+            "title-period"
+          ]
+        }
+      ]
+    }
+  ]
+}

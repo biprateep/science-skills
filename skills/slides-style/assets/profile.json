@@ -1,0 +1,21 @@
+{
+  "name": "Biprateep Dey",
+  "name_line": "Biprateep Dey | বিপ্রতীপ দে",
+  "email": "b.dey@utoronto.ca",
+  "website": "https://biprateep.de",
+  "affiliation": "University of Toronto",
+  "title_logos": [
+    "logo/uoft-statistical-sciences",
+    "logo/cita",
+    "logo/uoft-dunlap",
+    "logo/vector"
+  ],
+  "funder_logos": [
+    "logo/schmidt-sciences"
+  ],
+  "fellowship": "Biprateep Dey is a postdoctoral fellow at the University of Toronto in the Eric and Wendy Schmidt AI in Science Postdoctoral Fellowship Program, a program of Schmidt Sciences.",
+  "closing": [
+    "Thanks for your attention!",
+    "Have questions, comments or want to collaborate?"
+  ]
+}

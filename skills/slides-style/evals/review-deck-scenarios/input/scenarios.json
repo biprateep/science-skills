@@ -1,0 +1,247 @@
+{
+ "A": [
+  {
+   "kind": "title",
+   "title": "Cosmic Cartography: Photometric Redshifts",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": false,
+   "runs": [
+    {
+     "size_pt": 44,
+     "font": "Aptos Display",
+     "role": "title"
+    },
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "name line"
+    },
+    {
+     "size_pt": 24,
+     "font": "Vrinda",
+     "role": "Bengali name"
+    },
+    {
+     "size_pt": 10,
+     "font": "Aptos",
+     "role": "image credit"
+    }
+   ]
+  },
+  {
+   "kind": "acknowledgements",
+   "title": "Acknowledgements",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": true,
+   "runs": [
+    {
+     "size_pt": 20,
+     "font": "Aptos",
+     "role": "label"
+    },
+    {
+     "size_pt": 16,
+     "font": "Aptos",
+     "role": "headshot caption"
+    },
+    {
+     "size_pt": 10,
+     "font": "Aptos",
+     "role": "fellowship credit"
+    }
+   ]
+  },
+  {
+   "kind": "statement",
+   "title": null,
+   "dash": false,
+   "slide_number": false,
+   "runs": [
+    {
+     "size_pt": 40,
+     "font": "Aptos",
+     "role": "statement"
+    }
+   ]
+  },
+  {
+   "kind": "content",
+   "title": "Measuring Galaxy Redshift",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": true,
+   "figure": true,
+   "runs": [
+    {
+     "size_pt": 40,
+     "font": "Aptos Display",
+     "role": "title"
+    },
+    {
+     "size_pt": 20,
+     "font": "Aptos",
+     "role": "label"
+    },
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "takeaway"
+    },
+    {
+     "size_pt": 28,
+     "font": "Cambria Math",
+     "role": "equation"
+    },
+    {
+     "size_pt": 10,
+     "font": "Aptos",
+     "role": "image credit"
+    }
+   ]
+  },
+  {
+   "kind": "summary",
+   "title": "Summary",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": true,
+   "bullets": 4,
+   "sub_bullets": 0,
+   "runs": [
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "label"
+    },
+    {
+     "size_pt": 18,
+     "font": "Aptos",
+     "role": "references"
+    },
+    {
+     "size_pt": 20,
+     "font": "Aptos",
+     "role": "closing"
+    }
+   ]
+  },
+  {
+   "kind": "divider",
+   "title": null,
+   "dash": true,
+   "slide_number": false,
+   "runs": [
+    {
+     "size_pt": 32,
+     "font": "Aptos",
+     "role": "divider label"
+    }
+   ]
+  }
+ ],
+ "B": [
+  {
+   "kind": "content",
+   "title": "Training on Synthetic Data",
+   "title_bold": true,
+   "dash": true,
+   "slide_number": true,
+   "figure": true,
+   "runs": [
+    {
+     "size_pt": 40,
+     "font": "Open Sans",
+     "role": "title"
+    },
+    {
+     "size_pt": 14,
+     "font": "Open Sans",
+     "role": "label"
+    },
+    {
+     "size_pt": 12,
+     "font": "JetBrains Mono",
+     "role": "code"
+    }
+   ],
+   "notes_words": 105
+  },
+  {
+   "kind": "content",
+   "title": "What TFMs Cannot Do",
+   "title_bold": false,
+   "dash": false,
+   "slide_number": true,
+   "figure": false,
+   "bullets": 4,
+   "sub_bullets": 1,
+   "autofit": "shrink to 90%",
+   "runs": [
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "label"
+    }
+   ]
+  }
+ ],
+ "C": [
+  {
+   "kind": "content",
+   "title": "Results: Redshift Success Rates.",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": true,
+   "figure": false,
+   "native_chart": true,
+   "runs": [
+    {
+     "size_pt": 40,
+     "font": "Aptos Display",
+     "role": "title"
+    },
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "label"
+    },
+    {
+     "size_pt": 9,
+     "font": "Aptos",
+     "role": "citation"
+    }
+   ]
+  },
+  {
+   "kind": "statement",
+   "title": null,
+   "dash": false,
+   "slide_number": false,
+   "runs": [
+    {
+     "size_pt": 40,
+     "font": "Aptos",
+     "role": "statement"
+    }
+   ]
+  },
+  {
+   "kind": "summary",
+   "title": "Summary",
+   "title_bold": false,
+   "dash": true,
+   "slide_number": true,
+   "bullets": 6,
+   "sub_bullets": 0,
+   "runs": [
+    {
+     "size_pt": 24,
+     "font": "Aptos",
+     "role": "label"
+    }
+   ]
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 # Science Skills
 
-This repository contains a collection of AI agent skills tailored for scientific research: brainstorming, mathematical derivation, prototyping, code style, publication figures, citation integrity and paper writing.
+This repository contains a collection of AI agent skills tailored for scientific research: brainstorming, mathematical derivation, prototyping, code style, publication figures, presentation slides, citation integrity and paper writing.
 
 ## Note on Customization
 
@@ -15,9 +15,9 @@ Code**, **OpenAI Codex**, **Google Antigravity** and other harnesses. The two
 that ship an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness
 Adapter* — a capability map at the top of the skill that the agent resolves to
 its own tools at runtime, with a CLI fallback that runs the same code. The
-others (`code-style`, `co-writer`, `jupytext`, `plot-style`) need only file
-access and a shell with Python 3 (`code-style` runs its checks through
-[uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
+others (`code-style`, `co-writer`, `jupytext`, `plot-style`, `slides-style`)
+need only file access and a shell with Python 3 (`code-style` and
+`slides-style` run their tools through [uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
 to further frameworks by adding a column to a map.
 
 ## Evaluation
@@ -150,7 +150,7 @@ codex mcp list | grep -E 'co-scientist|cite-check'    # enabled
 ```
 
 In a fresh Claude Code session, `/co-scientist`, `/cite-check`, `/co-writer`,
-`/code-style`, `/jupytext` and `/plot-style` should appear; in Codex they are
+`/code-style`, `/jupytext`, `/plot-style` and `/slides-style` should appear; in Codex they are
 listed to the agent and can be named in a prompt (`$co-scientist`, …); in
 Antigravity the skills show up in the skills menu.
 
@@ -393,6 +393,30 @@ the figure code in real AASTeX (AJ/ApJ) manuscripts. Key features:
   silently fell back to anything but Computer Modern, and `scripts/check_plot_style.py` lints a
   plotting script for invented figure sizes, vector output, boxed legends,
   hand-picked colours, unrequested third-party palettes and numeric font sizes.
+
+### Slides Style (`skills/slides-style`)
+Enforces the author's presentation style on every deck, measured from the XML of
+eleven of their talks (2021-2026), with lessons from two Claude-made decks. Key
+features:
+- **The figure is the slide**: one figure covering a third to a half of the
+  slide, a few 2-8-word labels with thin arrows into it, one bold takeaway, a
+  small credit line; no bullets outside the summary, no cards, icons or
+  decoration, nothing between 12 and 17 pt.
+- **House chrome**: 16:9 white slides, the title top-left in Title Case at
+  40 pt, a short blue dash under it and a small slide number, as in the
+  author's own theme; a fixed title, acknowledgements and summary formula from
+  a committed text profile, with logos and headshots kept in a local,
+  uncommitted assets folder.
+- **Two targets, one rule set**: Claude Slides artifacts (Noto Sans) and
+  PowerPoint .pptx built with python-pptx (Aptos) from a regenerable template
+  (`assets/slidestyle.py`, `assets/template.pptx`).
+- **Native equations**: PowerPoint's own editable equations, converted from
+  LaTeX by pandoc, with a rendered fallback picture; outline SVGs for stacked
+  math in Claude Slides.
+- **Enforced, not narrated**: `scripts/check_slides.py` checks a .pptx for
+  off-face fonts, text sizes, bold or punctuated titles, title drift, bullets,
+  missing chrome, shrink-to-fit, native charts and speaker notes, and
+  `scripts/render_deck.py` renders every slide for a visual pass.
 
 ## Acknowledgments and Sources
 

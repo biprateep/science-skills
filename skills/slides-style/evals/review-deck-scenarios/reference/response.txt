@@ -1,0 +1,18 @@
+{
+  "A": [],
+  "B": [
+    "bullets",
+    "chrome",
+    "font",
+    "notes",
+    "shrink",
+    "sub-bullets",
+    "text-size",
+    "title-bold"
+  ],
+  "C": [
+    "bullets",
+    "chart",
+    "title-period"
+  ]
+}
