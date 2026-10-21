@@ -89,3 +89,6 @@ internal validators when changing their contracts.
 The compatibility checks cover public schemas, module ownership, entry-point
 imports, symlink/arbitrary-directory execution and the PDF worker. Existing
 citation regressions continue to cover the scientific and persistence rules.
+
+For the enforced SDK/Python matrix, zero-skip runner and separate live-provider
+checks, see [regression-ci.md](regression-ci.md).

@@ -1,0 +1,26 @@
+name: Citation provider availability (manual)
+
+# Public service observations are not a deterministic regression or merge gate.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: citation-provider-availability
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  public-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probe three public registry fixtures (no secrets or model calls)
+        run: >-
+          timeout --signal=TERM --kill-after=10s 90s
+          python skills/cite-check/tests/public_live_probes.py --live

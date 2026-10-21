@@ -1,0 +1,79 @@
+name: Citation regression
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: citation-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Python ${{ matrix.python }} / MCP ${{ matrix.sdk }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: '3.10'
+            sdk: 1
+            requirement: 'mcp>=1.2,<2'
+            integration: false
+          - python: '3.13'
+            sdk: 1
+            requirement: 'mcp>=1.2,<2'
+            integration: false
+          - python: '3.12'
+            sdk: 2
+            requirement: 'mcp>=2,<3'
+            integration: true
+          - python: '3.13'
+            sdk: 2
+            requirement: 'mcp>=2,<3'
+            integration: false
+    env:
+      CITE_CHECK_KEYRING: file
+      PYTHONHASHSEED: '0'
+      ADS_API_TOKEN: ''
+      ADS_DEV_KEY: ''
+      ADS_TOKEN: ''
+      GITHUB_TOKEN: ''
+      GH_TOKEN: ''
+      CITE_CHECK_MAILTO: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Isolate citation cache and configuration
+        run: |
+          printf 'CITE_CHECK_CACHE=%s/citation-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XDG_CONFIG_HOME=%s/citation-config\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install declared test dependencies and selected SDK
+        run: >-
+          python -m pip install
+          -r skills/cite-check/mcp/requirements.txt
+          -r skills/co-scientist/mcp/requirements.txt
+          '${{ matrix.requirement }}' 'pytest>=8,<10'
+      - name: Full citation regression (no skipped tests)
+        run: >-
+          timeout --signal=TERM --kill-after=10s 300s
+          python skills/cite-check/tests/run_regression.py
+          --sdk-major ${{ matrix.sdk }}
+      - name: Offline citation CLI smoke
+        run: |
+          export CITE_CHECK_TEST_PYTHON="$(command -v python)"
+          timeout --signal=TERM --kill-after=10s 300s bash skills/cite-check/tests/verify_mcp.sh
+      - name: Installer and co-scientist integration
+        if: matrix.integration
+        run: |
+          timeout --signal=TERM --kill-after=10s 300s python -m pytest scripts/tests -q
+          timeout --signal=TERM --kill-after=10s 300s python -m unittest discover -s skills/co-scientist/tests -p 'test_*.py' -v
+          export CITE_CHECK_TEST_PYTHON="$(command -v python)"
+          timeout --signal=TERM --kill-after=10s 300s bash skills/co-scientist/tests/verify_mcp.sh

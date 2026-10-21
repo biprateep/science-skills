@@ -11,8 +11,16 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER="$HERE/../mcp/server.py"
-PY="$HERE/../mcp/.venv/bin/python"
-[ -x "$PY" ] || PY="$(command -v python3)"
+if [ -n "${CITE_CHECK_TEST_PYTHON:-}" ]; then
+    PY="$CITE_CHECK_TEST_PYTHON"
+    if [ ! -x "$PY" ] || [ -d "$PY" ]; then
+        echo "CITE_CHECK_TEST_PYTHON must name an executable Python path" >&2
+        exit 2
+    fi
+else
+    PY="$HERE/../mcp/.venv/bin/python"
+    [ -x "$PY" ] || PY="$(command -v python3)"
+fi
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 

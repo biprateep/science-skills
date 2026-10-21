@@ -285,6 +285,7 @@ def test_shell_skill_install_and_uninstall(tmp_path: pathlib.Path) -> None:
     targets = {
         "CLAUDE_CONFIG_DIR": tmp_path / "claude",
         "GEMINI_CONFIG_DIR": tmp_path / "gemini",
+        "CODEX_HOME": tmp_path / "codex",
         "AGENTS_SKILLS_DIR": tmp_path / "agents",
     }
     for path in targets.values():
