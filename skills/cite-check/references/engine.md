@@ -17,7 +17,7 @@ atomic claim or weaken strict audit readiness.
 | Shared contracts and state | `models`, `config`, `budgets` | Wire shapes, public request dataclasses, configuration and the request-budget context/controller |
 | Low-level operations | `identifiers`, `text`, `parsing`, `persistence` | Identifier normalization, text utilities, BibTeX parsing, locks and atomic file operations |
 | Network and credentials | `transport`, `network_pool`, `credentials` | HTTP/cache/retry/throttle behavior, pooled connections and secret access/storage |
-| Registry work | `registry_clients`, `resolution`, `discovery`, `bibliography`, `export_provenance` | Provider adapters, canonical identity/version resolution, candidate ranking, official exports, bounded receipts and bibliography checks |
+| Registry work | `registry_clients`, `resolution`, `discovery`, `bibliography`, `export_provenance`, `publication_status` | Provider adapters, canonical identity/version resolution, candidate ranking, official exports, bounded receipts, directional publication updates and bibliography checks |
 | Manuscripts and evidence | `manuscripts`, `acquisition`, `evidence` | Input extraction/mappings, source retrieval/snapshots, atomic claims and stored independent judgments |
 | Audit and reports | `findings`, `reports`, `freshness`, `audit`, `reporting`, `jobs` | Finding construction, pure rendering, snapshot checks, audit/report orchestration and resumable verification |
 | Entry points | `api`, `admin` | Static tool registration, CLI/native MCP dispatch, ping and key-management commands |

@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.13.0"
+  version: "0.14.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -50,7 +50,8 @@ agent's job is to call them and act on what comes back. Maintainers can find
 the module and validation boundaries in `references/engine.md`. Source quality,
 bounded acquisition and preview limits are described in
 `references/extraction-quality.md`. Connection reuse, request isolation and
-retry accounting are documented in `references/acquisition-efficiency.md`.
+retry accounting are documented in `references/acquisition-efficiency.md`. Post-publication updates, relation
+direction and coverage limits are described in `references/publication-status.md`.
 Export receipt validation and migration from older provenance comments are
 documented in `references/export-provenance.md`.
 

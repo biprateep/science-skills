@@ -4,7 +4,7 @@ import os
 import threading
 
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 
 CACHE_DIR = os.environ.get("CITE_CHECK_CACHE") or os.path.join(
     os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "cite-check")

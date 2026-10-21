@@ -43,6 +43,16 @@ report contains a configuration failure. Explicitly uncited author/context
 atoms remain visible and unverified; they are not citation-support successes
 and do not falsely require a paper to support the authors' own results.
 
+## Publication updates
+
+Crossref publication-status metadata is reported separately from existence.
+A known retraction blocks strict readiness; corrections and expressions of
+concern prompt review of the notice and affected claim. Missing or unavailable
+metadata is not proof of an unaffected paper. A notice pointing to a retracted
+paper is not itself labeled retracted on that basis. See
+[publication-status.md](publication-status.md) for direction, source attribution
+and cache/coverage limits.
+
 ## Exploratory
 
 Unverified existence, undeclared provenance, partial support, inaccessible

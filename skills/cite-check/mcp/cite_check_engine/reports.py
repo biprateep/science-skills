@@ -44,6 +44,7 @@ def _corrections_markdown(report: dict[str, Any]) -> str:
             ("Original sentence", item["claim"]),
             ("Context", item["context"]),
             ("Finding", item["detail"]),
+            ("Publication status", item.get("publication_status")),
             ("Evidence", item["source_evidence"]),
             ("Unapproved proposal", item["proposed_correction"]),
         ):
@@ -125,6 +126,7 @@ def _corrections_html(report: dict[str, Any], sources: dict[str, str]) -> str:
             ("Original sentence", item["claim"]),
             ("Context", item["context"]),
             ("Finding", item["detail"]),
+            ("Publication status", item.get("publication_status")),
             ("Next action", item["next_action"]["instruction"]),
         ):
             if value is not None:
@@ -228,8 +230,8 @@ def _audit_markdown(rep: dict[str, Any], ver: dict[str, Any], coverage: dict[str
     lines += [
         "",
         "Assessment includes negative and inaccessible outcomes; "
-        "it is not a readiness claim. Provenance is declared, not "
-        "digest-verified.",
+        "it is not a readiness claim. Provenance verification checks local "
+        "export receipts, not registry signatures.",
         "",
     ]
     for title, items in (
