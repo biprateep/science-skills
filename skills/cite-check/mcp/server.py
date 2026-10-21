@@ -45,7 +45,7 @@ from html.parser import HTMLParser
 from typing import Any, Literal
 from collections.abc import Callable
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -65,6 +65,8 @@ _HOST_INTERVAL = {
     "api.openalex.org": 0.15, "api.adsabs.harvard.edu": 0.25,
     "inspirehep.net": 0.5, "api.datacite.org": 0.25, "api.github.com": 0.25,
     "raw.githubusercontent.com": 0.1,
+    "api.semanticscholar.org": 1.0, "eutils.ncbi.nlm.nih.gov": 0.35,
+    "dblp.org": 1.0,
 }
 _host_last: dict = {}
 _host_lock = threading.Lock()
@@ -164,6 +166,13 @@ KEYS = {
     "mailto": {"label": "contact e-mail for the Crossref/OpenAlex polite pools", "secret": False,
                "env": ("CITE_CHECK_MAILTO",), "legacy_files": (), "url": None,
                "enables": "faster, more reliable Crossref and OpenAlex answers (optional, not a key)"},
+    "semanticscholar": {
+        "label": "Semantic Scholar API key (optional discovery)",
+        "secret": True, "env": ("SEMANTIC_SCHOLAR_API_KEY", "S2_API_KEY"),
+        "legacy_files": (),
+        "url": "https://www.semanticscholar.org/product/api",
+        "enables": "optional Semantic Scholar discovery (not verification)",
+    },
     "github": {"label": "GitHub token (read-only, no scopes needed)", "secret": True,
                "env": ("GITHUB_TOKEN", "GH_TOKEN"), "legacy_files": (),
                "url": "https://github.com/settings/personal-access-tokens/new",
@@ -343,6 +352,25 @@ def _ads_test(token: str) -> dict:
     return {"ok": None, "detail": f"ADS answered HTTP {status}; stored untested"}
 
 
+def _semanticscholar_test(token: str) -> dict[str, Any]:
+    """Check API authorization without logging secrets or response bodies."""
+    try:
+        status, _ = _http(
+            "https://api.semanticscholar.org/graph/v1/paper/search?"
+            "query=science&limit=1&fields=title",
+            headers={"x-api-key": token},
+            cache=False,
+            timeout=20,
+        )
+    except RuntimeError:
+        return {"ok": None, "detail": "Service unavailable; stored untested."}
+    if status == 200:
+        return {"ok": True, "detail": "Semantic Scholar accepted the key."}
+    if status in {401, 403}:
+        return {"ok": False, "detail": "Semantic Scholar rejected the key."}
+    return {"ok": None, "detail": f"HTTP {status}; stored untested."}
+
+
 def key_store(name: str, value: str, test: bool = True) -> dict:
     if name not in KEYS:
         return {"stored": False, "error": f"unknown key {name!r}; one of {list(KEYS)}"}
@@ -354,6 +382,10 @@ def key_store(name: str, value: str, test: bool = True) -> dict:
     if name == "mailto" and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
         return {"stored": False, "error": "that does not look like an e-mail address"}
     tested = None
+    if name == "semanticscholar" and test:
+        tested = _semanticscholar_test(value)
+        if tested["ok"] is False:
+            return dict(stored=False, error=tested["detail"], tested=tested)
     if name in ("ads", "github") and test:
         tested = _ads_test(value) if name == "ads" else _github_test(value)
         if tested["ok"] is False:
@@ -467,6 +499,7 @@ _PUBLIC_ZERO_FEE_HOSTS = frozenset({
     "api.adsabs.harvard.edu", "api.crossref.org", "api.datacite.org",
     "api.github.com", "api.openalex.org", "export.arxiv.org", "arxiv.org",
     "inspirehep.net", "github.com", "raw.githubusercontent.com",
+    "api.semanticscholar.org", "eutils.ncbi.nlm.nih.gov", "dblp.org",
 })
 _JOB_POLICY = "prioritized-identity-v1"
 _PRICING_POLICY = "public-registry-service-fee-zero-v1"
@@ -628,6 +661,15 @@ class _BudgetRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _budget_open(request: Any, timeout: float) -> Any:
     """Close redirect bodies and admit each hop immediately before opening."""
     budget = _request_budget.get()
+    credential_header = any(name.lower() == "x-api-key"
+                            for name, _ in request.header_items())
+    if credential_header:
+        # Never forward API keys, even to same-origin or downgrade redirects.
+        opener = urllib.request.build_opener(_BudgetRedirectHandler())
+        if budget is not None:
+            budget.reserve("request", request.full_url)
+            timeout = min(timeout, budget.remaining())
+        return opener.open(request, timeout=timeout)
     if budget is None:
         return urllib.request.urlopen(request, timeout=timeout)
     opener = urllib.request.build_opener(_BudgetRedirectHandler())
@@ -1051,6 +1093,398 @@ def _record(**kw) -> dict:
 def _year(v) -> int | None:
     m = re.search(r"(19|20)\d{2}", str(v or ""))
     return int(m.group(0)) if m else None
+
+
+# --- Additional discovery sources (never authoritative record-cache input) ---
+
+_DISCOVERY_SOURCES = {"semanticscholar", "pubmed", "dblp"}
+_S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
+_PUBMED_API = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+_DBLP_SEARCH = "https://dblp.org/search/publ/api"
+_DISCOVERY_LIMIT = 10
+
+
+def _discovery_json(
+    source: str, url: str, headers: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Read a public API envelope, preserving errors rather than empty hits."""
+    status, payload = _get_json(url, headers=headers)
+    if status != 200:
+        outcome = (
+            "rate-limited"
+            if status == 429
+            else "authentication-required"
+            if status in {401, 403}
+            else "unavailable"
+        )
+        raise RegistryLookupError(source, outcome, status)
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise RegistryLookupError(source, "malformed-response", status)
+    return payload
+
+
+def _discovery_rows(
+    source: str,
+    rows: Any,
+    total: Any = None,
+    sent: Any = None,
+) -> list[Any]:
+    """Check bounded result counts, distinguishing empty from partial data."""
+    if not isinstance(rows, list) or len(rows) > _DISCOVERY_LIMIT:
+        raise RegistryLookupError(source, "malformed-response", 200)
+    for name, value in (("total", total), ("sent", sent)):
+        if value is None:
+            continue
+        if type(value) is not int and not (
+            isinstance(value, str) and re.fullmatch(r"[0-9]+", value)
+        ):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        count = int(value)
+        size = min(count, _DISCOVERY_LIMIT) if name == "total" else count
+        if count < 0 or size != len(rows):
+            raise RegistryLookupError(source, "incomplete-response", 200)
+    return rows
+
+
+def _discovery_string(source: str, value: Any, required: bool = False) -> str:
+    """Validate provider strings without converting structured data to text."""
+    if value is None and not required:
+        return ""
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    return value.strip()
+
+
+def _discovery_authors(
+    source: str, value: Any, name_field: str = "name"
+) -> list[str]:
+    """Normalize the documented provider author shapes."""
+    if value is None:
+        return []
+    if isinstance(value, (str, dict)) and source == "dblp":
+        value = [value]
+    if not isinstance(value, list):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    authors = []
+    for row in value:
+        name = row.get(name_field) if isinstance(row, dict) else row
+        if not isinstance(row, dict) and source != "dblp":
+            raise RegistryLookupError(source, "malformed-response", 200)
+        authors.append(_discovery_string(source, name, required=True))
+    return authors
+
+
+def _discovery_year(source: str, value: Any) -> int | None:
+    """Validate numeric publication years when the provider supplies them."""
+    if value is None or value == "":
+        return None
+    if type(value) is int and 1000 <= value <= 9999:
+        return value
+    if (
+        source == "dblp"
+        and isinstance(value, str)
+        and re.fullmatch(r"\d{4}", value)
+    ):
+        return int(value)
+    raise RegistryLookupError(source, "malformed-response", 200)
+
+
+def _discovery_alias(source: str, value: Any, kind: str) -> str:
+    """Validate a suggested alias without establishing work identity."""
+    text = _discovery_string(source, value, required=True)
+    actual, identifier = _classify(text if ":" in text else f"{kind}:{text}")
+    if actual not in ({"doi", "arxiv"} if kind == "doi" else {kind}):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    return f"{actual}:{identifier}"
+
+
+def _discovery_record(
+    source: str,
+    native_id: str,
+    title: str,
+    authors: list[str],
+    year: int | None,
+    venue: str,
+    suggested_ids: list[str],
+    publication_type: str = "",
+) -> dict[str, Any]:
+    """Build an isolated discovery candidate with a fixed-origin source URL."""
+    if source == "semanticscholar":
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", native_id):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        native_id = native_id.lower()
+        identifier = "semanticscholar:" + native_id
+        url = "https://www.semanticscholar.org/paper/" + native_id
+    elif source == "pubmed":
+        if not re.fullmatch(r"[1-9]\d*", native_id):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        identifier = "pmid:" + native_id
+        url = "https://pubmed.ncbi.nlm.nih.gov/" + native_id + "/"
+    else:
+        if (
+            not re.fullmatch(r"[A-Za-z0-9._/-]+", native_id)
+            or "/" not in native_id
+            or any(part in {"", ".", ".."} for part in native_id.split("/"))
+        ):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        identifier = "dblp:" + native_id
+        url = "https://dblp.org/rec/" + native_id
+    return _record(
+        registry=source,
+        title=title,
+        authors=authors,
+        year=year,
+        venue=venue,
+        type=publication_type,
+        url=url,
+        discovery_only=True,
+        discovery_id=identifier,
+        suggested_ids=list(dict.fromkeys(suggested_ids)),
+        provenance=dict(source=source, record_id=native_id, url=url),
+    )
+
+
+def _discovery_deduplicate(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse identical native rows; reject conflicting same-ID responses."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for record in records:
+        identifier = record["discovery_id"]
+        if identifier in indexed and indexed[identifier] != record:
+            raise RegistryLookupError(
+                record["registry"], "conflicting-native-records", 200
+            )
+        indexed[identifier] = record
+    return list(indexed.values())
+
+
+def _semanticscholar_search(
+    title: str | None = None,
+    author: str | None = None,
+    words: list[str] | None = None,
+    year: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search a bounded Semantic Scholar page for unverified candidates."""
+    source = "semanticscholar"
+    query = " ".join(filter(None, [title, author, " ".join(words or [])]))
+    params: dict[str, Any] = dict(
+        query=_strip_latex(query),
+        limit=_DISCOVERY_LIMIT,
+        fields="title,authors,year,venue,externalIds",
+    )
+    if year is not None:
+        params["year"] = f"{year - 1}-{year + 1}"
+    key = key_value(source)[0]
+    if key and re.search(r"[\s\"']", key):
+        raise RegistryLookupError(source, "invalid-credential", 0)
+    payload = _discovery_json(
+        source,
+        _S2_SEARCH + "?" + urllib.parse.urlencode(params),
+        {"x-api-key": key} if key else None,
+    )
+    rows = _discovery_rows(source, payload.get("data"), payload.get("total"))
+    records = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        external = row.get("externalIds")
+        if external is None:
+            external = {}
+        if not isinstance(external, dict):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        aliases = [
+            _discovery_alias(source, external[name], kind)
+            for name, kind in (("DOI", "doi"), ("ArXiv", "arxiv"))
+            if name in external and external[name] is not None
+        ]
+        records.append(
+            _discovery_record(
+                source,
+                _discovery_string(source, row.get("paperId"), True),
+                _discovery_string(source, row.get("title"), True),
+                _discovery_authors(source, row.get("authors")),
+                _discovery_year(source, row.get("year")),
+                _discovery_string(source, row.get("venue")),
+                aliases,
+            )
+        )
+    return _discovery_deduplicate(records)
+
+
+def _pubmed_search(
+    title: str | None = None,
+    author: str | None = None,
+    words: list[str] | None = None,
+    year: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search PubMed UIDs and retrieve one bounded batch of summaries."""
+    source = "pubmed"
+    query = " ".join(filter(None, [title, author, " ".join(words or [])]))
+    common = dict(db="pubmed", retmode="json", tool="cite-check")
+    if _mailto():
+        common["email"] = _mailto()
+    params = dict(
+        common,
+        term=_strip_latex(query),
+        retmax=_DISCOVERY_LIMIT,
+        sort="relevance",
+    )
+    if year is not None:
+        params.update(
+            datetype="pdat", mindate=str(year - 1), maxdate=str(year + 1)
+        )
+    payload = _discovery_json(
+        source, _PUBMED_API + "esearch.fcgi?" + urllib.parse.urlencode(params)
+    )
+    found = payload.get("esearchresult")
+    if (
+        not isinstance(found, dict)
+        or found.get("ERROR")
+        or found.get("errorlist")
+        or not isinstance(found.get("idlist"), list)
+    ):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    identifiers = _discovery_rows(source, found["idlist"], found.get("count"))
+    if len(identifiers) > _DISCOVERY_LIMIT or any(
+        not isinstance(uid, str) or not re.fullmatch(r"[1-9]\d*", uid)
+        for uid in identifiers
+    ):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    identifiers = list(dict.fromkeys(identifiers))
+    if not identifiers:
+        return []
+    summary = _discovery_json(
+        source,
+        _PUBMED_API
+        + "esummary.fcgi?"
+        + urllib.parse.urlencode(dict(common, id=",".join(identifiers))),
+    )
+    result = summary.get("result")
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("uids"), list)
+        or len(result["uids"]) != len(identifiers)
+        or any(not isinstance(uid, str) for uid in result["uids"])
+        or set(result["uids"]) != set(identifiers)
+    ):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    records = []
+    for identifier in identifiers:
+        row = result.get(identifier)
+        if (
+            not isinstance(row, dict)
+            or row.get("uid") != identifier
+            or row.get("error")
+        ):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        article_ids = row.get("articleids", [])
+        if not isinstance(article_ids, list):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        aliases = []
+        for alias in article_ids:
+            if not isinstance(alias, dict):
+                raise RegistryLookupError(source, "malformed-response", 200)
+            if (
+                alias.get("idtype") == "pubmed"
+                and alias.get("value") != identifier
+            ):
+                raise RegistryLookupError(source, "identity-mismatch", 200)
+            if alias.get("idtype") == "doi":
+                aliases.append(
+                    _discovery_alias(source, alias.get("value"), "doi")
+                )
+        date = _discovery_string(source, row.get("pubdate"))
+        match = re.search(r"\b\d{4}\b", date)
+        records.append(
+            _discovery_record(
+                source,
+                identifier,
+                _discovery_string(source, row.get("title"), True),
+                _discovery_authors(source, row.get("authors")),
+                int(match.group()) if match else None,
+                _discovery_string(
+                    source, row.get("fulljournalname") or row.get("source")
+                ),
+                aliases,
+            )
+        )
+    return _discovery_deduplicate(records)
+
+
+def _dblp_search(
+    title: str | None = None,
+    author: str | None = None,
+    words: list[str] | None = None,
+    year: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search dblp publications without accepting its BibTeX as an export."""
+    source = "dblp"
+    query = " ".join(
+        filter(
+            None,
+            [
+                title,
+                author,
+                " ".join(words or []),
+                str(year) if year is not None else None,
+            ],
+        )
+    )
+    payload = _discovery_json(
+        source,
+        _DBLP_SEARCH
+        + "?"
+        + urllib.parse.urlencode(
+            dict(q=_strip_latex(query), format="json", h=_DISCOVERY_LIMIT, c=0)
+        ),
+    )
+    result = payload.get("result")
+    hits = result.get("hits") if isinstance(result, dict) else None
+    if not isinstance(hits, dict):
+        raise RegistryLookupError(source, "malformed-response", 200)
+    rows = hits.get("hit", [])
+    if isinstance(rows, dict):
+        rows = [rows]
+    rows = _discovery_rows(source, rows, hits.get("@total"), hits.get("@sent"))
+    if not rows and "@total" not in hits:
+        raise RegistryLookupError(source, "malformed-response", 200)
+    records = []
+    for hit in rows:
+        row = hit.get("info") if isinstance(hit, dict) else None
+        if not isinstance(row, dict):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        authors = row.get("authors")
+        if authors is None:
+            authors = {}
+        if not isinstance(authors, dict):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        links = row.get("ee")
+        if links is None:
+            links = []
+        if isinstance(links, str):
+            links = [links]
+        if not isinstance(links, list):
+            raise RegistryLookupError(source, "malformed-response", 200)
+        aliases = []
+        for link in links:
+            link = _discovery_string(source, link, True)
+            kind, value = _classify(link)
+            if kind in {"doi", "arxiv"}:
+                aliases.append(f"{kind}:{value}")
+        records.append(
+            _discovery_record(
+                source,
+                _discovery_string(source, row.get("key"), True),
+                _discovery_string(source, row.get("title"), True),
+                _discovery_authors(source, authors.get("author"), "text"),
+                _discovery_year(source, row.get("year")),
+                _discovery_string(source, row.get("venue")),
+                aliases,
+                _discovery_string(source, row.get("type")),
+            )
+        )
+    return _discovery_deduplicate(records)
 
 
 # --- arXiv -------------------------------------------------------------------
@@ -1880,6 +2314,8 @@ _ID_KEYS = ("doi", "arxiv", "bibcode", "openalex", "inspire", "github")
 
 
 def _record_cache_put(rec: dict) -> None:
+    if rec.get("discovery_only"):
+        return  # Never promote discovery metadata into authoritative caches.
     cid = _canonical(rec)
     if cid and (rec.get("repo") or {}).get("partial") and _record_cache_get(cid):
         return              # a search hit must not replace the repository's full record
@@ -2253,9 +2689,16 @@ def _confidence(d: dict, title, author, year) -> str:
     return "low"
 
 
-def search_citation(query: str | None = None, title: str | None = None, author: str | None = None,
-                    year: int | None = None, hint: str | None = None, context: str | None = None,
-                    registries: list | None = None, max_results: int = 8) -> dict:
+def search_citation(
+    query: str | None = None,
+    title: str | None = None,
+    author: str | None = None,
+    year: int | None = None,
+    hint: str | None = None,
+    context: str | None = None,
+    registries: list[str] | None = None,
+    max_results: int = 8,
+) -> dict[str, Any]:
     """Find real papers matching a description; returns ranked candidates.
 
     Give as much as you know: `title` (best), `author` (first-author surname),
@@ -2265,16 +2708,60 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
     registries=["github"] searches repository names and descriptions (opt-in;
     the default registries are the bibliographic ones). Candidates are ranked by
     cite-check's own title/author/year/context scoring — registry ranking is
-    not trusted. Nothing here is verified: pick a candidate, then fetch_bibtex
-    / bib_add it by its `id`.
+    not trusted. Opt in to semanticscholar, pubmed, or dblp for additional
+    discovery. Their native IDs are locators only: independently resolve a
+    suggested_id, compare metadata, then obtain an official export and assess
+    support. Discovery metadata never enters authoritative record caches.
+    No search candidate establishes citation identity or claim support.
     """
+    supported = {
+        "ads",
+        "arxiv",
+        "crossref",
+        "openalex",
+        "inspire",
+        "github",
+    } | _DISCOVERY_SOURCES
+    if (
+        type(max_results) is not int
+        or not 1 <= max_results <= 100
+        or year is not None
+        and (type(year) is not int or not 1000 <= year <= 9999)
+        or any(
+            value is not None
+            and (not isinstance(value, str) or len(value) > 10000)
+            for value in (query, title, author, hint, context)
+        )
+        or registries is not None
+        and (
+            not isinstance(registries, list)
+            or not registries
+            or any(
+                not isinstance(name, str) or name not in supported
+                for name in registries
+            )
+        )
+    ):
+        return {
+            "error": "Invalid search arguments or unknown registry selector.",
+            "candidates": [],
+            "n_candidates": 0,
+            "errors": {},
+        }
     h = _parse_hint(hint) if hint else {}
-    direct = h.get("id") or (query if query and _classify(query)[0] != "unknown" else None)
+    direct = h.get("id") or (
+        query if query and _classify(query)[0] != "unknown" else None
+    )
     if direct:
         r = resolve_citation(direct)
         r["confidence"] = "high" if r.get("resolved") else "none"
-        return {"direct": True, "query": direct, "candidates": [r] if r.get("resolved") else [],
-                "n_candidates": 1 if r.get("resolved") else 0, "errors": {} if r.get("resolved") else {"resolve": r.get("reason")}}
+        return {
+            "direct": True,
+            "query": direct,
+            "candidates": [r] if r.get("resolved") else [],
+            "n_candidates": 1 if r.get("resolved") else 0,
+            "errors": {} if r.get("resolved") else {"resolve": r.get("reason")},
+        }
     if query and not title:
         title = query
     author = author or h.get("surname")
@@ -2285,13 +2772,30 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
         words += [w for w in _content_words(context) if len(w) >= 4][:8]
     words = list(dict.fromkeys(words))
     if not (title or author or words):
-        return {"error": "give a title/query, an author+year hint, or the sentence as context"}
+        return {
+            "error": "give a title/query, author+year hint, or sentence context"
+        }
 
-    enabled = [r for r in (registries or ["ads", "arxiv", "crossref", "openalex", "inspire"])]
+    enabled = list(
+        dict.fromkeys(
+            registries
+            if registries is not None
+            else ["ads", "arxiv", "crossref", "openalex", "inspire"]
+        )
+    )
     if not _ads_token():
         enabled = [r for r in enabled if r != "ads"]
-    fns = {"ads": _ads_search, "arxiv": _arxiv_search, "crossref": _crossref_search,
-           "openalex": _openalex_search, "inspire": _inspire_search, "github": _github_search}
+    fns = {
+        "ads": _ads_search,
+        "arxiv": _arxiv_search,
+        "crossref": _crossref_search,
+        "openalex": _openalex_search,
+        "inspire": _inspire_search,
+        "github": _github_search,
+        "semanticscholar": _semanticscholar_search,
+        "pubmed": _pubmed_search,
+        "dblp": _dblp_search,
+    }
     kwargs = dict(title=title, author=author, words=words or None, year=year)
 
     def run(name):
@@ -2313,21 +2817,74 @@ def search_citation(query: str | None = None, title: str | None = None, author: 
                 errors[name] = err
     records.sort(key=lambda r: -_AUTHORITY.get(r["registry"], 0))
     scored = []
-    for c in _merge_candidates(records):
+    discoveries = [record for record in records if record.get("discovery_only")]
+    established = [
+        record for record in records if not record.get("discovery_only")
+    ]
+    for c in _merge_candidates(established):
         d = _score_candidate(c, title, author, initial, year, words)
         d["confidence"] = _confidence(d, title, author, year)
         pub = _public(c, "", "search")
         for k in ("resolved", "input", "kind"):
             pub.pop(k, None)
         scored.append(dict(pub, **d))
-        _record_cache_put(c)          # fetch_bibtex / fetch_text reuse it by id
+        _record_cache_put(c)  # fetch_bibtex / fetch_text reuse it by id
+    for candidate in discoveries:
+        details = _score_candidate(
+            candidate, title, author, initial, year, words
+        )
+        details["confidence"] = _confidence(details, title, author, year)
+        aliases = candidate["suggested_ids"]
+        scored.append(
+            dict(
+                id=candidate["discovery_id"],
+                ids={},
+                title=candidate["title"],
+                authors=candidate["authors"][:12],
+                n_authors=len(candidate["authors"]),
+                year=candidate["year"],
+                venue=candidate["venue"],
+                type=candidate["type"],
+                registries=[candidate["registry"]],
+                url=candidate["url"],
+                has_abstract=False,
+                discovery_only=True,
+                verification_status="unverified",
+                suggested_ids=aliases,
+                provenance=candidate["provenance"],
+                next_action=(
+                    "Resolve a suggested_id independently, compare its "
+                    "metadata with this candidate, then obtain an official "
+                    "export and assess claim support."
+                    if aliases
+                    else "No official identifier is supplied. Search official "
+                    "registries; establish identity before export or support."
+                ),
+                **details,
+            )
+        )
     scored.sort(key=lambda x: -x["score"])
-    return {"query": {"title": title, "author": author, "initial": initial, "year": year,
-                      "words": words, "hint": hint},
-            "registries": enabled, "errors": errors, "n_candidates": len(scored),
-            "candidates": scored[:max_results],
-            "note": ("ranked by cite-check scoring, not by the registries; confirm the pick "
-                     "with fetch_bibtex / bib_add by its id — a candidate is not a verification")}
+    return {
+        "query": {
+            "title": title,
+            "author": author,
+            "initial": initial,
+            "year": year,
+            "words": words,
+            "hint": hint,
+        },
+        "registries": enabled,
+        "errors": errors,
+        "n_candidates": len(scored),
+        "candidates": scored[:max_results],
+        "note": (
+            "Ranked by cite-check scoring; confirm the candidate through "
+            "independent identity checks and official export. Discovery-only "
+            "rows require resolving suggested_ids and comparing metadata; "
+            "their native id is not an export identifier. "
+            "Search never verifies support."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -8731,11 +9288,14 @@ def _run_keys(argv):
         if r.get("tested"):
             line += f"; {r['tested']['detail']}"
         print(line)
-    elif sub == "test" and len(argv) > 1 and argv[1] in ("ads", "github"):
-        tok = _ads_token() if argv[1] == "ads" else _github_token()
+    elif (sub == "test" and len(argv) > 1
+          and argv[1] in ("ads", "github", "semanticscholar")):
+        tok = key_value(argv[1])[0]
         if not tok:
             sys.exit(f"no {argv[1]} token configured")
-        r = _ads_test(tok) if argv[1] == "ads" else _github_test(tok)
+        testers = {"ads": _ads_test, "github": _github_test,
+                   "semanticscholar": _semanticscholar_test}
+        r = testers[argv[1]](tok)
         print(r["detail"])
         sys.exit(0 if r["ok"] else 1)
     elif sub == "delete" and len(argv) > 1:
@@ -8744,7 +9304,10 @@ def _run_keys(argv):
             r = key_delete(n)
             print(f"{n}: " + (f"removed from {', '.join(r['removed_from'])}" if r["deleted"] else r.get("error") or "nothing stored"))
     else:
-        sys.exit("usage: server.py keys names|backend|fields <name>|list [--json]|set <name> [--no-test]|test ads|github|delete <name>|--all")
+        sys.exit(
+            "usage: server.py keys names|backend|fields <name>|list [--json]|"
+            "set <name> [--no-test]|test ads|github|semanticscholar|"
+            "delete <name>|--all")
 
 
 def _run_cli(argv):
@@ -8754,7 +9317,9 @@ def _run_cli(argv):
         names = "\n  ".join(TOOLS)
         sys.exit(f"usage: server.py                      (MCP stdio server)\n"
                  f"       server.py call <tool> '<json-args>'\n"
-                 f"       server.py keys list|set <name>|delete <name>|test ads|github   (API keys)\n\ntools:\n  {names}")
+                 "       server.py keys list|set <name>|delete <name>|"
+                 "test ads|github|semanticscholar   (API keys)\n\n"
+                 f"tools:\n  {names}")
     if len(argv) < 2 or argv[1] not in TOOLS:
         sys.exit(f"unknown tool {argv[1] if len(argv) > 1 else '(none)'!r} — one of: {', '.join(TOOLS)}")
     try:

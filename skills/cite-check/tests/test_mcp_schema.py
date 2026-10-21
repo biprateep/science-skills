@@ -37,6 +37,16 @@ class InputValidationTest(unittest.TestCase):
             self.assertFalse(report["submission_ready"])
             self.assertIsNone(report["comparison_complete"])
 
+    def test_search_cli_rejects_unknown_source_before_network(self):
+        result = subprocess.run(
+            [sys.executable, SERVER.__file__, "call", "search_citation",
+             json.dumps({"query": "test", "registries": ["unknown-source"]})],
+            check=False, capture_output=True, text=True,
+        )
+        report = json.loads(result.stdout)
+        self.assertIn("error", report)
+        self.assertEqual(report["candidates"], [])
+
     def test_nested_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             bib = str(pathlib.Path(directory) / "refs.bib")
@@ -113,6 +123,25 @@ class ProtocolSchemaTest(unittest.TestCase):
                     for field in ("max_requests", "max_searches", "max_seconds", "max_cost_usd", "occurrence_id", "atom_id", "reason", "priority"):
                         self.assertIn(field, json.dumps(job_schema))
                     self.assertEqual(job_schema["properties"]["operation"]["default"], "run")
+                    search_schema = schemas["search_citation"]["properties"]
+                    registry_schema = search_schema["registries"]["anyOf"]
+                    self.assertEqual(
+                        next(item for item in registry_schema
+                             if item["type"] == "array")["items"]["type"],
+                        "string",
+                    )
+                    for registry in ("semanticscholar", "pubmed", "dblp"):
+                        self.assertIn(registry, json.dumps(listed))
+                    refused_search = (await session.call_tool(
+                        "search_citation", {"query": "test", "registries": []}
+                    )).model_dump(by_alias=True)
+                    search_text = " ".join(
+                        item.get("text", "")
+                        for item in refused_search["content"]
+                    )
+                    self.assertEqual(json.loads(search_text),
+                                     SERVER.search_citation(query="test",
+                                                            registries=[]))
                     lint_schema = schemas["lint_bib"]
                     self.assertEqual(lint_schema["required"], ["bib_path"])
                     self.assertFalse(lint_schema["properties"]["verify"]["default"])

@@ -43,6 +43,14 @@ arguments, uncertainty and migration guidance.
 
 ## When the caller adds a citation
 
+For broader discovery, explicitly select `semanticscholar`, `pubmed` or
+`dblp` in `search_citation.registries`. Their provider-qualified IDs are
+discovery locators, not export identifiers. Review the candidate, resolve a
+reported `suggested_ids` identifier through the ordinary registry workflow,
+then obtain the official export and independent support judgment. A high
+search score never changes `verification_status: "unverified"`. See
+[literature-sources.md](literature-sources.md) for limits and provenance.
+
 ```
 search_citation(title=…, author=…, year=…)      # or hint="Smith2019", context="<the sentence>"
    → pick a candidate (confidence high, or the user confirms a medium one)
