@@ -41,18 +41,32 @@ git clone https://github.com/biprateep/science-skills.git
 bash science-skills/scripts/install.sh
 ```
 
-That is the whole installation. The script does four things, and skips whatever
-this machine does not have:
+To install only one skill, select it explicitly:
 
-1. **Registers every skill** in `skills/` with each harness it finds:
+```sh
+bash science-skills/scripts/install.sh --skill cite-check
+# Or select a small set; repeated names are handled once:
+bash science-skills/scripts/install.sh --skill cite-check --skill co-writer
+```
+
+Without `--skill`, the script installs or refreshes all discovered skills as
+before. A selection changes only those skills and their MCP toolboxes; it does
+not remove previously installed siblings or automatically install skills named
+as collaborators in a skill's instructions. Select those collaborators too
+when their capabilities are needed. Unknown names are rejected before changes.
+
+The script does four things, and skips whatever this machine does not have:
+
+1. **Registers the selected skills** (all by default) in `skills/` with each harness it finds:
 
    | Harness | Mechanism | Picks up new skills |
    | :--- | :--- | :--- |
    | **Claude Code** | symlinks in `~/.claude/skills/<name>` | rerun the script |
    | **Google Antigravity** | symlinks in `~/.gemini/config/skills/<name>` | rerun the script |
-   | **OpenAI Codex** | one symlink `~/.agents/skills/science-skills` → `skills/` | automatically |
+   | **OpenAI Codex, all skills** | one symlink `~/.agents/skills/science-skills` → `skills/` | automatically |
+   | **OpenAI Codex, selected skills** | per-skill symlinks in `~/.agents/skills/<name>` | rerun with the desired selection |
 
-2. **Builds and registers the MCP toolboxes** that skills ship (co-scientist's
+2. **Builds and registers the MCP toolboxes** that selected skills ship (co-scientist's
    and cite-check's): one `.venv` per toolbox, then an entry in Claude Code
    (user-scope `~/.claude.json`), OpenAI Codex (`~/.codex/config.toml`) and Antigravity
    (`~/.gemini/config/mcp_config.json`, read by the app, the IDE and the `agy`
@@ -82,7 +96,7 @@ this machine does not have:
 No skill file is copied — every harness reads this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
 never touches unrelated skills, MCP servers or config entries, and understands
-`--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR`,
+`--skill NAME`, `--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR`,
 `GEMINI_CONFIG_DIR`, `CODEX_HOME` or `AGENTS_SKILLS_DIR` to target a non-default
 install location.
 
@@ -96,7 +110,31 @@ bash science-skills/scripts/uninstall.sh --dry-run   # see what would go
 bash science-skills/scripts/uninstall.sh             # do it
 ```
 
-It leaves the clone itself in place; delete that by hand if you want it gone.
+To remove one skill and only its MCP toolbox, use the same selection:
+
+```sh
+bash science-skills/scripts/uninstall.sh --skill cite-check --dry-run
+bash science-skills/scripts/uninstall.sh --skill cite-check
+# Equivalent entry point:
+bash science-skills/scripts/install.sh --uninstall --skill cite-check
+```
+
+`--skip-mcp` keeps the selected toolbox registered. Stored API keys remain unless
+`--purge-keys` is explicitly requested, and only selected toolbox setup scripts
+receive that option. The clone itself stays in place.
+
+When a selected operation encounters an owned Codex whole-collection link, the
+installer replaces it with individual links, preserving the skills already
+exposed by the collection except those explicitly removed. Existing legacy
+Antigravity directory registrations are migrated with the same preservation
+rule. Unrelated links and conflicting user-owned paths are not overwritten.
+These conversions do not edit the repository's skill files.
+
+After a selective Codex operation, future skills added to the repository are
+not automatically installed. Rerun with `--skill NAME` to add one, or rerun
+without selectors to restore the all-skills collection. Existing linked skill
+edits still appear through `git pull`. Use `--dry-run` to inspect the scope
+without changing links, receipts, MCP registrations or environments.
 
 A directory under `skills/` is installed only if it contains a `SKILL.md`;
 work-in-progress folders are reported and skipped.

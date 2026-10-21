@@ -3,6 +3,9 @@
 # science-skills installer — the one script. Clone the repo, run this, done.
 #
 #   bash scripts/install.sh              # install / refresh everything
+#   bash scripts/install.sh --skill cite-check  # one skill and its MCP
+#   bash scripts/install.sh --skill cite-check --skill co-writer  # selected skills
+#   bash scripts/install.sh --uninstall --skill cite-check  # remove one skill
 #   bash scripts/install.sh --uninstall  # remove what this script created
 #   bash scripts/install.sh --dry-run    # show what would change, touch nothing
 #   bash scripts/install.sh --skip-mcp   # skills only, no MCP toolbox
@@ -10,7 +13,14 @@
 #   bash scripts/install.sh --uninstall --purge-keys   # …and forget stored keys
 #
 # Step 1 registers every skill in skills/ with each harness found on this
-# machine:
+# machine. With --skill, only the named skills are changed; dependencies
+# referenced by their instructions are not installed automatically.
+#
+# A selective Codex operation converts an owned collection link into individual
+# skill links while preserving already installed siblings. A default all-skill
+# install restores recursive collection discovery.
+#
+# Targets:
 #
 #   Claude Code  -> per-skill symlinks in  ~/.claude/skills/<name>
 #                   (no directory-registry exists; rerun to pick up new skills)
@@ -19,7 +29,8 @@
 #   OpenAI Codex -> one symlink  ~/.agents/skills/science-skills -> skills/
 #                   (scanned recursively — new skills appear with no rerun)
 #
-# Step 2 runs every skills/*/mcp/setup_mcp.sh, which builds that skill's Python
+# Step 2 runs the selected skills' mcp/setup_mcp.sh scripts (all by default),
+# which build each skill's Python
 # venv and registers its MCP server with each harness. This needs the network
 # and takes a minute; --skip-mcp leaves it out. A toolbox that talks to
 # registries (cite-check) asks for its API keys here — input is not echoed,
@@ -62,13 +73,29 @@ DRY_RUN=0
 SKIP_MCP=0
 SKIP_KEYS=0
 PURGE_KEYS=0
-for arg in ${@+"$@"}; do   # ${@+...} keeps `set -u` quiet on bash 3.2 (macOS)
+SELECTED_SKILLS=()
+while [ "$#" -gt 0 ]; do
+    arg="$1"
+    shift
     case "$arg" in
         --uninstall)  MODE=uninstall ;;
         --dry-run)    DRY_RUN=1 ;;
         --skip-mcp)   SKIP_MCP=1 ;;
         --skip-keys)  SKIP_KEYS=1 ;;
         --purge-keys) PURGE_KEYS=1 ;;
+        --skill)
+            if [ "$#" -eq 0 ] || [ -z "$1" ] || [[ "$1" == --* ]]; then
+                echo "--skill requires a skill name" >&2
+                exit 1
+            fi
+            SELECTED_SKILLS+=("$1")
+            shift ;;
+        --skill=*)
+            if [ -z "${arg#--skill=}" ]; then
+                echo "--skill requires a skill name" >&2
+                exit 1
+            fi
+            SELECTED_SKILLS+=("${arg#--skill=}") ;;
         # The header runs from line 2 to the line before `set -euo pipefail`.
         -h|--help)    sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" \
                           | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -92,6 +119,27 @@ for d in "$SKILLS_DIR"/*/; do
     if [ -f "$d/SKILL.md" ]; then SKILLS+=("$name"); else SKIPPED+=("$name"); fi
 done
 
+if [ "${#SELECTED_SKILLS[@]}" -gt 0 ]; then
+    validated=()
+    for selected in "${SELECTED_SKILLS[@]}"; do
+        found=0
+        for name in "${SKILLS[@]}"; do
+            [ "$selected" = "$name" ] && found=1
+        done
+        if [ "$found" = 0 ]; then
+            echo "unknown skill: $selected (available: ${SKILLS[*]})" >&2
+            exit 1
+        fi
+        duplicate=0
+        for name in ${validated+"${validated[@]}"}; do
+            [ "$selected" = "$name" ] && duplicate=1
+        done
+        [ "$duplicate" = 1 ] || validated+=("$selected")
+    done
+    SELECTED_SKILLS=("${validated[@]}")
+    SKILLS=("${validated[@]}")
+fi
+
 if [ "$MODE" = install ] && [ "${#SKILLS[@]}" -eq 0 ]; then
     echo "error: no skills with a SKILL.md found under $SKILLS_DIR" >&2
     exit 1
@@ -112,6 +160,9 @@ link_skills() {
     shift
     local options=()
     [ "$DRY_RUN" = 1 ] && options+=(--dry-run)
+    for selected in ${SELECTED_SKILLS+"${SELECTED_SKILLS[@]}"}; do
+        options+=(--skill "$selected")
+    done
     if ! python3 "$CONFIG_HELPER" links --source "$SKILLS_DIR" \
             --target "$target" --mode "$MODE" \
             ${options+"${options[@]}"} "$@"; then
@@ -236,8 +287,15 @@ elif [ "$MODE" = uninstall ]; then
     echo "The repo itself is untouched — delete this clone by hand if you want it gone."
 else
     echo "Done. Skills load at the NEXT session start of each harness."
-    echo "To update this machine later:  git pull && bash scripts/install.sh"
-    echo "(new skills get linked into Claude Code and Antigravity; Codex finds them automatically)."
+    if [ "${#SELECTED_SKILLS[@]}" -gt 0 ]; then
+        printf 'To refresh this selection: git pull && bash scripts/install.sh'
+        for selected in "${SELECTED_SKILLS[@]}"; do printf ' --skill %q' "$selected"; done
+        echo
+        echo "Referenced collaborator skills are separate selections; install them when their capabilities are needed."
+    else
+        echo "To update this machine later:  git pull && bash scripts/install.sh"
+        echo "(new skills get linked into Claude Code and Antigravity; Codex finds them automatically)."
+    fi
     echo "Registry API keys (cite-check) can be entered or changed any time with:"
     echo "  bash skills/cite-check/mcp/setup_mcp.sh --keys"
 fi

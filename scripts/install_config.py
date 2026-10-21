@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import pathlib
+import re
 import tempfile
 from typing import Any
 
@@ -184,86 +185,233 @@ def update_mcp(args: argparse.Namespace) -> None:
         print(f"  {args.client}: {args.mode} {args.name} ({path})")
 
 
-def update_links(args: argparse.Namespace) -> None:
-    """Installs/removes symlinks only when their destination proves ownership.
+def _safe_skill_name(name: object) -> bool:
+    """Accept one skill basename, never a path or receipt traversal."""
+    return isinstance(name, str) and bool(
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name)
+    )
 
-    Args:
-      args: Parsed link arguments: source, target, mode and collection.
-    """
+
+def _destination(link: pathlib.Path, value: str) -> pathlib.Path:
+    path = pathlib.Path(value)
+    return (path if path.is_absolute() else link.parent / path).resolve()
+
+
+def _owned_link(
+    link: pathlib.Path, source: pathlib.Path, receipt: str | None
+) -> bool:
+    if not link.is_symlink():
+        return False
+    actual = _destination(link, str(link.readlink()))
+    expected = source if link.name == "science-skills" else source / link.name
+    return actual == expected.resolve() or bool(
+        receipt
+        and actual == _destination(link, receipt)
+        and not actual.exists()
+    )
+
+
+def _link_plan(args: argparse.Namespace) -> dict[str, Any]:
+    """Validate the entire link/legacy migration before any filesystem write."""
     source = pathlib.Path(args.source).resolve()
     target = pathlib.Path(args.target)
-    receipt_path = target / ".science-skills-links.json"
-    with locked(target, args.dry_run):
-        receipts = read_json(receipt_path)
-        desired = (
-            {"science-skills": str(source)}
-            if args.collection
-            else {
-                item.name: str(item)
-                for item in source.iterdir()
-                if (item / "SKILL.md").is_file()
-            }
+    if target.resolve() == source or source in target.resolve().parents:
+        raise ValueError(
+            "skill target must not be inside the source collection"
         )
-        names = set(desired) | set(receipts)
+    discovered = {
+        item.name: str(item)
+        for item in source.iterdir()
+        if (item / "SKILL.md").is_file()
+    }
+    if any(not _safe_skill_name(name) for name in discovered):
+        raise ValueError("source contains an invalid skill name")
+    selection = list(dict.fromkeys(getattr(args, "skill", None) or []))
+    if any(
+        not _safe_skill_name(name) or name not in discovered
+        for name in selection
+    ):
+        raise ValueError("unknown or invalid selected skill")
+    if args.collection and "science-skills" in discovered:
+        raise ValueError(
+            "science-skills is reserved for the Codex collection link"
+        )
+    receipt_path = target / ".science-skills-links.json"
+    if receipt_path.is_symlink():
+        raise ValueError("skill ownership receipt must not be a symlink")
+    receipts = read_json(receipt_path)
+    if any(
+        not _safe_skill_name(name) or not isinstance(value, str)
+        for name, value in receipts.items()
+    ):
+        raise ValueError("malformed skill ownership receipt")
+    legacy_path = (
+        pathlib.Path(args.legacy_registry) if args.legacy_registry else None
+    )
+    legacy = read_json(legacy_path) if legacy_path else {}
+    entries = legacy.get("entries", [])
+    if not isinstance(entries, list) or any(
+        not isinstance(entry, dict) or not isinstance(entry.get("path"), str)
+        for entry in entries
+    ):
+        raise ValueError("legacy skill registry entries must have string paths")
+    kept = [entry for entry in entries if entry["path"] != str(source)]
+    legacy_owned = kept != entries
+    collection = target / "science-skills"
+    collection_exists = collection.exists() or collection.is_symlink()
+    collection_owned = _owned_link(
+        collection, source, receipts.get("science-skills")
+    )
+    if (
+        args.collection
+        and selection
+        and collection_exists
+        and not collection_owned
+    ):
+        raise ValueError(f"unowned collection left unchanged: {collection}")
+    converting = bool(
+        selection and (collection_owned and args.collection or legacy_owned)
+    )
+    notes = []
+    if converting:
+        notes.append(
+            "convert owned collection discovery to individual links; "
+            "preserve unselected skills"
+        )
+        retained = (
+            set(discovered) - set(selection)
+            if args.mode == "uninstall"
+            else set(discovered)
+        )
+        desired = {name: discovered[name] for name in retained}
+        names = set(discovered)
+        if args.collection and collection_owned:
+            names.add("science-skills")
+    elif selection:
+        desired = (
+            {name: discovered[name] for name in selection}
+            if args.mode == "install"
+            else {}
+        )
+        names = set(selection)
+    else:
+        desired = (
+            ({"science-skills": str(source)} if args.collection else discovered)
+            if args.mode == "install"
+            else {}
+        )
+        names = set(discovered) | set(receipts)
+        if args.collection:
+            names.add("science-skills")
         if target.exists():
-            for link in target.iterdir():
-                if link.is_symlink() and link.readlink().parent == source:
-                    names.add(link.name)
-        conflicts = []
-        for name in sorted(names):
-            link = target / name
-            exists = link.exists() or link.is_symlink()
-            actual = str(link.readlink()) if link.is_symlink() else None
-            expected = desired.get(name)
-            receipt = receipts.get(name)
-            owned = actual is not None and (
-                actual == str(source)
+            names.update(
+                link.name
+                for link in target.iterdir()
+                if link.is_symlink() and _owned_link(link, source, None)
+            )
+    install, remove, conflicts = {}, [], []
+    updated_receipts = dict(receipts)
+    for name in sorted(names):
+        link = target / name
+        exists = link.exists() or link.is_symlink()
+        owned = _owned_link(link, source, receipts.get(name))
+        expected = desired.get(name)
+        if exists and not owned:
+            if (
+                expected is not None
+                or name in selection
                 or (
-                    pathlib.Path(actual).parent == source
-                    and pathlib.Path(actual).name == name
+                    not args.collection and not selection and name in discovered
                 )
-                or (actual == receipt and not pathlib.Path(actual).exists())
-            )
-            if exists and not owned:
-                if name in desired:
-                    conflicts.append(str(link))
-                continue
-            if args.mode == "uninstall" or expected is None:
-                if owned and not args.dry_run:
-                    link.unlink()
-                    receipts.pop(name, None)
-            elif not args.dry_run:
-                target.mkdir(parents=True, exist_ok=True)
-                if actual != expected:
-                    if exists:
-                        link.unlink()
-                    link.symlink_to(expected)
-                receipts[name] = expected
-        if not args.dry_run and (receipts or receipt_path.exists()):
-            atomic_write(receipt_path, json.dumps(receipts, indent=2) + "\n")
-        if args.legacy_registry:
-            legacy_path = pathlib.Path(args.legacy_registry)
-            legacy = read_json(legacy_path)
-            entries = legacy.get("entries", [])
-            if not isinstance(entries, list):
-                raise ValueError(f"{legacy_path}: entries must be an array")
-            kept = [
-                entry
-                for entry in entries
-                if not (
-                    isinstance(entry, dict) and entry.get("path") == str(source)
-                )
-            ]
-            if kept != entries and not args.dry_run:
-                legacy["entries"] = kept
-                atomic_write(legacy_path, json.dumps(legacy, indent=2) + "\n")
-        if conflicts:
-            raise ValueError(
-                "unowned paths left unchanged: " + ", ".join(conflicts)
-            )
-        prefix = "[dry-run] " if args.dry_run else ""
-        print(f"  {prefix}{args.mode} links: {target}")
+                or (args.collection and name == "science-skills")
+            ):
+                conflicts.append(str(link))
+            continue
+        if expected is not None:
+            if not exists or _destination(
+                link, str(link.readlink())
+            ) != pathlib.Path(expected).resolve():
+                install[name] = expected
+            updated_receipts[name] = expected
+        else:
+            if owned:
+                remove.append(name)
+            updated_receipts.pop(name, None)
+    if conflicts:
+        raise ValueError(
+            "unowned paths left unchanged: " + ", ".join(conflicts)
+        )
+    if legacy_owned:
+        legacy["entries"] = kept
+    return {
+        "target": target,
+        "receipt_path": receipt_path,
+        "receipts": updated_receipts,
+        "install": install,
+        "remove": remove,
+        "legacy_path": legacy_path if legacy_owned else None,
+        "legacy": legacy,
+        "notes": notes,
+        "selection": selection,
+    }
 
+
+def _publish_link(link: pathlib.Path, destination: str) -> None:
+    """Atomically replace a proven owned link without following its target."""
+    with tempfile.TemporaryDirectory(
+        dir=link.parent, prefix=".install-links-"
+    ) as directory:
+        staged = pathlib.Path(directory) / "link"
+        staged.symlink_to(destination)
+        os.replace(staged, link)
+
+
+def update_links(args: argparse.Namespace) -> None:
+    """Apply a validated selection while preserving unselected/foreign skills.
+
+    Collection conversions publish retained links before removing the old
+    discovery path. Default-all installs publish the collection before pruning
+    owned individual links. No operation writes through a collection symlink.
+
+    Args:
+      args: Link source, target, mode, optional skill selection and collection.
+    """
+    plan = _link_plan(args)
+    target = plan["target"]
+    scope = ", ".join(plan["selection"]) or "all skills"
+    prefix = "[dry-run] " if args.dry_run else ""
+    print(f"  {prefix}{args.mode} links: {target} ({scope})")
+    for note in plan["notes"]:
+        print(f"  {prefix}{note}")
+    for name, destination in sorted(plan["install"].items()):
+        print(f"  {prefix}link {target / name} -> {destination}")
+    for name in plan["remove"]:
+        print(f"  {prefix}remove owned link {target / name}")
+    if plan["legacy_path"]:
+        print(
+            f"  {prefix}remove owned collection registration "
+            f"from {plan['legacy_path']}"
+        )
+    if args.dry_run:
+        return
+    with locked(target, False):
+        plan = _link_plan(args)
+        if plan["install"]:
+            target.mkdir(parents=True, exist_ok=True)
+        for name, destination in sorted(plan["install"].items()):
+            _publish_link(target / name, destination)
+        # Retained links exist before a whole-collection alias is removed.
+        for name in plan["remove"]:
+            (target / name).unlink()
+        if plan["receipts"] or plan["receipt_path"].exists():
+            atomic_write(
+                plan["receipt_path"],
+                json.dumps(plan["receipts"], indent=2) + "\n",
+            )
+        if plan["legacy_path"]:
+            atomic_write(
+                plan["legacy_path"], json.dumps(plan["legacy"], indent=2) + "\n"
+            )
 
 def main() -> int:
     """Runs installer transactions and reports conflicts without secrets."""
@@ -287,6 +435,7 @@ def main() -> int:
             command.add_argument("--source", required=True)
             command.add_argument("--target", required=True)
             command.add_argument("--collection", action="store_true")
+            command.add_argument("--skill", action="append")
             command.add_argument("--legacy-registry")
     args = parser.parse_args()
     try:
