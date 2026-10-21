@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.7.0"
+  version: "0.8.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -103,7 +103,8 @@ Never edit anything under `mcp/` during a task.
 | `verify_bib(bib_path, keys, tex_path)` | per entry: resolve its own ids (DOI, arXiv, bibcode, else the GitHub repository in `url` / `howpublished` / `repository`), compare title / first author / year, check a cited `version`; entries without ids are searched | VERIFIED · FOUND · PROBABLE · MISMATCH · NOT_FOUND · UNRESOLVED |
 | `lint_bib(bib_path, keys, verify)` | advisory metadata checks with exact entry locations; offline by default, optional own-identifier registry comparison | metadata review only; neither clean lint nor successful processing establishes identity, provenance, support or readiness |
 | `verification_job(tex_path, bib_path, job_id, operation, budget, priorities, search_unresolved)` | prioritized registry checks with request/search/time/cost admission limits, persistent progress and an ordered support-work queue | identity progress only; remaining work is UNCHECKED and every job has `submission_ready=false` |
-| `extract_cites(tex_path)` | every `\cite*`/biblatex instance across `\input`, with the claim sentence (`⟨cite:key⟩` marks the spot), context, file:line, keys, `.bib` files | the units the support check works on |
+| `extract_cites(tex_path)` | manuscript citation occurrences, original claim/context and locations: TeX, Markdown/text key markers, or PDF page text; reports inline references and extraction uncertainty | observed support units; unknown citation scope is never a complete inventory |
+| `register_input(tex_path, citations, reason)` | bind explicit numeric/author-year marker spans to bibliography keys in the current input snapshot | review mappings only; does not verify identity, official provenance or extraction completeness |
 | `register_claims(tex_path, sentence_id, atoms)` | register a complete partition of exact sentence spans, explicit citation attachments, and declared uncited scope; derives stable atom IDs | no assertion or citation may disappear |
 | `fetch_text(identifier, pdf_path, text_path, version)` | the paper's text: arXiv HTML → arXiv PDF → open-access PDF → abstract; a repository's README + description + CITATION.cff abstract; cached globally; `pdf_path=` for your own copy of a paywalled paper | `basis`: fulltext / readme / abstract / none |
 | `find_passages(identifier, [claims], version)` | abstract + top passages per claim by content-word overlap | what the judge reads first |
@@ -122,6 +123,14 @@ with bad args prints it). Registry behaviour and thresholds:
 ## Workflows
 
 Pick the one that matches the request; all three end in `audit`.
+
+`tex_path` remains the parameter name for backward compatibility and can
+identify a `.tex`, `.md`, `.markdown`, `.txt` or `.pdf` manuscript. Read
+`references/manuscript-inputs.md` before handling a non-TeX input or inline
+`thebibliography`. Explicit Markdown/text citation keys can use the ordinary
+atomic workflow; PDF, manually mapped and inline-reference inputs retain
+their review limits. Never use a correct sidecar bibliography to silently
+certify a different reference printed in the original document.
 
 For a large manuscript or an explicit resource limit, use `verification_job`
 to check consequential claims' citation identities first and resume within

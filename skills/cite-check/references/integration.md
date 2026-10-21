@@ -19,6 +19,28 @@ must do, must not do, and may rely on.
 3. `ping` tells you whether an ADS token is present. Astronomy manuscripts
    without one lose ADS search and export; say so to the user once.
 
+## Manuscript formats and citation scope
+
+The historical `tex_path` argument accepts the supported manuscript formats;
+callers must inspect extraction diagnostics and citation-scope completeness
+before claiming a complete inventory. Explicit Markdown/plain-text key
+markers can feed the same atomic registration, independent judgment and
+audit workflow. Pass the official bibliography explicitly where needed.
+
+PDF page extraction and manually mapped numeric/author-year citations are
+review inputs. `register_input` binds exact marker spans to keys, not to a
+verified work identity; changing the source, extraction or mapping invalidates
+the prior mapping/obligations. Inline bibliography entries remain original
+printed-reference evidence. A same-key official sidecar cannot establish that
+their displayed text is correct. These review limits prevent strict readiness
+and cannot be overridden by successful lookups or support judgments.
+
+Relate observed instances and remaining unknown scope separately. Missing or
+unreadable PDF text is not a citation-free document. PDF locations are page
+and extracted-text positions, never purported binary-PDF byte offsets. Use
+[manuscript-inputs.md](manuscript-inputs.md) for supported syntax, mapping
+arguments, uncertainty and migration guidance.
+
 ## When the caller adds a citation
 
 ```

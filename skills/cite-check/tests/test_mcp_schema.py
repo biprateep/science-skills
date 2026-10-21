@@ -125,6 +125,69 @@ class ProtocolSchemaTest(unittest.TestCase):
                     policy_schema = schemas["audit"]["properties"]["policy"]
                     self.assertEqual(policy_schema["default"], "submission-ready")
                     self.assertEqual(set(policy_schema["enum"]), {"submission-ready", "exploratory"})
+                    input_schema = json.dumps(schemas["register_input"])
+                    for field in (
+                        "tex_path",
+                        "citations",
+                        "start",
+                        "end",
+                        "key",
+                        "marker",
+                        "page",
+                        "reason",
+                    ):
+                        self.assertIn(field, input_schema)
+                    plain = pathlib.Path(directory) / "input.txt"
+                    plain.write_text("A measured result [1].")
+                    mappings = {
+                        "tex_path": str(plain),
+                        "citations": [
+                            {
+                                "start": 18,
+                                "end": 21,
+                                "key": "a",
+                                "marker": "[1]",
+                            }
+                        ],
+                        "reason": "The author supplied this exact "
+                                  "citation binding.",
+                    }
+                    native_input = (
+                        await session.call_tool("register_input", mappings)
+                    ).model_dump(by_alias=True)
+                    self.assertFalse(native_input.get("isError", False))
+                    input_text = " ".join(
+                        item.get("text", "") for item in native_input["content"]
+                    )
+                    self.assertIn('"registered": true', input_text)
+                    direct_input = SERVER.register_input(**mappings)
+                    self.assertTrue(direct_input["ok"], direct_input)
+                    self.assertEqual(
+                        SERVER.extract_cites(str(plain))["keys"], ["a"]
+                    )
+                    for malformed in (
+                        {"start": True},
+                        {"start": 18.0},
+                        {"page": False},
+                        {"extra": 1},
+                    ):
+                        invalid_mapping = dict(
+                            mappings,
+                            citations=[
+                                dict(mappings["citations"][0], **malformed)
+                            ],
+                        )
+                        rejected = (
+                            await session.call_tool(
+                                "register_input", invalid_mapping
+                            )
+                        ).model_dump(by_alias=True)
+                        self.assertTrue(
+                            rejected.get("isError", False), rejected
+                        )
+                        self.assertFalse(
+                            SERVER.register_input(**invalid_mapping)["ok"]
+                        )
                     manuscript = pathlib.Path(directory) / "main.tex"
                     manuscript.write_text(r"A result holds \cite{a}.")
                     extraction = SERVER.extract_cites(str(manuscript))
