@@ -125,6 +125,7 @@ class Work(_WorkFields, total=False):
     """
 
     registries: list[str]
+    publication_status: dict[str, typing.Any]
     repo: dict[str, typing.Any]
     pinned_sha: str
     pinned_ref: str

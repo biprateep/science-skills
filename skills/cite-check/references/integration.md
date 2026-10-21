@@ -91,6 +91,15 @@ uncited.
   the caller reports the manuscript as finished. The caller relays
   `failures` / `warnings` to the user; it does not lower the bar.
 
+## Publication-status findings
+
+Relay publication-status findings separately from identity verification. A known
+retraction blocks strict readiness; corrections and expressions of concern
+require review of the linked notice and the affected claim. Unknown status or
+no reported update is not a guarantee that the work is unaffected. An item
+that is a retraction notice is not itself retracted merely because it links to
+an affected paper. See [publication-status.md](publication-status.md).
+
 ## The support check, from the caller's side
 
 ```

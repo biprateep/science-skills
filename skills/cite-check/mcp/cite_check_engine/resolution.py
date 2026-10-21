@@ -12,6 +12,7 @@ from cite_check_engine import config as _engine_config
 from cite_check_engine import credentials as _engine_credentials
 from cite_check_engine import identifiers as _engine_identifiers
 from cite_check_engine import persistence as _engine_persistence
+from cite_check_engine import publication_status as _engine_publication_status
 from cite_check_engine import registry_clients as _engine_registry_clients
 
 
@@ -28,6 +29,15 @@ def _merge_records(
     for k in _ID_KEYS + ("venue", "year", "abstract", "citation_count", "type", "url"):
         if not out.get(k) and extra.get(k):
             out[k] = extra[k]
+    if (extra.get("publication_status") and extra.get("doi")
+            and str(out.get("doi", "")).lower() == str(extra["doi"]).lower()
+            and (not out.get("publication_status")
+                 or _engine_publication_status.available(
+                     out["publication_status"], out.get("doi")
+                 )["state"] == "UNKNOWN")):
+        out["publication_status"] = _engine_publication_status.available(
+            extra["publication_status"], out.get("doi")
+        )
     if not out.get("title") and extra.get("title"):
         out["title"], out["authors"] = extra["title"], extra.get("authors", [])
     if len(extra.get("abstract") or "") > len(out.get("abstract") or "") + 200:
@@ -50,7 +60,8 @@ def _public_core(rec: typing.Mapping[str, typing.Any], raw: str, kind: str) -> d
             "n_authors": len(rec.get("authors") or []), "year": rec.get("year"),
             "venue": rec.get("venue", ""), "type": rec.get("type", ""),
             "registries": rec.get("registries") or [rec.get("registry")],
-            "url": rec.get("url", ""), "has_abstract": bool(rec.get("abstract"))}
+            "url": rec.get("url", ""), "has_abstract": bool(rec.get("abstract")),
+            "publication_status": _engine_publication_status.available(rec.get("publication_status"), rec.get("doi"))}
 
 def _resolve_many(identifiers: list) -> list:
     """Batched resolution of mixed identifiers; results in input order.
@@ -249,6 +260,9 @@ def _with_pin(
             for key in _ID_KEYS:
                 if not pinned.get(key) and rec.get(key):
                     pinned[key] = rec[key]
+            if (rec.get("publication_status") and rec.get("doi")
+                    and pinned.get("doi") == rec["doi"]):
+                pinned["publication_status"] = rec["publication_status"]
             return typing.cast(_engine_models.Work, pinned)
     if not rec.get("github"):
         return typing.cast(_engine_models.Work, rec)

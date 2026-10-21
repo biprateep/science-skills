@@ -15,6 +15,7 @@ from cite_check_engine import identifiers as _engine_identifiers
 from cite_check_engine import manuscripts as _engine_manuscripts
 from cite_check_engine import parsing as _engine_parsing
 from cite_check_engine import persistence as _engine_persistence
+from cite_check_engine import publication_status as _engine_publication_status
 from cite_check_engine import reports as _engine_reports
 
 
@@ -395,6 +396,29 @@ def audit(
                     "detail": "; ".join(result.get("notes") or []),
                 }
             )
+    publication_checks = {}
+    for key, result in ver.items():
+        publication = _engine_publication_status.available(
+            result.get("publication_status"), result.get("ids", {}).get("doi")
+        )
+        publication_checks[key] = publication
+        state = publication["state"]
+        if state not in {"NO_UPDATES_REPORTED", "NOTICE"} or not publication.get("complete"):
+            affected = publication["updates"] + [
+                event for event in publication["notices_for"] if event["self_relation"]
+            ]
+            links = "; ".join(dict.fromkeys(event["url"] for event in affected))
+            observation = (
+                f" Observed {publication['observed_at']} from "
+                f"{publication['source_url']} (metadata may be cached)."
+                if publication["source_url"] else ""
+            )
+            finding = {
+                "type": "publication-status", "key": key, "status": state,
+                "detail": publication["detail"] + (" " + links if links else "") + observation,
+                "publication_status": publication,
+            }
+            (failures if strict and state == "RETRACTED" else warnings).append(finding)
     if strict and (not verify or not require_support):
         failures.append(
             {
@@ -727,6 +751,7 @@ def audit(
         "uncited_atoms": uncited_atoms,
         "unofficial_entries": sorted(unofficial),
         "provenance_checks": provenance_checks,
+        "publication_status": publication_checks,
         "failures": failures,
         "warnings": warnings,
         "checked": _engine_persistence._now_iso(),

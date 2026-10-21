@@ -17,6 +17,7 @@ from typing import Any
 from cite_check_engine import models as _engine_models
 from cite_check_engine import export_provenance as _engine_export_provenance
 from cite_check_engine import quality as _engine_quality
+from cite_check_engine import publication_status as _engine_publication_status
 from cite_check_engine import budgets as _engine_budgets
 from cite_check_engine import credentials as _engine_credentials
 from cite_check_engine import discovery as _engine_discovery
@@ -666,7 +667,8 @@ def _compare(entry: dict, pub: dict, via: str) -> dict:
     return {"key": entry["key"], "status": status, "via": via, "id": pub["id"], "ids": pub["ids"],
             "title_similarity": sim, "first_author_match": am["first"], "year_bib": year,
             "year_registry": pub.get("year"), "registry_title": pub["title"], "notes": notes,
-            "provenance": entry["provenance"]}
+            "provenance": entry["provenance"],
+            "publication_status": _engine_publication_status.available(pub.get("publication_status"), pub.get("ids", {}).get("doi"))}
 
 def _names_repo(title: str, full: str) -> bool:
     """Does the title name the repository as a whole word run ('corner.py:
@@ -704,7 +706,8 @@ def _compare_repo(entry: dict, pub: dict) -> dict:
     out = {"key": entry["key"], "via": f"github:{pub['ids']['github']}", "id": pub["id"], "ids": pub["ids"],
            "title_similarity": sim, "first_author_match": am["first"], "year_bib": year,
            "year_registry": pub.get("year"), "registry_title": pub["title"],
-           "notes": list(repo.get("notes") or []), "provenance": entry["provenance"]}
+           "notes": list(repo.get("notes") or []), "provenance": entry["provenance"],
+           "publication_status": _engine_publication_status.available(pub.get("publication_status"), pub.get("ids", {}).get("doi"))}
     if sim is None:
         out["status"] = "PROBABLE"
         out["notes"].append("entry has no title — the repository exists but nothing can be compared")
@@ -779,14 +782,14 @@ def _search_entry(entry: dict) -> dict:
         c = cands[0]
         return dict(base, status="FOUND", id=c["id"], ids=c["ids"], title_similarity=c.get("title_similarity"),
                     first_author_match=c.get("first_author_match"), year_registry=c.get("year"),
-                    registry_title=c["title"],
+                    registry_title=c["title"], publication_status=_engine_publication_status.available(c.get("publication_status")),
                     notes=["entry carries no identifier; matched by search — replace it with the official "
                            f"entry: bib_add(items=[{{'identifier': '{c['id']}', 'key': '{entry['key']}'}}], replace=true)"])
     if cands and cands[0]["confidence"] == "medium":
         c = cands[0]
         return dict(base, status="PROBABLE", id=c["id"], ids=c["ids"], title_similarity=c.get("title_similarity"),
                     first_author_match=c.get("first_author_match"), year_registry=c.get("year"),
-                    registry_title=c["title"],
+                    registry_title=c["title"], publication_status=_engine_publication_status.available(c.get("publication_status")),
                     notes=[f"closest registry match: '{c['title'][:90]}' ({c['id']}, similarity "
                            f"{c.get('title_similarity')}) — confirm by eye, then bib_add(replace=true)"])
     closest = f"; closest: '{cands[0]['title'][:70]}' ({cands[0].get('title_similarity')})" if cands else ""
@@ -1463,6 +1466,10 @@ def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | Non
     else:
         out += [{"key": e["key"], "status": "UNRESOLVED", "via": None, "provenance": e["provenance"],
                  "notes": ["no identifier; search skipped"]} for e in to_search]
+    for result in out:
+        result["publication_status"] = _engine_publication_status.available(
+            result.get("publication_status"), result.get("ids", {}).get("doi")
+        )
     pos = {e["key"]: i for i, e in enumerate(entries)}
     out.sort(key=lambda r: pos.get(r["key"], 10 ** 9))
     counts = Counter(r["status"] for r in out)

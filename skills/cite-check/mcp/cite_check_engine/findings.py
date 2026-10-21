@@ -63,6 +63,13 @@ def _correction_action(finding: dict[str, Any]) -> dict[str, str]:
                 "an official export, never from invented metadata."
             ),
         )
+    elif kind == "publication-status":
+        action, instruction = (
+            "review-publication-status",
+            "Review the linked registry notice and its effect on the cited "
+            "assertion. A correction does not invalidate every claim; a "
+            "reported retraction blocks strict submission readiness.",
+        )
     elif kind == "provenance":
         action, instruction = (
             "refresh-official-export",
@@ -227,6 +234,7 @@ def _correction_items(
                     "verdict": finding.get("verdict"),
                     "status": finding.get("status"),
                     "next_action": _correction_action(finding),
+                    "publication_status": finding.get("publication_status"),
                     "source_evidence": source,
                     "proposed_correction": proposal,
                     "applied": False,

@@ -14,6 +14,7 @@ from cite_check_engine import credentials as _engine_credentials
 from cite_check_engine import identifiers as _engine_identifiers
 from cite_check_engine import parsing as _engine_parsing
 from cite_check_engine import persistence as _engine_persistence
+from cite_check_engine import publication_status as _engine_publication_status
 from cite_check_engine import text as _engine_text
 from cite_check_engine import transport as _engine_transport
 
@@ -572,7 +573,8 @@ def _cr_record_fields(msg: dict) -> _engine_models.Work:
                    doi=msg.get("DOI"), type=msg.get("type", ""),
                    abstract=re.sub(r"\s+", " ", html.unescape(abstract)).strip(),
                    url=f"https://doi.org/{msg.get('DOI')}" if msg.get("DOI") else msg.get("URL", ""),
-                   citation_count=msg.get("is-referenced-by-count"), pdf_urls=pdfs)
+                   citation_count=msg.get("is-referenced-by-count"), pdf_urls=pdfs,
+                   publication_status=_engine_publication_status.normalize(msg))
 
 def _crossref_work(doi: str):
     status, data = _engine_transport._get_json(f"{_CROSSREF}/{urllib.parse.quote(doi, safe='')}")
@@ -601,7 +603,12 @@ def _crossref_search(title=None, author=None, words=None, year=None, rows=10) ->
     status, data = _engine_transport._get_json(f"{_CROSSREF}?{urllib.parse.urlencode(params)}")
     if status != 200 or not data:
         return []
-    return [_cr_record(m) for m in data.get("message", {}).get("items", [])]
+    records = [_cr_record(m) for m in data.get("message", {}).get("items", [])]
+    for record in records:
+        record["publication_status"] = _engine_publication_status.unknown(
+            "Publication-status fields were not requested in the discovery projection."
+        )
+    return records
 
 def _datacite_doi(doi: str):
     status, data = _engine_transport._get_json(f"https://api.datacite.org/dois/{urllib.parse.quote(doi, safe='')}")
