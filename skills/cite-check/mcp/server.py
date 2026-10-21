@@ -21,6 +21,9 @@ import tempfile
 from collections import Counter
 import difflib
 import hashlib
+import importlib.metadata
+import io
+import logging
 import html
 import json
 import math
@@ -42,7 +45,7 @@ from html.parser import HTMLParser
 from typing import Any, Literal
 from collections.abc import Callable
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 # ---------------------------------------------------------------------------
 # configuration, cache, HTTP
@@ -3799,6 +3802,643 @@ def verify_bib(bib_path: str, keys: list[str] | None = None, tex_path: str | Non
 
 
 # ---------------------------------------------------------------------------
+# Manuscript inputs: explicit markers, review mappings and PDF page snapshots
+# ---------------------------------------------------------------------------
+
+_INPUT_POLICY = "manuscript-input-v1"
+_INPUT_MAX_BYTES = 20 * 1024 * 1024
+_INPUT_MAX_PAGES = 500
+_INPUT_MAX_TEXT = 2 * 1024 * 1024
+_INPUT_PDF_TIMEOUT = 30.0
+_INPUT_KEY = re.compile(r"[\w][\w:./+\-]*", re.UNICODE)
+
+
+@dataclasses.dataclass
+class InputCitation:
+    """Explicit review mapping into an exact source-text snapshot."""
+
+    __pydantic_config__ = {"extra": "forbid"}
+    start: int = dataclasses.field(metadata={"strict": True})
+    end: int = dataclasses.field(metadata={"strict": True})
+    key: str
+    marker: str
+    page: int | None = dataclasses.field(
+        default=None, metadata={"strict": True}
+    )
+
+
+def _input_format(path: str) -> str:
+    """Select only supported manuscript formats from their extensions."""
+    extension = os.path.splitext(path)[1].lower()
+    formats = {
+        ".tex": "latex",
+        ".ltx": "latex",
+        ".latex": "latex",
+        ".md": "markdown",
+        ".markdown": "markdown",
+        ".txt": "text",
+        ".pdf": "pdf",
+        "": "latex",
+    }
+    if extension not in formats:
+        raise ValueError("unsupported manuscript format")
+    return formats[extension]
+
+
+def _input_manifest_path(path: str) -> str:
+    """Keep review mappings separate for each main manuscript."""
+    identifier = hashlib.sha256(os.path.abspath(path).encode()).hexdigest()
+    return os.path.join(
+        os.path.dirname(os.path.abspath(path)),
+        PROJECT_DIR,
+        "input-" + identifier + ".json",
+    )
+
+
+def _input_pdf_backend() -> dict[str, Any]:
+    """Identify the extractor independently of manuscript contents."""
+    try:
+        version = importlib.metadata.version("pypdf")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
+    return {
+        "name": "pypdf",
+        "version": version,
+        "policy": _INPUT_POLICY,
+        "options": {"strict": True, "mode": "plain"},
+    }
+
+
+def _input_pdf_worker() -> None:
+    """Extract bounded page text in a separate, time-limited process."""
+    pypdf = importlib.import_module("pypdf")
+
+    logging.getLogger("pypdf").setLevel(logging.CRITICAL)
+    raw = sys.stdin.buffer.read(_INPUT_MAX_BYTES + 1)
+    if len(raw) > _INPUT_MAX_BYTES:
+        raise ValueError("PDF exceeds the 20 MiB input limit")
+    reader = pypdf.PdfReader(io.BytesIO(raw), strict=True)
+    if reader.is_encrypted:
+        raise ValueError("encrypted PDF cannot establish extraction scope")
+    count = len(reader.pages)
+    if not 0 < count <= _INPUT_MAX_PAGES:
+        raise ValueError("PDF must have between 1 and 500 pages")
+    pages, size = [], 0
+    for number, page in enumerate(reader.pages, 1):
+        text = page.extract_text() or ""
+        size += len(text.encode("utf-8"))
+        if size > _INPUT_MAX_TEXT:
+            raise ValueError("PDF exceeds the 2 MiB extracted-text limit")
+        pages.append({"page": number, "text": text})
+    print(
+        json.dumps(
+            {"pages": pages, "extractor": _input_pdf_backend()},
+            ensure_ascii=False,
+        )
+    )
+
+
+def _input_pdf_extract(raw: bytes) -> dict[str, Any]:
+    """Isolate PDF decoding with a deadline; never silently fall back to OCR."""
+    budget = _request_budget.get()
+    timeout = (
+        min(_INPUT_PDF_TIMEOUT, budget.remaining())
+        if budget
+        else _INPUT_PDF_TIMEOUT
+    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "_extract-pdf"],
+            input=raw,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(
+            "PDF extraction timed out; scope is unknown"
+        ) from error
+    if budget:
+        budget.remaining()
+    if completed.returncode:
+        raise ValueError(
+            "PDF extraction failed (missing pypdf, encrypted, "
+            "malformed or oversized PDF); scope is unknown"
+        )
+    if len(completed.stdout) > _INPUT_MAX_TEXT * 6 + 100000:
+        raise ValueError("PDF extractor output exceeds its bound")
+    try:
+        result = json.loads(completed.stdout)
+    except (ValueError, UnicodeError) as error:
+        raise ValueError("invalid PDF extractor output") from error
+    return result
+
+
+def _input_snapshot(path: str) -> dict[str, Any]:
+    """Read one original byte snapshot and its format-specific text views."""
+    kind = _input_format(path)
+    if kind == "latex":
+        raise ValueError("explicit mappings apply to Markdown, text or PDF")
+    if not os.path.isfile(path):
+        raise ValueError("manuscript must be a regular file")
+    with open(path, "rb") as source:
+        raw = source.read(_INPUT_MAX_BYTES + 1)
+    if len(raw) > _INPUT_MAX_BYTES:
+        raise ValueError("manuscript exceeds the 20 MiB input limit")
+    if kind == "pdf":
+        data = _input_pdf_extract(raw)
+        if (
+            not isinstance(data, dict)
+            or set(data) != {"pages", "extractor"}
+            or not isinstance(data["pages"], list)
+            or not 0 < len(data["pages"]) <= _INPUT_MAX_PAGES
+            or data["extractor"] != _input_pdf_backend()
+        ):
+            raise ValueError("malformed or inconsistent PDF extraction")
+        pages = data["pages"]
+        for number, page in enumerate(pages, 1):
+            if (
+                not isinstance(page, dict)
+                or set(page) != {"page", "text"}
+                or type(page["page"]) is not int
+                or page["page"] != number
+                or not isinstance(page["text"], str)
+            ):
+                raise ValueError("malformed PDF page extraction")
+        if sum(len(page["text"].encode()) for page in pages) > _INPUT_MAX_TEXT:
+            raise ValueError("PDF exceeds the extracted-text limit")
+        if not any(page["text"].strip() for page in pages):
+            raise ValueError(
+                "PDF has no extractable text; scan/OCR scope is unknown"
+            )
+        extractor = data["extractor"]
+    else:
+        pages = [{"page": None, "text": raw.decode("utf-8")}]
+        if not pages[0]["text"].strip():
+            raise ValueError("empty manuscript; citation scope is unknown")
+        extractor = {"name": "utf-8", "policy": _INPUT_POLICY}
+    fingerprint = {
+        "format": kind,
+        "extractor": extractor,
+        "pages": [
+            hashlib.sha256(page["text"].encode()).hexdigest() for page in pages
+        ],
+    }
+    return {
+        "input_format": kind,
+        "raw_sha256": hashlib.sha256(raw).hexdigest(),
+        "pages": pages,
+        "fingerprint": fingerprint,
+    }
+
+
+def _input_blank(value: str) -> str:
+    """Mask excluded syntax without changing character offsets or newlines."""
+    return "".join("\n" if character == "\n" else " " for character in value)
+
+
+def _input_mask(text: str, kind: str, *, math: bool = True) -> str:
+    """Exclude Markdown code/comments/link syntax and URLs from markers."""
+    if kind == "markdown":
+        lines = text.splitlines(keepends=True)
+        fence, width = None, 0
+        masked = []
+        for line in lines:
+            match = re.match(r" {0,3}(`{3,}|~{3,})", line)
+            if fence:
+                masked.append(_input_blank(line))
+                if (
+                    match
+                    and match[1][0] == fence
+                    and len(match[1]) >= width
+                    and not line[match.end() :].strip()
+                ):
+                    fence = None
+            elif match:
+                fence, width = match[1][0], len(match[1])
+                masked.append(_input_blank(line))
+            elif line.startswith("    ") or line.startswith("\t"):
+                masked.append(_input_blank(line))
+            else:
+                masked.append(line)
+        text = "".join(masked)
+        text = re.sub(
+            r"<!--.*?(?:-->|\Z)",
+            lambda match: _input_blank(match[0]),
+            text,
+            flags=re.S,
+        )
+        if math:
+            text = re.sub(
+                r"(?<!\\)(`+)(?!`)(.*?)\1(?!`)",
+                lambda match: _input_blank(match[0]),
+                text,
+                flags=re.S,
+            )
+        text = re.sub(
+            r"\[[^\]\n]*\]\([^\n)]*\)",
+            lambda match: (
+                match[0][: match[0].index("]") + 1]
+                + _input_blank(match[0][match[0].index("]") + 1 :])
+            ),
+            text,
+        )
+        # Front matter is metadata, not manuscript prose. The caller passes
+        # the authoritative bibliography explicitly to audit/job tools.
+        text = re.sub(
+            r"\A---\s*\r?\n.*?\r?\n(?:---|\.\.\.)[^\n]*(?:\n|\Z)",
+            lambda match: _input_blank(match[0]),
+            text,
+            flags=re.S,
+        )
+    text = re.sub(
+        r"(?:https?://|mailto:)[^\s<>]+",
+        lambda match: _input_blank(match[0]),
+        text,
+    )
+    return (
+        _TEX_MATH.sub(lambda match: _input_blank(match[0]), text)
+        if math
+        else text
+    )
+
+
+def _input_references(text: str, kind: str) -> tuple[str, list[dict[str, Any]]]:
+    """Retain printed references as raw, unverified manuscript records."""
+    records = []
+    visible = _input_mask(text, kind, math=False)
+    native_keys = {
+        key
+        for marker in _input_native_markers(_input_mask(text, kind))[0]
+        for key in marker["keys"]
+    }
+    heading = re.search(
+        r"(?im)^[ \t]*(?:#{1,6}[ \t]+)?"
+        r"(?:References|Bibliography)[ \t]*:?[ \t]*\r?$",
+        visible,
+    )
+    spans: list[tuple[int, int, str | None]] = []
+    if kind == "markdown":
+        metadata = re.match(
+            r"\A---[^\n]*\r?\n(.*?)\r?\n(?:---|\.\.\.)[^\n]*(?:\n|\Z)",
+            text,
+            re.S,
+        )
+        if metadata and re.search(
+            r"(?im)^[ \t]*[\"']?references[\"']?[ \t]*:", metadata[1]
+        ):
+            spans.append((metadata.start(), metadata.end(), None))
+    if heading:
+        spans.append((heading.start(), len(text), None))
+    for match in re.finditer(
+        r"(?m)^[ \t]{0,3}\[(@?[\w][\w:./+\-]*)\]:[^\n]*(?:\n(?:[ \t]+[^\n]*))*",
+        visible,
+    ):
+        # Ordinary Markdown link definitions contain only a URL/title;
+        # citation-looking definitions remain explicit unverified metadata.
+        body = text[match.start() : match.end()].split("]:", 1)[1].strip()
+        if match[1].lstrip("@") not in native_keys and re.fullmatch(
+            r"<?https?://[^\s>]+>?(?:\s+[\"'].+[\"'])?", body
+        ):
+            continue
+        if not any(start <= match.start() < end for start, end, _ in spans):
+            spans.append((match.start(), match.end(), match[1].lstrip("@")))
+    chars = list(text)
+    for start, end, key in spans:
+        records.append(
+            {
+                "key": key,
+                "raw": text[start:end],
+                "start": start,
+                "end": end,
+                "kind": "printed-reference-block",
+                "line": text.count("\n", 0, start) + 1,
+            }
+        )
+        chars[start:end] = _input_blank(text[start:end])
+    return "".join(chars), records
+
+
+def _input_native_markers(
+    text: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Parse explicit Pandoc-style keys, retaining uncertain marker syntax."""
+    markers, diagnostics, occupied = [], [], []
+    for match in re.finditer(r"(?<!\\)\[([^\[\]\n]*)\]", text):
+        body = match[1]
+        keys = re.findall(r"(?<![\w\\])@([\w][\w:./+\-]*)", body)
+        if "@" in body and (not keys or body.rstrip().endswith(";")):
+            diagnostics.append(
+                {
+                    "code": "malformed-citation-marker",
+                    "message": "Malformed explicit citation marker",
+                    "start": match.start(),
+                    "end": match.end(),
+                }
+            )
+            occupied.append((match.start(), match.end()))
+        elif keys:
+            if "@" in re.sub(r"(?<![\w\\])@[\w][\w:./+\-]*", "", body):
+                diagnostics.append(
+                    {
+                        "code": "malformed-citation-marker",
+                        "message": "Ambiguous explicit citation marker",
+                        "start": match.start(),
+                        "end": match.end(),
+                    }
+                )
+            else:
+                markers.append(
+                    {"start": match.start(), "end": match.end(), "keys": keys}
+                )
+            occupied.append((match.start(), match.end()))
+        elif re.fullmatch(r"\s*\d+(?:\s*[,;\-–]\s*\d+)*\s*", body):
+            diagnostics.append(
+                {
+                    "code": "unsupported-citation-syntax",
+                    "message": (
+                        "Numeric marker needs an explicit review mapping"
+                    ),
+                    "start": match.start(),
+                    "end": match.end(),
+                }
+            )
+    for match in re.finditer(
+        r"\[\s*\d+(?:[ ,;–-]\d+)*(?=[^\]\n]*(?:\n|\Z))", text
+    ):
+        if (
+            "]"
+            not in text[
+                match.end() : text.find("\n", match.end())
+                if "\n" in text[match.end() :]
+                else len(text)
+            ]
+        ):
+            diagnostics.append(
+                {
+                    "code": "malformed-citation-marker",
+                    "message": "Unclosed numeric citation marker",
+                    "start": match.start(),
+                    "end": match.end(),
+                }
+            )
+    remainder = list(text)
+    for start, end in occupied:
+        remainder[start:end] = _input_blank(text[start:end])
+    remaining = "".join(remainder)
+    for match in re.finditer(r"(?<![\w\\@])@([\w][\w:./+\-]*)", remaining):
+        # Unclosed bracket syntax is never silently reinterpreted as a
+        # complete narrative citation.
+        before = remaining[
+            max(0, remaining.rfind("\n", 0, match.start())) : match.start()
+        ]
+        if before.count("[") > before.count("]"):
+            diagnostics.append(
+                {
+                    "code": "malformed-citation-marker",
+                    "message": "Unclosed citation cluster",
+                    "start": match.start(),
+                    "end": match.end(),
+                }
+            )
+        else:
+            key = match[1].rstrip(".:/")
+            markers.append(
+                {
+                    "start": match.start(),
+                    "end": match.start() + 1 + len(key),
+                    "keys": [key],
+                }
+            )
+    for match in re.finditer(
+        r"[\[(][^()\[\]\n]*(?:18|19|20)\d{2}[a-z]?"
+        r"[^()\[\]\n]*(?:[\])]|(?=\n|\Z))",
+        remaining,
+    ):
+        diagnostics.append(
+            {
+                "code": "unsupported-citation-syntax",
+                "message": (
+                    "Author-year marker needs an explicit review mapping"
+                ),
+                "start": match.start(),
+                "end": match.end(),
+            }
+        )
+    return sorted(markers, key=lambda item: item["start"]), diagnostics
+
+
+def _input_validate_mappings(
+    snapshot: dict[str, Any], values: Any
+) -> list[dict[str, Any]]:
+    """Validate exact, nonoverlapping review bindings."""
+    if not isinstance(values, list) or len(values) > 2000:
+        raise ValueError("citations must be a list of at most 2000 mappings")
+    pages = {page["page"]: page["text"] for page in snapshot["pages"]}
+    result: list[dict[str, Any]] = []
+    visible_pages = {
+        page: _input_mask(
+            _input_references(text, snapshot["input_format"])[0],
+            snapshot["input_format"],
+        )
+        for page, text in pages.items()
+    }
+    native_pages = {
+        page: _input_native_markers(text)[0]
+        for page, text in visible_pages.items()
+    }
+    for item in values:
+        value = (
+            dataclasses.asdict(item)
+            if isinstance(item, InputCitation)
+            else item
+        )
+        if (
+            not isinstance(value, dict)
+            or not {"start", "end", "key", "marker"} <= set(value)
+            or set(value) - {"start", "end", "key", "marker", "page"}
+        ):
+            raise ValueError(
+                "mapping requires start, end, key and exact marker"
+            )
+        value = dict(value)
+        value.setdefault("page", None)
+        start, end, page = value["start"], value["end"], value["page"]
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or (page is not None and type(page) is not int)
+            or page not in pages
+            or not 0 <= start < end <= len(pages[page])
+            or not isinstance(value["marker"], str)
+            or pages[page][start:end] != value["marker"]
+            or not isinstance(value["key"], str)
+            or _INPUT_KEY.fullmatch(value["key"]) is None
+        ):
+            raise ValueError(
+                "mapping does not match exact current page/text offsets"
+            )
+        visible = visible_pages[page]
+        if visible[start:end] != pages[page][start:end]:
+            raise ValueError(
+                "mapping overlaps excluded code, math, comments or URL syntax"
+            )
+        native = native_pages[page]
+        if any(
+            start < marker["end"] and end > marker["start"] for marker in native
+        ):
+            raise ValueError(
+                "explicit native citations do not need review mappings"
+            )
+        for previous in result:
+            if previous["page"] != page:
+                continue
+            if start < previous["end"] and end > previous["start"]:
+                if (start, end) != (
+                    previous["start"],
+                    previous["end"],
+                ) or value["key"] == previous["key"]:
+                    raise ValueError(
+                        "overlapping or duplicate citation mappings"
+                    )
+        result.append(value)
+    return sorted(
+        result,
+        key=lambda value: (
+            value["page"] or 0,
+            value["start"],
+            value["end"],
+            value["key"],
+        ),
+    )
+
+
+def _input_manifest_safe(path: str, manuscript: str) -> None:
+    """Protect original inputs and ledger before creating a mapping lock."""
+    if os.path.islink(os.path.dirname(path)):
+        raise ValueError("input manifest directory is a symlink")
+    inputs = [
+        manuscript,
+        os.path.join(os.path.dirname(manuscript), PROJECT_DIR, "ledger.json"),
+    ]
+    for output in (path, path + ".lock"):
+        if (
+            os.path.islink(output)
+            or os.path.exists(output)
+            and os.stat(output).st_nlink > 1
+        ):
+            raise ValueError("input manifest or lock is a symlink or hardlink")
+        for source in inputs:
+            if (
+                os.path.realpath(output) == os.path.realpath(source)
+                or os.path.exists(output)
+                and os.path.exists(source)
+                and os.path.samefile(output, source)
+            ):
+                raise ValueError("input manifest or lock aliases an input")
+
+
+def register_input(
+    tex_path: str, citations: list[InputCitation], reason: str
+) -> dict[str, Any]:
+    """Bind explicit review mappings to unchanged Markdown/text/PDF snapshots.
+
+    Args:
+        tex_path: Manuscript path; the legacy parameter name is retained.
+        citations: Exact offset/key/marker mappings, with a page for PDFs.
+        reason: Substantive explanation of the caller's interpretation.
+
+    Returns:
+        The saved manifest location. Mappings never establish identity or
+        completeness and always remain review-only when nonempty.
+    """
+    try:
+        if (
+            not isinstance(tex_path, str)
+            or not tex_path
+            or not isinstance(reason, str)
+            or len(reason.strip()) < 15
+        ):
+            raise ValueError(
+                "give a manuscript path and substantive mapping reason"
+            )
+        path = os.path.abspath(tex_path)
+        snapshot = _input_snapshot(path)
+        mappings = _input_validate_mappings(snapshot, citations)
+        manifest = _input_manifest_path(path)
+        _input_manifest_safe(manifest, path)
+        with _file_lock(manifest):
+            if _audit_file_digest(path) != snapshot["raw_sha256"]:
+                raise ValueError(
+                    "manuscript changed while mapping; extract again"
+                )
+            _input_manifest_safe(manifest, path)
+            value = {
+                "schema_version": 1,
+                "path": path,
+                "raw_sha256": snapshot["raw_sha256"],
+                "fingerprint": snapshot["fingerprint"],
+                "citations": mappings,
+                "reason": reason.strip(),
+                "policy": _INPUT_POLICY,
+            }
+            serialized = json.dumps(value, ensure_ascii=False, indent=2)
+            if len(serialized.encode("utf-8")) > 1024 * 1024:
+                raise ValueError("input mapping manifest exceeds 1 MiB")
+            _atomic_write(manifest, serialized)
+        return {
+            "ok": True,
+            "registered": True,
+            "manifest_path": manifest,
+            "n_mappings": len(mappings),
+            "review_only": True,
+        }
+    except (OSError, ValueError, RuntimeError) as error:
+        return {"ok": False, "registered": False, "error": str(error)}
+
+
+def _input_mappings(
+    path: str, snapshot: dict[str, Any]
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Read mappings bound to the exact bytes and extraction policy."""
+    manifest = _input_manifest_path(path)
+    _input_manifest_safe(manifest, path)
+    if not os.path.exists(manifest):
+        return [], None
+    with open(manifest, "rb") as source:
+        raw = source.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError("input manifest exceeds its size limit")
+    value = json.loads(raw)
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "schema_version",
+            "path",
+            "raw_sha256",
+            "fingerprint",
+            "citations",
+            "reason",
+            "policy",
+        }
+        or type(value["schema_version"]) is not int
+        or value["schema_version"] != 1
+        or value["path"] != path
+        or value["raw_sha256"] != snapshot["raw_sha256"]
+        or value["fingerprint"] != snapshot["fingerprint"]
+        or value["policy"] != _INPUT_POLICY
+        or not isinstance(value["reason"], str)
+        or len(value["reason"].strip()) < 15
+    ):
+        raise ValueError(
+            "input mapping is stale or malformed; register_input again"
+        )
+    return _input_validate_mappings(
+        snapshot, value["citations"]
+    ), hashlib.sha256(raw).hexdigest()
+
+# ---------------------------------------------------------------------------
 # LaTeX — every citation instance with the sentence that makes the claim
 # ---------------------------------------------------------------------------
 
@@ -3992,7 +4632,7 @@ def _split_sentences(paragraph: str) -> list:
     return [p.replace("<DOT>", ".").strip() for p in parts if p.strip()]
 
 
-def extract_cites(tex_path: str) -> dict:
+def _extract_tex_cites(tex_path: str) -> dict:
     """Every citation instance in a LaTeX document (following \\input /
     \\include), each with the sentence making the claim (`claim`, with
     ⟨cite:key⟩ marking where the citation sits), one sentence of context each
@@ -4008,8 +4648,58 @@ def extract_cites(tex_path: str) -> dict:
     except (OSError, ValueError) as exc:
         return {"ok": False, "complete": False, "error": str(exc)}
     cites, bib_files, docclass = [], [], None
+    inline_bibliography = []
     sentences = []
     for path, text in files:
+        for env in re.finditer(
+            r"\\begin\{thebibliography\}(?:\{[^}]*\})?"
+            r"(.*?)\\end\{thebibliography\}", text, re.S
+        ):
+            items = list(
+                re.finditer(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}", env[1])
+            )
+            parsed_items = {item.start() for item in items}
+            if (
+                not items
+                or any(token.start() not in parsed_items
+                       for token in re.finditer(r"\\bibitem\b", env[1]))
+                or any(_INPUT_KEY.fullmatch(item[1]) is None for item in items)
+            ):
+                return {
+                    "ok": False,
+                    "complete": False,
+                    "scope_complete": False,
+                    "error": "malformed or unsupported inline "
+                             "bibliography item",
+                }
+            for index, item in enumerate(items):
+                start = env.start(1) + item.start()
+                end = env.start(1) + (
+                    items[index + 1].start()
+                    if index + 1 < len(items)
+                    else len(env[1])
+                )
+                raw = source_snapshots[path]
+                inline_bibliography.append({
+                    "key": item[1], "raw": raw[start:end], "file": path,
+                    "line": raw.count("\n", 0, start) + 1,
+                    "start": start, "end": end,
+                    "kind": "inline-bibliography-entry",
+                    "source_byte_start": len(raw[:start].encode("utf-8")),
+                    "source_byte_end": len(raw[:end].encode("utf-8")),
+                })
+        text = re.sub(
+            r"\\begin\{thebibliography\}.*?\\end\{thebibliography\}",
+            lambda match: _input_blank(match[0]),
+            text,
+            flags=re.S,
+        )
+        if re.search(r"\\(?:bibitem|begin\{thebibliography\})", text):
+            return {
+                "ok": False,
+                "complete": False,
+                "error": "malformed inline bibliography",
+            }
         m = re.search(r"\\documentclass(?:\[[^\]]*\])?\{([^}]+)\}", text)
         if m and not docclass:
             docclass = m.group(1)
@@ -4122,13 +4812,309 @@ def extract_cites(tex_path: str) -> dict:
     by_key = {}
     for i, c in enumerate(cites):
         by_key.setdefault(c["key"], []).append(i)
-    return {"complete": True, "main": tex_path, "files": [p for p, _ in files], "documentclass": docclass,
-            "bib_files": list(dict.fromkeys(bib_files)), "n_instances": len(cites),
-            "n_keys": len(keys), "keys": keys, "cites": cites, "by_key": by_key,
-            "sentences": sentences,
-            "source_digests": {path: hashlib.sha256(raw.encode("utf-8")).hexdigest()
-                               for path, raw in source_snapshots.items()}}
+    return {
+        "input_format": "latex",
+        "scope_complete": len({item["key"] for item in inline_bibliography})
+        == len(inline_bibliography),
+        "review_only": bool(inline_bibliography),
+        "inline_bibliography": inline_bibliography,
+        "diagnostics": [
+            {
+                "code": "inline-bibliography-unverified",
+                "message": "Printed inline references require migration "
+                           "to verified official exports",
+                **item,
+            }
+            for item in inline_bibliography
+        ],
+        "complete": True,
+        "main": tex_path,
+        "files": [p for p, _ in files],
+        "documentclass": docclass,
+        "bib_files": list(dict.fromkeys(bib_files)),
+        "n_instances": len(cites),
+        "n_keys": len(keys),
+        "keys": keys,
+        "cites": cites,
+        "by_key": by_key,
+        "sentences": sentences,
+        "source_digests": {
+            path: hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            for path, raw in source_snapshots.items()
+        },
+    }
 
+
+
+def _input_render(value: str, tokens: dict[int, dict[str, Any]]) -> str:
+    """Render internal occurrence tokens without altering claim semantics."""
+    value = _CITE_TOKEN.sub(
+        lambda token: "⟨cite:" + ",".join(tokens[int(token[1])]["keys"]) + "⟩",
+        value,
+    )
+    return re.sub(r"⟩ (?=[,.;:)\]])", "⟩", value)
+
+def extract_cites(tex_path: str) -> dict[str, Any]:
+    """Extract exact citation occurrences from TeX, Markdown, text, or PDF.
+
+    PDF and explicit review mappings never establish complete strict scope.
+    Original text offsets are Unicode codepoints; PDF offsets are page-local.
+
+    Args:
+        tex_path: Main manuscript path; legacy parameter name is retained.
+
+    Returns:
+        Observed citations, exact source locations, extraction diagnostics
+        and explicit completeness and review-only flags.
+    """
+    try:
+        path = os.path.abspath(tex_path)
+        if _input_format(path) == "latex":
+            return _extract_tex_cites(path)
+        snapshot = _input_snapshot(path)
+        mappings, manifest_digest = _input_mappings(path, snapshot)
+        kind = snapshot["input_format"]
+        if any(_CITE_TOKEN.search(page["text"]) for page in snapshot["pages"]):
+            raise ValueError("reserved internal citation token in manuscript")
+        fingerprint = snapshot["fingerprint"]
+        cites, sentences, diagnostics = [], [], []
+        views: list[str] = []
+        inline_bibliography = []
+        for page in snapshot["pages"]:
+            raw, number = page["text"], page["page"]
+            body, references = _input_references(raw, kind)
+            for item in references:
+                item.update(
+                    file=path,
+                    page=number,
+                    offset_unit="extracted-page-unicode-codepoint"
+                    if number
+                    else "unicode-codepoint",
+                    source_byte_start=None
+                    if number
+                    else len(raw[: item["start"]].encode("utf-8")),
+                    source_byte_end=None
+                    if number
+                    else len(raw[: item["end"]].encode("utf-8")),
+                )
+                inline_bibliography.append(item)
+                diagnostics.append(
+                    {
+                        "code": "printed-reference-unverified",
+                        "message": (
+                            "Printed references require migration to "
+                            "verified official exports"
+                        ),
+                        **item,
+                    }
+                )
+            visible = _input_mask(body, kind, math=False)
+            detection = _input_mask(body, kind)
+            markers, issues = _input_native_markers(detection)
+            manual = [item for item in mappings if item.get("page") == number]
+            for item in manual:
+                existing = next(
+                    (
+                        marker
+                        for marker in markers
+                        if marker["start"] == item["start"]
+                        and marker["end"] == item["end"]
+                    ),
+                    None,
+                )
+                if existing:
+                    existing["keys"].append(item["key"])
+                else:
+                    markers.append(
+                        {
+                            "start": item["start"],
+                            "end": item["end"],
+                            "keys": [item["key"]],
+                        }
+                    )
+            issues = [
+                item
+                for item in issues
+                if not any(
+                    mapping["start"] <= item["start"]
+                    and mapping["end"] >= item["end"]
+                    for mapping in manual
+                )
+            ]
+            diagnostics.extend(
+                {**item, "file": path, "page": number} for item in issues
+            )
+            markers.sort(key=lambda item: item["start"])
+            parts, last, tokens = [], 0, {}
+            display_base = sum(value.count("\n") + 1 for value in views)
+            if number is not None:
+                views.append(f"Page {number}\n" + raw)
+            for index, marker in enumerate(markers):
+                parts.extend(
+                    [visible[last : marker["start"]], f" ⟨cite#{index}⟩ "]
+                )
+                last = marker["end"]
+                tokens[index] = marker
+            parts.append(visible[last:])
+            prose = "".join(parts)
+            sents = []
+            for paragraph in re.split(r"\n\s*\n", prose):
+                sents.extend(
+                    _split_sentences(re.sub(r"\s+", " ", paragraph).strip())
+                )
+
+            render = functools.partial(_input_render, tokens=tokens)
+
+            for index, sent in enumerate(sents):
+                matches = list(_CITE_TOKEN.finditer(sent))
+                if not matches:
+                    continue
+                claim = render(sent)
+                context = " ".join(
+                    render(value)
+                    for value in sents[max(0, index - 1) : index + 2]
+                )
+                anchors = [tokens[int(match[1])] for match in matches]
+                location = _atomic_digest([path, number, anchors[0]["start"]])
+                identity = _atomic_digest(
+                    [
+                        path,
+                        number,
+                        anchors,
+                        claim,
+                        context,
+                        snapshot["raw_sha256"],
+                        fingerprint,
+                        manifest_digest,
+                    ]
+                )
+                sentence = {
+                    "sentence_id": identity,
+                    "location_id": location,
+                    "file": path,
+                    "tex_path": path,
+                    "claim": claim,
+                    "context": context,
+                    "citation_ids": [],
+                    "offset_unit": "unicode-codepoint",
+                    "page": number,
+                }
+                for match in matches:
+                    marker = tokens[int(match[1])]
+                    marker_start = len(render(sent[: match.start()]))
+                    for key_index, key in enumerate(marker["keys"]):
+                        occurrence = _atomic_digest(
+                            [identity, int(match[1]), key_index, key]
+                        )
+                        sentence["citation_ids"].append(occurrence)
+                        start, end = marker["start"], marker["end"]
+                        page_line = raw.count("\n", 0, start) + 1
+                        cites.append(
+                            {
+                                "key": key,
+                                "cmd": "input-cite",
+                                "file": path,
+                                "tex_path": path,
+                                "line": page_line
+                                + display_base
+                                + (1 if number else 0),
+                                "page_line": page_line,
+                                "page": number,
+                                "claim": claim,
+                                "context": context,
+                                "nocite": False,
+                                "occurrence_id": occurrence,
+                                "sentence_id": identity,
+                                "location_id": location,
+                                "marker_start": marker_start,
+                                "marker_end": marker_start
+                                + len(
+                                    "⟨cite:" + ",".join(marker["keys"]) + "⟩"
+                                ),
+                                "source_start": start,
+                                "source_end": end,
+                                "source_command": raw[start:end],
+                                "source_byte_start": None
+                                if number
+                                else len(raw[:start].encode("utf-8")),
+                                "source_byte_end": None
+                                if number
+                                else len(raw[:end].encode("utf-8")),
+                                "source_offset_unit": (
+                                    "extracted-page-unicode-codepoint"
+                                    if number
+                                    else "unicode-codepoint"
+                                ),
+                            }
+                        )
+                sentences.append(sentence)
+        if kind == "pdf":
+            diagnostics.append(
+                {
+                    "code": "pdf-extraction-uncertain",
+                    "message": (
+                        "PDF layout and citation coverage require manual review"
+                    ),
+                }
+            )
+        if mappings:
+            diagnostics.append(
+                {
+                    "code": "manual-input-binding",
+                    "message": (
+                        "Explicit review mappings do not certify "
+                        "citation identity or complete scope"
+                    ),
+                }
+            )
+        keys = sorted({cite["key"] for cite in cites})
+        by_key = {
+            key: [
+                index for index, cite in enumerate(cites) if cite["key"] == key
+            ]
+            for key in keys
+        }
+        digests = {
+            path: snapshot["raw_sha256"],
+            _input_manifest_path(path): manifest_digest,
+        }
+        if any(
+            _audit_file_digest(source) != digest
+            for source, digest in digests.items()
+        ):
+            raise ValueError(
+                "manuscript or input mappings changed during extraction"
+            )
+        return {
+            "complete": True,
+            "main": path,
+            "files": [path],
+            "documentclass": None,
+            "bib_files": [],
+            "input_format": kind,
+            "scope_complete": not diagnostics,
+            "review_only": kind == "pdf"
+            or bool(mappings)
+            or bool(inline_bibliography),
+            "diagnostics": diagnostics,
+            "inline_bibliography": inline_bibliography,
+            "n_instances": len(cites),
+            "n_keys": len(keys),
+            "keys": keys,
+            "cites": cites,
+            "by_key": by_key,
+            "sentences": sentences,
+            "source_digests": digests,
+            "extraction_metadata": fingerprint,
+            "source_texts": {path: "\n".join(views)} if kind == "pdf" else {},
+        }
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {
+            "ok": False,
+            "complete": False,
+            "scope_complete": False,
+            "error": str(exc),
+        }
 
 # ---------------------------------------------------------------------------
 # full text — fetch, cache, passage retrieval for the judge
@@ -5132,12 +6118,26 @@ def _correction_items(
                     if target
                     else None,
                 }
+                if target:
+                    location.update(
+                        {
+                            name: target.get(name)
+                            for name in (
+                                "page",
+                                "page_line",
+                                "source_start",
+                                "source_end",
+                                "source_offset_unit",
+                            )
+                        }
+                    )
                 source = None
                 proposal = None
                 if judgment:
                     source = _correction_evidence(
                         judgment,
-                        verification.get(key, {}).get("status") == "VERIFIED",
+                        verification.get(key, {}).get("status") == "VERIFIED"
+                        and not extracted.get("review_only", False),
                     )
                     if (
                         source is not None
@@ -5401,7 +6401,9 @@ def _correction_snapshot_current(
 ) -> bool:
     """Check only local bound inputs; rendering never repeats registry calls."""
     return (
-        _audit_file_digest(_project_path(workdir, "ledger.json"))
+        (snapshot.get("input_backend") is None
+         or snapshot["input_backend"] == _input_pdf_backend())
+        and _audit_file_digest(_project_path(workdir, "ledger.json"))
         == snapshot["ledger"]
         and all(
             _audit_file_digest(path) == digest
@@ -5425,6 +6427,7 @@ def _correction_preflight(tex_path: str, bib_path: str | None) -> str | None:
         else extracted.get("bib_files", [])
     )
     inputs.update(bibs)
+    inputs.update(extracted.get("source_digests", {}))
     directories = {os.path.join(workdir, PROJECT_DIR)}
     directories.update(
         os.path.join(os.path.dirname(bib), PROJECT_DIR) for bib in bibs
@@ -5549,7 +6552,9 @@ def correction_report(
                 raw = source.read()
             if hashlib.sha256(raw).hexdigest() != snapshot["files"].get(path):
                 raise ValueError("source changed during report rendering")
-            sources[path] = raw.decode("utf-8")
+            sources[path] = ((report.get("source_texts") or {}).get(path)
+                             if path in (report.get("source_texts") or {})
+                             else raw.decode("utf-8"))
         except (OSError, ValueError) as error:
             _invalidate_corrections(report)
             return dict(
@@ -6116,6 +7121,26 @@ def audit(
         for path in expected_bibs
         if path not in bibs
     ]
+    failures.extend(
+        {
+            "type": item["code"],
+            "detail": item["message"],
+            **{
+                key: value
+                for key, value in item.items()
+                if key not in {"code", "message"}
+            },
+        }
+        for item in ex.get("diagnostics", [])
+    )
+    inline_keys = {
+        item["key"]
+        for item in ex.get("inline_bibliography", [])
+        if item.get("key")
+    }
+    if any(item.get("key") is None
+           for item in ex.get("inline_bibliography", [])):
+        inline_keys.update(ex["keys"])
     warnings: list[dict[str, Any]] = []
     if not bibs and (expected_bibs or ex["cites"]):
         failures.append(
@@ -6172,7 +7197,7 @@ def audit(
     nocite_all = any(c["key"] == "*" for c in ex["cites"])
     if nocite_all:
         cite_keys.update(entries)
-    for k in sorted(cite_keys - set(entries)):
+    for k in sorted(cite_keys - set(entries) - inline_keys):
         failures.append(
             {
                 "type": "undefined-cite",
@@ -6229,10 +7254,25 @@ def audit(
                     if not isinstance(entry.get("ids", {}), dict):
                         entry = dict(entry, status="UNRESOLVED", ids={})
                     ver[entry["key"]] = entry
+    for key in inline_keys:
+        ver[key] = {
+            "key": key,
+            "status": "UNCHECKED",
+            "notes": [
+                "Printed inline reference has no verified official provenance"
+            ],
+        }
+        bibliography_locations.setdefault(key, []).extend(
+            item for item in ex["inline_bibliography"] if item["key"] == key
+        )
     unofficial, provenance_states = [], []
     for key in sorted(cite_keys):
         parsed_entry = entries.get(key, (None, {}))[1]
-        provenance_state = _declared_provenance(parsed_entry, ver.get(key, {}))
+        provenance_state = (
+            "UNOFFICIAL"
+            if key in inline_keys
+            else _declared_provenance(parsed_entry, ver.get(key, {}))
+        )
         if provenance_state != "DECLARED":
             unofficial.append(key)
         provenance_states.append(provenance_state)
@@ -6526,17 +7566,21 @@ def audit(
         )
     for k in cite_keys:
         coverage.setdefault(k, "")
-    input_complete = not any(
-        item["type"]
-        in {
-            "missing-bib",
-            "unreadable-bib",
-            "no-bib",
-            "bib-parse",
-            "duplicate-key",
-            "undefined-cite",
-        }
-        for item in failures
+    input_complete = (
+        ex.get("scope_complete", True)
+        and not ex.get("review_only", False)
+        and not any(
+            item["type"]
+            in {
+                "missing-bib",
+                "unreadable-bib",
+                "no-bib",
+                "bib-parse",
+                "duplicate-key",
+                "undefined-cite",
+            }
+            for item in failures
+        )
     )
     existence_axis = _coverage_axis(
         [result["status"] for result in ver.values()],
@@ -6578,6 +7622,17 @@ def audit(
         "provenance": provenance_axis,
         "support": support_axis,
     }
+    if not ex.get("scope_complete", True):
+        for axis in axes.values():
+            axis["observed_expected"] = axis["expected"]
+            axis["expected"] = None
+            axis["complete"] = False
+            for name in (
+                "assessment_rate", "verification_rate", "declaration_rate"
+            ):
+                if name in axis:
+                    axis[name] = None
+        support_axis["atomic_total_known"] = False
     complete = input_complete and all(
         axis["complete"] for axis in axes.values()
     )
@@ -6604,6 +7659,20 @@ def audit(
         "warnings": warnings,
         "checked": _now_iso(),
     }
+    report.update(
+        {
+            name: ex.get(name)
+            for name in (
+                "input_format",
+                "scope_complete",
+                "review_only",
+                "diagnostics",
+                "inline_bibliography",
+                "extraction_metadata",
+                "source_texts",
+            )
+        }
+    )
     report["bibliography_locations"] = bibliography_locations
     report["corrections"] = _correction_items(
         report, ex, current_judgments, ver
@@ -6613,6 +7682,9 @@ def audit(
         "files": {**ex["source_digests"], **bib_snapshots},
         "ledger": ledger_digest,
         "sources": source_snapshots,
+        "input_backend": ex.get("extraction_metadata", {}).get("extractor")
+        if ex.get("input_format") == "pdf"
+        else None,
     }
     coverage = {k: v.strip() or "—" for k, v in coverage.items()}
     with _file_lock(_project_path(workdir, "ledger.json")):
@@ -6779,6 +7851,9 @@ def _job_scan(
                 "sentence_id": required["sentence_id"],
                 "file": required["file"],
                 "line": required["line"],
+                "page": required.get("page"),
+                "page_line": required.get("page_line"),
+                "source_offset_unit": required.get("source_offset_unit"),
                 "claim": required["claim"],
                 "context": required["context"],
                 "assertion": required.get("atom", {}).get(
@@ -6814,8 +7889,13 @@ def _job_scan(
     if any(item["key"] == "*" for item in extracted["cites"]):
         keys.update(entries)
     identity = []
+    printed_keys = {
+        item.get("key") for item in extracted.get("inline_bibliography", [])
+    }
     for key in sorted(keys):
         path, entry = entries.get(key, (None, {}))
+        if key in printed_keys or None in printed_keys:
+            path = None
         related = [item for item in support if item["key"] == key]
         identity_priority = min(
             (item["priority"] for item in related),
@@ -6847,7 +7927,16 @@ def _job_scan(
     for judgment in ledger["entries"].values():
         identifier = judgment.get("source_cache_id", judgment["id"])
         sources[identifier] = _current_source_identity(identifier)
-    snapshot = {"files": files, "ledger": ledger_digest, "sources": sources}
+    snapshot = {
+        "files": files,
+        "ledger": ledger_digest,
+        "sources": sources,
+        "input_backend": extracted.get("extraction_metadata", {}).get(
+            "extractor"
+        )
+        if extracted.get("input_format") == "pdf"
+        else None,
+    }
     if not _correction_snapshot_current(snapshot, os.path.dirname(tex_path)):
         raise ValueError("inputs changed while scanning; rescan")
     return {
@@ -6863,6 +7952,15 @@ def _job_scan(
         "snapshot": snapshot,
         "identity_queue": identity,
         "support_queue": support,
+        "input_scope": {
+            name: extracted.get(name)
+            for name in (
+                "input_format",
+                "scope_complete",
+                "review_only",
+                "diagnostics",
+            )
+        },
         "uncited_scope": [
             dict(atom, verified=False)
             for registration in ledger.get("decompositions", {}).values()
@@ -6938,6 +8036,7 @@ def _job_load(path: str, identifier: str) -> dict[str, Any]:
             "identity_queue",
             "support_queue",
             "uncited_scope",
+            "input_scope",
             "runs",
         }
         or type(job["schema_version"]) is not int
@@ -7115,7 +8214,13 @@ def _job_same_scan(job: dict[str, Any], scan: dict[str, Any]) -> bool:
 
     return all(
         job[name] == scan[name]
-        for name in ("config", "snapshot", "support_queue", "uncited_scope")
+        for name in (
+            "config",
+            "snapshot",
+            "support_queue",
+            "uncited_scope",
+            "input_scope",
+        )
     ) and identity(job["identity_queue"]) == identity(scan["identity_queue"])
 
 
@@ -7186,6 +8291,7 @@ def _job_result(job: dict[str, Any], path: str) -> dict[str, Any]:
             for item in queue
         ),
         "identity_expected": len(queue),
+        "input_scope": job["input_scope"],
         "identity_assessed": sum(
             item["status"] == "ASSESSED" for item in queue
         ),
@@ -7231,6 +8337,13 @@ def _job_result(job: dict[str, Any], path: str) -> dict[str, Any]:
             "error": "job-stale: inputs changed before "
             "publication; create a new job",
         }
+    if (not job["input_scope"].get("scope_complete", True)
+            or job["input_scope"].get("review_only")):
+        result["identity_observed_expected"] = result["identity_expected"]
+        result["identity_observed_complete"] = result["identity_complete"]
+        result["identity_expected"] = None
+        result["identity_complete"] = False
+        result["identity_verified"] = False
     return result
 
 
@@ -7551,6 +8664,7 @@ def ping() -> dict:
 
 
 TOOLS = {
+    "register_input": register_input,
     "ping": ping,
     "resolve_citation": resolve_citation,
     "search_citation": search_citation,
@@ -7656,7 +8770,9 @@ def _run_cli(argv):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
+    if sys.argv[1:] == ["_extract-pdf"]:
+        _input_pdf_worker()
+    elif len(sys.argv) > 1:
         _run_cli(sys.argv[1:])
     else:
         _run_mcp_server()
