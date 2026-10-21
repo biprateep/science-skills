@@ -1,13 +1,19 @@
 """HTTP, redirects, throttling and budget-aware response acquisition."""
 
+import concurrent.futures
+import datetime
+import email.utils
 import hashlib
 import json
+import math
 import os
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+from cite_check_engine import network_pool as _engine_network_pool
 from cite_check_engine import budgets as _engine_budgets
 from cite_check_engine import config as _engine_config
 from cite_check_engine import credentials as _engine_credentials
@@ -24,6 +30,12 @@ class _BudgetRedirectHandler(urllib.request.HTTPRedirectHandler):
         del req, fp, code, msg, headers, newurl
         return None
 
+def _new_opener() -> Any:
+    return urllib.request.build_opener(
+        _BudgetRedirectHandler(), *_engine_network_pool.pooled_handlers()
+    )
+
+
 def _budget_open(request: Any, timeout: float) -> Any:
     """Close redirect bodies and admit each hop immediately before opening."""
     budget = _engine_budgets._request_budget.get()
@@ -31,12 +43,12 @@ def _budget_open(request: Any, timeout: float) -> Any:
                             for name, _ in request.header_items())
     if credential_header:
         # Never forward API keys, even to same-origin or downgrade redirects.
-        opener = urllib.request.build_opener(_BudgetRedirectHandler())
+        opener = _new_opener()
         if budget is not None:
             budget.reserve("request", request.full_url)
             timeout = min(timeout, budget.remaining())
         return opener.open(request, timeout=timeout)
-    opener = urllib.request.build_opener(_BudgetRedirectHandler())
+    opener = _new_opener()
     visited: dict[str, int] = {}
     while True:
         if budget is not None:
@@ -102,6 +114,9 @@ def _budget_read(response: Any, max_bytes: int | None = None) -> bytes:
     budget = _engine_budgets._request_budget.get()
     headers = getattr(response, "headers", None)
     declared = headers.get("Content-Length") if headers is not None else None
+    encoding = headers.get("Content-Encoding", "identity") if headers is not None else "identity"
+    if isinstance(encoding, str) and encoding.strip().lower() not in {"", "identity"}:
+        raise RuntimeError("unexpected HTTP Content-Encoding; identity bytes required")
     expected = None
     if isinstance(declared, str) and declared.isascii() and declared.isdigit():
         digits = declared.lstrip("0") or "0"
@@ -141,13 +156,19 @@ def _budget_read(response: Any, max_bytes: int | None = None) -> bytes:
         chunks.append(chunk)
 
 def _throttle(host: str) -> None:
+    host = host.lower()
     interval = _engine_config._HOST_INTERVAL.get(host, 0.2)
     budget = _engine_budgets._request_budget.get()
-    acquired = (
-        _engine_config._host_lock.acquire(timeout=budget.remaining())
-        if budget
-        else _engine_config._host_lock.acquire()
-    )
+    # Only registry access holds the global lock; sleeps are host-local.
+    registry_lock = _engine_config._host_lock
+    acquired = registry_lock.acquire(timeout=budget.remaining()) if budget else registry_lock.acquire()
+    if not acquired:
+        budget.stop("deadline-waiting-for-throttle")
+    try:
+        lock = _engine_config._host_locks.setdefault(host, threading.Lock())
+    finally:
+        registry_lock.release()
+    acquired = lock.acquire(timeout=budget.remaining()) if budget else lock.acquire()
     if not acquired:
         budget.stop("deadline-waiting-for-throttle")
     try:
@@ -158,9 +179,98 @@ def _throttle(host: str) -> None:
             _engine_budgets._budget_sleep(wait)
         _engine_config._host_last[host] = time.monotonic()
     finally:
-        _engine_config._host_lock.release()
+        lock.release()
+
+
+def _retry_delay(value: str | None, attempt: int) -> float:
+    """Bound delta/date Retry-After and fall back on malformed values."""
+    fallback = min(2.0 ** min(attempt, 5), 30.0)
+    if not isinstance(value, str) or not value.strip() or len(value) > 256:
+        return fallback
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            date = email.utils.parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=datetime.timezone.utc)
+            delay = max(0.0, date.timestamp() - time.time())
+        except (ValueError, TypeError, OverflowError):
+            return fallback
+    return min(delay, 30.0) if math.isfinite(delay) and delay >= 0 else fallback
+
+
+def _request_headers(headers: dict | None) -> dict[str, str]:
+    result = {
+        "user-agent": _engine_credentials._user_agent(),
+        "accept": "application/json, text/plain, */*",
+        "accept-encoding": "identity",
+    }
+    result.update({str(name).lower(): str(value) for name, value in (headers or {}).items()})
+    result["accept-encoding"] = "identity"
+    return result
+
+
+def _request_key(url: str, method: str, data: bytes | None, headers: dict) -> str:
+    """Hash exact bytes and header identity; never persist secret values."""
+    encoded = json.dumps([method, url, data is not None, sorted(headers.items())], ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8") + b"\0" + (data or b"")).hexdigest()
+
+
+_flights: dict[tuple[Any, ...], concurrent.futures.Future] = {}
+_flights_lock = threading.Lock()
+
 
 def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dict | None = None,
+          timeout: int = 30, cache: bool = True, binary: bool = False, retries: int = 3,
+          max_bytes: int | None = None):
+    """Coalesce concurrent identical GETs only within one admitted budget."""
+    limit = _engine_config.MAX_HTTP_BYTES if max_bytes is None else max_bytes
+    if type(limit) is not int or limit < 1:
+        raise ValueError("max_bytes must be a positive integer")
+    if type(retries) is not int or not 1 <= retries <= 5:
+        raise ValueError("retries must be an integer between 1 and 5")
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 300:
+        raise ValueError("timeout must be finite and between 0 and 300 seconds")
+    if not isinstance(method, str) or not method:
+        raise ValueError("method must be a nonempty string")
+    method = method.upper()
+    hdrs = _request_headers(headers)
+    budget = _engine_budgets._request_budget.get()
+    if budget is not None:
+        budget.remaining()
+    arguments = (url, method, data, hdrs, timeout, cache, binary, retries, limit)
+    if budget is None or method != "GET":
+        return _http_request(*arguments)
+    key = (budget, _request_key(url, method, data, hdrs), timeout, cache, binary, retries, limit)
+    with _flights_lock:
+        future = _flights.get(key)
+        leader = future is None
+        if leader:
+            future = concurrent.futures.Future()
+            _flights[key] = future
+    if not leader:
+        budget.coalesced_wait()
+        try:
+            result = future.result(timeout=budget.remaining())
+        except concurrent.futures.TimeoutError:
+            budget.stop("deadline-waiting-for-coalesced-request")
+        budget.remaining()
+        return result
+    try:
+        result = _http_request(*arguments)
+    except BaseException as error:
+        future.set_exception(error)
+        raise
+    else:
+        future.set_result(result)
+        return result
+    finally:
+        with _flights_lock:
+            _flights.pop(key, None)
+
+
+def _http_request(url: str, method: str = "GET", data: bytes | None = None, headers: dict | None = None,
           timeout: int = 30, cache: bool = True, binary: bool = False, retries: int = 3,
           max_bytes: int | None = None):
     """Return (status, body). body is str, or bytes when binary=True.
@@ -175,11 +285,8 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
     budget = _engine_budgets._request_budget.get()
     if budget is not None:
         budget.remaining()
-    hdrs = {"User-Agent": _engine_credentials._user_agent(), "Accept": "application/json, text/plain, */*"}
-    hdrs.update(headers or {})
-    cache_key = hashlib.sha1(
-        f"{method} {url} {data.decode('utf-8', 'replace') if data else ''} "
-        f"{hdrs.get('Accept', '')}".encode()).hexdigest()
+    hdrs = _request_headers(headers)
+    cache_key = _request_key(url, method, data, hdrs)
     path = _engine_persistence._cache_file("http", cache_key + ".json")
     if cache and not binary and os.path.exists(path):
         try:
@@ -196,12 +303,13 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
             pass
     host = urllib.parse.urlparse(url).netloc
     last_error = None
-    for attempt in range(1, retries + 1):
+    attempts = retries if method in {"GET", "HEAD"} else 1
+    for attempt in range(1, attempts + 1):
         _throttle(host)
         req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
         try:
             with _budget_open(req, timeout=timeout) as resp:
-                raw = _budget_read(resp, max_bytes=limit)
+                raw = b"" if method == "HEAD" else _budget_read(resp, max_bytes=limit)
                 status = resp.status
             body = raw if binary else raw.decode("utf-8", errors="replace")
             if cache and not binary and status == 200:
@@ -210,18 +318,15 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
                 ))
             return status, body
         except urllib.error.HTTPError as exc:
-            if exc.code in (429, 500, 502, 503, 504) and attempt < retries:
+            if exc.code in (429, 500, 502, 503, 504) and attempt < attempts:
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                try:
-                    delay = float(retry_after) if retry_after else 2.0 ** attempt
-                except ValueError:
-                    delay = 2.0 ** attempt
+                delay = _retry_delay(retry_after, attempt)
                 exc.close()
-                _engine_budgets._budget_sleep(min(delay, 30))
+                _engine_budgets._budget_sleep(delay)
                 last_error = exc
                 continue
             try:
-                body = (b"" if binary else _budget_read(exc, max_bytes=limit).decode(
+                body = (b"" if binary else "" if method == "HEAD" else _budget_read(exc, max_bytes=limit).decode(
                     "utf-8", errors="replace"
                 ))
             finally:
@@ -233,8 +338,8 @@ def _http(url: str, method: str = "GET", data: bytes | None = None, headers: dic
             return exc.code, body
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
-            if attempt < retries:
-                _engine_budgets._budget_sleep(2.0 ** attempt)
+            if attempt < attempts:
+                _engine_budgets._budget_sleep(_retry_delay(None, attempt))
                 continue
     raise RuntimeError(f"{host}: {type(last_error).__name__}: {last_error}")
 

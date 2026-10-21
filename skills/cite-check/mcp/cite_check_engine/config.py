@@ -4,7 +4,7 @@ import os
 import threading
 
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 
 CACHE_DIR = os.environ.get("CITE_CHECK_CACHE") or os.path.join(
     os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "cite-check")
@@ -31,6 +31,7 @@ _HOST_INTERVAL = {
 _host_last: dict = {}
 
 _host_lock = threading.Lock()
+_host_locks: dict[str, threading.Lock] = {}
 
 EVIDENCE_POLICY = "exact-span-v1"
 

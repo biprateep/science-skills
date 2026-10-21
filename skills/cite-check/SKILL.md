@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.11.0"
+  version: "0.12.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -49,7 +49,8 @@ and the audit gate are computed there and returned as tool results; the
 agent's job is to call them and act on what comes back. Maintainers can find
 the module and validation boundaries in `references/engine.md`. Source quality,
 bounded acquisition and preview limits are described in
-`references/extraction-quality.md`.
+`references/extraction-quality.md`. Connection reuse, request isolation and
+retry accounting are documented in `references/acquisition-efficiency.md`.
 
 This skill is **harness-agnostic**: it needs `<run-shell>` with Python 3.10+
 and network access, file read/write, and — for the support check —

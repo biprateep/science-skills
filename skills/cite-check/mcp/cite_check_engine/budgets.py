@@ -74,6 +74,7 @@ class _RequestBudget:
         self.requests = 0
         self.searches = 0
         self.http_cache_hits = 0
+        self.coalesced_waits = 0
         self.unknown_price_requests = 0
         self.stopped: str | None = None
 
@@ -85,6 +86,7 @@ class _RequestBudget:
                 "requests": self.requests,
                 "searches": self.searches,
                 "http_cache_hits": self.http_cache_hits,
+                "coalesced_waits": self.coalesced_waits,
                 "elapsed_seconds": elapsed,
                 "unknown_price_requests": self.unknown_price_requests,
                 "estimated_service_cost_usd": None
@@ -130,6 +132,13 @@ class _RequestBudget:
         with self.lock:
             self.remaining()
             self.http_cache_hits += 1
+            self.persist(self.usage())
+
+    def coalesced_wait(self) -> None:
+        """Count same-budget in-flight reuse separately from disk cache hits."""
+        with self.lock:
+            self.remaining()
+            self.coalesced_waits += 1
             self.persist(self.usage())
 
     def reserve(self, kind: str, url: str | None = None) -> None:
