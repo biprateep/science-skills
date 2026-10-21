@@ -77,7 +77,10 @@ expect 'r["ads_token"] is False' "ping: token gone after delete"
 check "github: identifier spellings" 0 "$PY" - "$SERVER" <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.path.dirname(sys.argv[1]))
-import server as S
+import server
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "..", "tests"))
+import engine_test_support
+S = engine_test_support.LegacyServer(server)
 want = {"https://github.com/dfm/emcee": ("github", "dfm/emcee"),
         "github.com/dfm/corner.py": ("github", "dfm/corner.py"),
         "git@github.com:astropy/astropy.git": ("github", "astropy/astropy"),
@@ -143,7 +146,7 @@ expect 'len(r["ledger"]["entries"]) == 2' "ledger: two verdicts recorded"
 
 check "audit (offline, verify=false): fails on unjudged instances" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"verify\": false}"
 expect 'sum(1 for f in r["failures"] if f["type"] == "support-missing") == 6 and any(f["type"] == "support" for f in r["failures"])' "audit: 6 missing + 1 UNSUPPORTED failure"
-check "audit (offline, no support required): recorded UNSUPPORTED still fails" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"verify\": false, \"require_support\": false}"
+check "audit (offline, no support required): recorded UNSUPPORTED still fails" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"verify\": false, \"require_support\": false, \"policy\": \"exploratory\"}"
 expect 'not any(f["type"] == "support-missing" for f in r["failures"]) and any(f["type"] == "support" for f in r["failures"])' "audit: missing verdicts demoted to warnings, UNSUPPORTED kept"
 check "audit: report written" 0 test -s "$W/.cite-check/audit.md"
 
@@ -193,13 +196,16 @@ expect 'any(f["type"] == "existence" and f["key"] == "wrongdoi2020" for f in r["
 expect 'any(f["type"] == "support" and f["key"] == "einstein1935" for f in r["failures"])' "audit: UNSUPPORTED verdict is a failure"
 expect 'sum(1 for f in r["failures"] if f["type"] == "support-missing") == 6' "audit: unjudged instances are failures"
 expect 'r["support_counts"].get("SUPPORTS") == 1' "audit: SUPPORTS verdict counted"
-check "audit: no-support mode still fails on existence" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"require_support\": false}"
+check "audit: no-support mode still fails on existence" 1 "$PY" "$SERVER" call audit "{\"tex_path\": \"$W/sample.tex\", \"require_support\": false, \"policy\": \"exploratory\"}"
 
 # --- GitHub repositories (live; ~20 GitHub API requests on a cold cache) -------
 GH_LEFT="$(GITHUB_TOKEN="$GITHUB_TOKEN_REAL" "$PY" - "$SERVER" <<'PYEOF' 2>/dev/null
 import sys, os, json
 sys.path.insert(0, os.path.dirname(sys.argv[1]))
-import server as S
+import server
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "..", "tests"))
+import engine_test_support
+S = engine_test_support.LegacyServer(server)
 st, body = S._gh_api("/rate_limit", token=S._github_token())
 print(json.loads(body)["resources"]["core"]["remaining"] if st == 200 else 0)
 PYEOF
