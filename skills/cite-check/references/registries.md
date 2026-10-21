@@ -1,6 +1,6 @@
 # Registries — what each one is good for, and how the toolbox uses it
 
-Every lookup in `mcp/server.py` goes to one of these. The notes below were
+Every citation-engine lookup goes to one of these. The notes below were
 measured, not assumed (2026-09), and they shape the tool's design: **no
 registry's own ranking is trusted**, every candidate is re-scored locally on
 title similarity, first-author surname and year, and BibTeX is taken only

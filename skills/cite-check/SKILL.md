@@ -15,7 +15,7 @@ description: >-
   reviews — it verifies what is cited, it does not survey a field.
 license: MIT
 metadata:
-  version: "0.9.0"
+  version: "0.10.0"
 ---
 
 # Cite-Check: real papers, official BibTeX, supported claims
@@ -42,10 +42,12 @@ three with code rather than with confidence:
    tool checks are verbatim. A real paper cited for something it does not
    say is a fabrication too.
 
-The enforcement lives in an MCP toolbox (`mcp/server.py`). Registry
+The enforcement lives in the shared `mcp/cite_check_engine` package, exposed
+through the MCP/CLI entry point `mcp/server.py`. Registry
 lookups, title/author/year comparison, official export, quote verification
 and the audit gate are computed there and returned as tool results; the
-agent's job is to call them and act on what comes back.
+agent's job is to call them and act on what comes back. Maintainers can find
+the module and validation boundaries in `references/engine.md`.
 
 This skill is **harness-agnostic**: it needs `<run-shell>` with Python 3.10+
 and network access, file read/write, and — for the support check —

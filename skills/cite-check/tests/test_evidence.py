@@ -3,11 +3,14 @@ import importlib.util
 import pathlib
 import unittest
 
+import engine_test_support
+
 SPEC = importlib.util.spec_from_file_location(
     "cite_server", pathlib.Path(__file__).parents[1] / "mcp" / "server.py"
 )
 SERVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SERVER)
+SERVER = engine_test_support.LegacyServer(SERVER)
 
 
 class EvidenceTest(unittest.TestCase):
