@@ -41,6 +41,7 @@ class InputFixture(unittest.TestCase):
             "id": "doi:10.1234/example",
             "basis": "fulltext",
             "path": str(self.source),
+            "intake": test_evidence.source_intake(self.source),
             "source": "local:evidence.txt",
         }
         provenance = SERVER._prov_comment(self.record, "crossref")

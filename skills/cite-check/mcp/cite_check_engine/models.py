@@ -188,6 +188,7 @@ class Claim(_ClaimFields, total=False):
 class SourceSnapshot(typing.TypedDict):
     """Exact content and acquisition-policy binding, including legacy nulls."""
 
+    quality: dict[str, typing.Any]
     sha256: str
     id: str | None
     basis: str | None

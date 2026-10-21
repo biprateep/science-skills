@@ -545,6 +545,16 @@ def audit(
             )
             coverage[c["key"]] = coverage.get(c["key"], "") + " STALE"
             continue
+        if (not (current_source or {}).get("quality", {}).get("usable_for_judgment")
+                and judgment.get("verdict") != "UNVERIFIABLE"):
+            support_states.append("INVALID")
+            failures.append(dict(
+                loc, type="support-quality", verdict=judgment["verdict"],
+                detail="Source extraction is poor, unreadable or unverified; obtain a readable copy and re-judge.",
+                quality=(current_source or {}).get("quality"),
+            ))
+            coverage[c["key"]] = coverage.get(c["key"], "") + " UNVERIFIABLE"
+            continue
         if judgment.get("verdict") not in _engine_evidence._VERDICTS:
             support_states.append("INVALID")
             failures.append(dict(loc, type="support-invalid"))

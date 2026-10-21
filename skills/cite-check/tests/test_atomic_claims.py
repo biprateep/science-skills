@@ -34,6 +34,7 @@ class AtomicClaimsTest(unittest.TestCase):
             "basis": "fulltext",
             "source": "local:source.txt",
             "path": str(self.source),
+            "intake": test_evidence.source_intake(self.source),
             "extraction_version": SERVER.TEXT_EXTRACTION_VERSION,
         }
         self.record_mock = unittest.mock.patch.object(

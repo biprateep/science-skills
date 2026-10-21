@@ -7,6 +7,7 @@ import typing
 import urllib.error
 import urllib.parse
 import urllib.request
+from cite_check_engine import quality as _engine_quality
 from cite_check_engine import models as _engine_models
 from cite_check_engine import config as _engine_config
 
@@ -125,6 +126,7 @@ def _source_identity(
         "source": meta.get("source"), "version": meta.get("version"),
         "extraction": meta.get("extraction_version", "legacy"),
         "policy": _engine_config.EVIDENCE_POLICY,
+        "quality": _engine_quality.current(meta, text),
     }
 
 def _atomic_digest(value: object) -> str:

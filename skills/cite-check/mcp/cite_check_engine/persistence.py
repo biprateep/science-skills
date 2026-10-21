@@ -10,6 +10,7 @@ import re
 import typing
 import time
 from datetime import datetime, timezone
+from cite_check_engine import quality as _engine_quality
 from cite_check_engine import models as _engine_models
 from cite_check_engine import budgets as _engine_budgets
 from cite_check_engine import config as _engine_config
@@ -126,19 +127,20 @@ def _text_paths(cid: str) -> tuple:
 def _load_text_meta(cid: str) -> dict | None:
     legacy_path, metadata_path = _text_paths(cid)
     try:
-        with open(metadata_path, encoding="utf-8") as source:
-            meta = json.load(source)
+        meta = json.loads(_engine_quality.read_bytes(metadata_path, 65536))
+        if not isinstance(meta, dict):
+            return None
         digest = meta.get("text_sha256")
         path = (os.path.join(os.path.dirname(legacy_path), digest + ".txt")
                 if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)
                 else legacy_path)
-        with open(path, encoding="utf-8", errors="replace") as source:
-            text = source.read()
+        text = _engine_quality.read_text(path)
         if digest and hashlib.sha256(text.encode("utf-8")).hexdigest() != digest:
             return None
         meta["path"] = path
+        meta["quality"] = _engine_quality.current(meta, text)
         return meta
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, _engine_quality.SourceLimitError):
         return None
 
 def _project_path(workdir: str, name: str) -> str:

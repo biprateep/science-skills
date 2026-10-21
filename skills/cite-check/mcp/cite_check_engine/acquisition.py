@@ -7,13 +7,14 @@ import math
 import os
 import re
 import typing
-import shutil
-import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 from cite_check_engine import models as _engine_models
+from cite_check_engine import manuscripts as _engine_manuscripts
+from cite_check_engine import quality as _engine_quality
+from cite_check_engine import budgets as _engine_budgets
 from cite_check_engine import config as _engine_config
 from cite_check_engine import identifiers as _engine_identifiers
 from cite_check_engine import persistence as _engine_persistence
@@ -65,39 +66,86 @@ def _tidy_text(t: str) -> str:
         t = t[:last.start()]
     return t.strip()
 
-def _pdf_to_text(path: str) -> str:
-    if shutil.which("pdftotext"):
-        r = subprocess.run(["pdftotext", "-enc", "UTF-8", path, "-"], capture_output=True, timeout=180)
-        if r.returncode == 0 and len(r.stdout) > 200:
-            return r.stdout.decode("utf-8", "replace")
+def _extract_pdf(path: str) -> tuple[str, dict[str, typing.Any]]:
+    """Extract a bounded PDF in the existing isolated, timed worker."""
+    raw = _engine_quality.read_bytes(path, _engine_config.MAX_PDF_BYTES)
     try:
-        import pypdf
-    except ImportError:
-        raise RuntimeError("no PDF text extractor: install poppler's pdftotext, or pypdf in mcp/.venv")
-    reader = pypdf.PdfReader(path)
-    return "\n".join((pg.extract_text() or "") for pg in reader.pages)
+        result = _engine_manuscripts._input_pdf_extract(raw)
+    except ValueError as error:
+        raise RuntimeError(str(error)) from error
+    pages = result.get("pages")
+    if (
+        not isinstance(pages, list) or not 0 < len(pages) <= 500
+        or any(not isinstance(page, dict)
+               or type(page.get("page")) is not int
+               or page["page"] != number
+               or not isinstance(page.get("text"), str)
+               for number, page in enumerate(pages, 1))
+    ):
+        raise RuntimeError("invalid PDF extraction page scope")
+    text = "\n".join(page["text"] for page in pages)
+    if len(text.encode("utf-8")) > _engine_config.MAX_SOURCE_TEXT_BYTES:
+        raise _engine_quality.SourceLimitError("PDF extracted text exceeds byte limit")
+    intake = _engine_quality.make_intake(raw, "pdf", pages)
+    intake["extractor"] = result.get("extractor")
+    return text, intake
+
+
+def _pdf_to_text(path: str) -> str:
+    """Compatibility helper: bounded, isolated PDF extraction."""
+    return _extract_pdf(path)[0]
+
 
 def _download_pdf(url: str, dest: str) -> bool:
     try:
-        status, data = _engine_transport._http(url, binary=True, timeout=120, headers={"Accept": "application/pdf,*/*"})
+        status, data = _engine_transport._http(
+            url, binary=True, timeout=120,
+            headers={"Accept": "application/pdf,*/*"},
+            max_bytes=_engine_config.MAX_PDF_BYTES,
+        )
+    except _engine_budgets.BudgetExhaustedError:
+        raise
     except RuntimeError:
         return False
-    if status != 200 or not isinstance(data, bytes) or not data.startswith(b"%PDF") or len(data) > _engine_config.MAX_PDF_BYTES:
+    if (status != 200 or not isinstance(data, bytes)
+            or not data.startswith(b"%PDF")
+            or len(data) > _engine_config.MAX_PDF_BYTES):
         return False
-    with open(dest, "wb") as fh:
-        fh.write(data)
+    _engine_persistence._atomic_write(dest, data)
     return True
 
-def _obtain_text(rec: typing.Mapping[str, typing.Any], cid: str) -> tuple:
+
+def _prepare_source(text: str) -> tuple[str, list[str]]:
+    """Name intentional normalization separately from input truncation."""
+    normalization = ["whitespace", "line-dehyphenation"]
+    if any(match.start() > 0.6 * len(text) for match in re.finditer(
+        r"\n\s*(?:\d+\.?\s*)?(?:References|REFERENCES|Bibliography|BIBLIOGRAPHY)\s*\n",
+        text,
+    )):
+        normalization.append("references-removed")
+    return _tidy_text(text), normalization
+
+def _obtain_text(
+    rec: typing.Mapping[str, typing.Any], cid: str,
+    details: dict[str, typing.Any] | None = None,
+) -> tuple:
     """(text, basis, source) — arXiv HTML, arXiv PDF, an open-access PDF the
     registries point at, else the abstract, else nothing. A GitHub repository
     yields its README with its description and CITATION.cff abstract (basis
     readme)."""
+    details = details if details is not None else {}
+    details.setdefault("acquisition_diagnostics", [])
     if rec.get("github"):
-        return _github_text(rec)
+        text, basis, source = _github_text(rec)
+        details["intake"] = _engine_quality.make_intake(
+            text.encode("utf-8"), "remote-text" if basis == "readme" else "abstract"
+        )
+        return text, basis, source
     if rec.get("doi") and (not rec.get("arxiv") or not rec.get("abstract") or not rec.get("pdf_urls")):
         try:                                            # OpenAlex knows OA copies and abstracts
             oa = _engine_registry_clients._openalex_get("https://doi.org/" + rec["doi"])
+        except _engine_budgets.BudgetExhaustedError:
+            raise
         except RuntimeError:
             oa = None
         if oa:
@@ -107,26 +155,59 @@ def _obtain_text(rec: typing.Mapping[str, typing.Any], cid: str) -> tuple:
         arxiv_id = rec.get("arxiv_version") or rec["arxiv"]
         try:
             status, body = _engine_transport._http(f"https://arxiv.org/html/{arxiv_id}", cache=False, timeout=60)
-        except RuntimeError:
+        except _engine_budgets.BudgetExhaustedError:
+            raise
+        except RuntimeError as error:
+            details["acquisition_diagnostics"].append(str(error))
             status, body = 0, ""
         if status == 200 and "ltx_document" in body:
-            text = _tidy_text(_html_to_text(body))
-            if len(text) > 2000:
+            text, normalization = _prepare_source(_html_to_text(body))
+            intake = _engine_quality.make_intake(body.encode("utf-8"), "remote-text")
+            if len(text) > 2000 and _engine_quality.assess(text, intake)["usable_for_judgment"]:
+                details.update(intake=intake, normalization=normalization)
                 return text, "fulltext", "arxiv-html"
+            details["acquisition_diagnostics"].append("arXiv HTML text was limited or poor")
         pdf = _engine_persistence._cache_file("pdf", _engine_identifiers._cache_key(cid) + ".pdf")
         if _download_pdf(f"https://arxiv.org/pdf/{arxiv_id}", pdf):
-            text = _tidy_text(_pdf_to_text(pdf))
-            if len(text) > 2000:
-                return text, "fulltext", "arxiv-pdf"
+            try:
+                text, intake = _extract_pdf(pdf)
+                text, normalization = _prepare_source(text)
+                if len(text) > 2000 and _engine_quality.assess(text, intake)["usable_for_judgment"]:
+                    details.update(intake=intake, normalization=normalization)
+                    return text, "fulltext", "arxiv-pdf"
+                details["acquisition_diagnostics"].append("arXiv PDF extraction was limited or poor")
+            except _engine_budgets.BudgetExhaustedError:
+                raise
+            except RuntimeError as error:
+                details["acquisition_diagnostics"].append(str(error))
+        else:
+            details["acquisition_diagnostics"].append(
+                "arXiv PDF download unavailable, incomplete, oversized or invalid"
+            )
     if rec.get("arxiv_version"):
         return "", "none", f"arxiv:{rec['arxiv_version']} unavailable"
     for url in rec.get("pdf_urls") or []:
         pdf = _engine_persistence._cache_file("pdf", _engine_identifiers._cache_key(cid) + ".pdf")
         if _download_pdf(url, pdf):
-            text = _tidy_text(_pdf_to_text(pdf))
-            if len(text) > 2000:
-                return text, "fulltext", url
+            try:
+                text, intake = _extract_pdf(pdf)
+                text, normalization = _prepare_source(text)
+                if len(text) > 2000 and _engine_quality.assess(text, intake)["usable_for_judgment"]:
+                    details.update(intake=intake, normalization=normalization)
+                    return text, "fulltext", url
+                details["acquisition_diagnostics"].append("open PDF extraction was limited or poor")
+            except _engine_budgets.BudgetExhaustedError:
+                raise
+            except RuntimeError as error:
+                details["acquisition_diagnostics"].append(str(error))
+        else:
+            details["acquisition_diagnostics"].append(
+                "Open PDF download unavailable, incomplete, oversized or invalid"
+            )
     if rec.get("abstract"):
+        details["intake"] = _engine_quality.make_intake(
+            (rec.get("title", "") + "\n\n" + rec["abstract"]).encode("utf-8"), "abstract"
+        )
         return rec.get("title", "") + "\n\n" + rec["abstract"], "abstract", ",".join(rec.get("registries") or [rec["registry"]])
     return "", "none", None
 
@@ -154,6 +235,8 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
     the abstract; max_chars>0 inlines that much text. A GitHub repository's
     text is its README, description and CITATION.cff abstract (basis readme).
     """
+    if type(max_chars) is not int or max_chars < 0:
+        return {"error": "max_chars must be a nonnegative integer"}
     rec = _engine_resolution._full_record(identifier)
     if rec is None:
         r = _engine_resolution.resolve_citation(identifier)
@@ -168,26 +251,36 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
     if meta and meta.get("basis") == "none":
         meta = None
     if meta is None:
+        details: dict[str, typing.Any] = {}
         try:
             if text_path or pdf_path:
                 src = os.path.abspath(text_path or pdf_path)
                 if not os.path.exists(src):
                     return {"error": f"{src} not found"}
                 if text_path:
-                    with open(src, errors="replace") as fh:
-                        text = fh.read()
+                    raw = _engine_quality.read_bytes(src, _engine_config.MAX_SOURCE_TEXT_BYTES)
+                    text = raw.decode("utf-8", errors="replace")
+                    intake = _engine_quality.make_intake(raw, "local-text")
                 else:
-                    text = _pdf_to_text(src)
-                text, basis, source = _tidy_text(text), "fulltext", f"local:{os.path.basename(src)}"
+                    text, intake = _extract_pdf(src)
+                text, normalization = _prepare_source(text)
+                basis, source = "fulltext", f"local:{os.path.basename(src)}"
+                details.update(intake=intake, normalization=normalization)
             else:
-                text, basis, source = _obtain_text(rec, cid)
-        except RuntimeError as exc:
-            return {"error": str(exc)}
+                text, basis, source = _obtain_text(rec, cid, details=details)
+            if len(text.encode("utf-8")) > _engine_config.MAX_SOURCE_TEXT_BYTES:
+                raise _engine_quality.SourceLimitError("extracted source text exceeds byte limit")
+        except _engine_budgets.BudgetExhaustedError:
+            raise
+        except (RuntimeError, OSError, ValueError) as exc:
+            return {"error": str(exc), "source_published": False}
         meta = {"id": _engine_identifiers._canonical(rec), "cache_id": cid,
                 "requested_version": rec.get("requested_version") or rec.get("arxiv_version"), "basis": basis, "source": source, "chars": len(text),
                 "fetched": _engine_persistence._now_iso(), "title": rec.get("title", ""),
                 "extraction_version": _engine_config.TEXT_EXTRACTION_VERSION,
                 "version": rec.get("pinned_sha") or rec.get("arxiv_version")}
+        meta.update(details)
+        meta["quality"] = _engine_quality.current(meta, text)
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         snapshot = os.path.join(os.path.dirname(tp), digest + ".txt")
         meta["text_sha256"] = digest
@@ -196,11 +289,21 @@ def fetch_text(identifier: str, pdf_path: str | None = None, text_path: str | No
             _engine_persistence._atomic_write(snapshot, text)
             _engine_persistence._atomic_write(mp, json.dumps(meta))
         meta["path"] = snapshot
+    try:
+        current_text = _engine_quality.read_text(meta["path"])
+    except (OSError, _engine_quality.SourceLimitError) as error:
+        return {"error": str(error), "source_published": False}
+    expected_digest = meta.get("text_sha256")
+    if expected_digest and hashlib.sha256(current_text.encode("utf-8")).hexdigest() != expected_digest:
+        return {"error": "source artifact changed during acquisition"}
     out = dict(meta)
+    out["chars"] = len(current_text)
+    out["quality"] = _engine_quality.current(meta, current_text)
+    out["preview_truncated"] = False
     out["abstract"] = ("" if rec.get("arxiv_version") else (rec.get("abstract") or "")[:2500])
     if max_chars and out["basis"] != "none":
-        with open(out["path"], encoding="utf-8", errors="replace") as fh:
-            out["text"] = fh.read()[:max_chars]
+        out["text"] = current_text[:max_chars]
+        out["preview_truncated"] = len(out["text"]) < out["chars"]
     if out["basis"] == "none":
         out["note"] = "no text obtainable — pass pdf_path= with your copy of the paper, or judge UNVERIFIABLE"
     elif out["basis"] == "abstract":
@@ -239,11 +342,11 @@ def find_passages(identifier: str, claims: list[str] | str, k: int = 6, window: 
         return meta
     text = ""
     if meta["basis"] != "none":
-        with open(meta["path"], errors="replace") as fh:
-            text = fh.read()
+        text = _engine_quality.read_text(meta["path"])
     sents = _sentences(text)
     base = {"id": meta["id"], "basis": meta["basis"], "source": meta.get("source"),
-            "n_sentences": len(sents), "abstract": meta["abstract"]}
+            "n_sentences": len(sents), "abstract": meta["abstract"],
+            "quality": meta["quality"], "retrieval_is_partial": True}
     if not sents:
         return dict(base, results=[{"claim": c, "passages": []} for c in claims],
                     note=meta.get("note") or "no sentences to search")
@@ -285,7 +388,6 @@ def _current_source_identity(
     if meta is None:
         return None
     try:
-        with open(meta["path"], encoding="utf-8", errors="replace") as source:
-            return _engine_identifiers._source_identity(meta, source.read())
-    except OSError:
+        return _engine_identifiers._source_identity(meta, _engine_quality.read_text(meta["path"]))
+    except (OSError, _engine_quality.SourceLimitError):
         return None

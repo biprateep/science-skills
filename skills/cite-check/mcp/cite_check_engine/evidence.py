@@ -8,6 +8,7 @@ from typing import Any
 from cite_check_engine import acquisition as _engine_acquisition
 from cite_check_engine import identifiers as _engine_identifiers
 from cite_check_engine import manuscripts as _engine_manuscripts
+from cite_check_engine import quality as _engine_quality
 from cite_check_engine import models as _engine_models
 from cite_check_engine import parsing as _engine_parsing
 from cite_check_engine import persistence as _engine_persistence
@@ -443,13 +444,11 @@ def _correction_evidence(
     if metadata is None:
         return None
     try:
-        with open(
-            metadata["path"], encoding="utf-8", errors="replace"
-        ) as source:
-            text = source.read()
-    except OSError:
+        text = _engine_quality.read_text(metadata["path"])
+    except (OSError, _engine_quality.SourceLimitError):
         return None
-    if _engine_identifiers._source_identity(metadata, text) != judgment["source_identity"]:
+    if (not _engine_quality.current(metadata, text)["usable_for_judgment"]
+            or _engine_identifiers._source_identity(metadata, text) != judgment["source_identity"]):
         return None
     quotes = []
     for quote in judgment.get("quotes", []):
@@ -550,8 +549,16 @@ def record_support(
     basis = meta["basis"]
     text = ""
     if basis != "none":
-        with open(meta["path"], errors="replace") as fh:
-            text = fh.read()
+        try:
+            text = _engine_quality.read_text(meta["path"])
+        except (OSError, RuntimeError) as error:
+            return {"recorded": False, "error": str(error)}
+    quality = _engine_quality.current(meta, text)
+    if not quality["usable_for_judgment"] and verdict != "UNVERIFIABLE":
+        return {
+            "recorded": False, "quality": quality,
+            "error": "Source extraction is inadequate or unknown; obtain a readable copy or record UNVERIFIABLE with a reason.",
+        }
     quotes = [q.strip() for q in (quotes or []) if q and q.strip()]
     checks = [dict({"text": q}, **_locate_quote(text, q)) for q in quotes]
     n_found = sum(1 for c in checks if c["found"])
@@ -572,7 +579,7 @@ def record_support(
             "recorded": False,
             "error": f"{verdict} needs a note (≥ 15 characters) saying what the paper does and does not say",
         }
-    if verdict == "UNVERIFIABLE" and basis == "fulltext":
+    if verdict == "UNVERIFIABLE" and basis == "fulltext" and quality["usable_for_judgment"]:
         return {
             "recorded": False,
             "error": "full text is available — read it and decide (SUPPORTS / PARTIAL / "

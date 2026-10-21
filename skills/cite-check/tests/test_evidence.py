@@ -1,6 +1,8 @@
 """Regression tests for audit finding 1: exact evidence certification."""
+import importlib
 import importlib.util
 import pathlib
+import typing
 import unittest
 
 import engine_test_support
@@ -11,6 +13,15 @@ SPEC = importlib.util.spec_from_file_location(
 SERVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SERVER)
 SERVER = engine_test_support.LegacyServer(SERVER)
+
+
+def source_intake(path: pathlib.Path) -> dict[str, typing.Any]:
+    """Describe the complete local bytes used by a known-good test fixture."""
+    quality = importlib.import_module("cite_check_engine.quality")
+    return typing.cast(
+        dict[str, typing.Any],
+        quality.make_intake(path.read_bytes(), "local-text"),
+    )
 
 
 class EvidenceTest(unittest.TestCase):

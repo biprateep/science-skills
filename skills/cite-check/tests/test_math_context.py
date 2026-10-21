@@ -81,6 +81,7 @@ class MathContextTest(unittest.TestCase):
                 "basis": "fulltext",
                 "source": "local:source.txt",
                 "path": str(source),
+                "intake": test_evidence.source_intake(source),
                 "extraction_version": SERVER.TEXT_EXTRACTION_VERSION,
             }
             with (

@@ -17,6 +17,7 @@ class TransactionsTest(unittest.TestCase):
             source = pathlib.Path(directory) / "source.txt"
             source.write_text("The measurement supports this conclusion.")
             meta = {"id": "doi:10.1/example", "path": str(source), "basis": "fulltext"}
+            meta["intake"] = test_evidence.source_intake(source)
             with unittest.mock.patch.object(SERVER, "_full_record", return_value={"doi": "10.1/example"}), unittest.mock.patch.object(SERVER, "_load_text_meta", return_value=meta):
                 def record(index):
                     return SERVER.record_support(
