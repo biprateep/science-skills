@@ -319,6 +319,13 @@ Verdicts come from the judge via
 
 ---
 
+## Regression checks
+
+Engine regression CI runs native MCP 1 and MCP 2 tests separately from shared
+evaluation calibration and opt-in live-provider checks. See
+[references/regression-ci.md](references/regression-ci.md) when changing the
+toolbox or investigating compatibility failures.
+
 ## Reference Index
 
 Load on demand:

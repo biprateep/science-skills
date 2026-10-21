@@ -29,6 +29,9 @@ offline fixtures and graders; live Claude Code, Codex, and Antigravity runners
 require explicit opt-in. Replay calibration is never reported as agent performance.
 Generated evaluation runs and local runner settings are ignored by Git.
 
+Cite-check also has a [native MCP regression matrix](skills/cite-check/references/regression-ci.md)
+covering both SDK generations, with separate opt-in live-provider smoke checks.
+
 ## Installation
 
 Clone the repo anywhere, then run the one script:
