@@ -2,17 +2,16 @@
   "A": [],
   "B": [
     "bullets",
-    "chrome",
     "font",
     "notes",
-    "shrink",
-    "sub-bullets",
+    "placeholder",
     "text-size",
     "title-bold"
   ],
   "C": [
-    "bullets",
-    "chart",
+    "chrome",
+    "drift",
+    "near-miss",
     "title-period"
   ]
 }

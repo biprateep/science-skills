@@ -16,8 +16,8 @@ that ship an MCP toolbox (`co-scientist`, `cite-check`) carry a *Harness
 Adapter* — a capability map at the top of the skill that the agent resolves to
 its own tools at runtime, with a CLI fallback that runs the same code. The
 others (`code-style`, `co-writer`, `jupytext`, `plot-style`, `slides-style`)
-need only file access and a shell with Python 3 (`code-style` and
-`slides-style` run their tools through [uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
+need only file access and a shell with Python 3 (`code-style` runs its
+checks through [uv](https://docs.astral.sh/uv/)). The methodologies are conceptual and adapt
 to further frameworks by adding a column to a map.
 
 ## Evaluation
@@ -399,26 +399,25 @@ Enforces the author's presentation style on every deck, measured from the XML of
 eleven of their talks (2021-2026), with lessons from two Claude-made decks. Key
 features:
 - **The figure is the slide**: one figure covering a third to a half of the
-  slide, a few 2-8-word labels with thin arrows into it, one bold takeaway, a
+  slide, a few short labels with thin arrows into it, one bold takeaway, a
   small credit line; no bullets outside the summary, no cards, icons or
-  decoration, nothing between 12 and 17 pt.
-- **House chrome**: 16:9 white slides, the title top-left in Title Case at
-  40 pt, a short blue dash under it and a small slide number, as in the
-  author's own theme; a fixed title, acknowledgements and summary formula from
-  a committed text profile, with logos and headshots kept in a local,
+  decoration, no text under 36 px except 24 px credits.
+- **House chrome**: 16:9 white slides, the title top-left in Title Case, a
+  short blue dash under it and a small slide number, as in the author's own
+  theme.
+- **Native decks from a template**: every deck is the host's native deck (a
+  Claude Slides artifact in Claude) copied from the author's template deck
+  (title slide with name and affiliation logos, acknowledgements, statement,
+  figure slide, summary with the closing formula, backup divider); PowerPoint
+  and PDF come from the host's export. Logos and headshots stay in a local,
   uncommitted assets folder.
-- **Claude Slides first**: every deck is a Claude Slides artifact copied
-  from the author's template deck (title slide with name and affiliation
-  logos, acknowledgements, statement, figure slide, summary with the closing
-  formula, backup divider); PowerPoint .pptx (python-pptx, Aptos, from a
-  regenerable template) only when asked.
-- **Native equations**: PowerPoint's own editable equations, converted from
-  LaTeX by pandoc, with a rendered fallback picture; outline SVGs for stacked
-  math in Claude Slides.
-- **Enforced, not narrated**: `scripts/check_slides.py` checks a .pptx for
-  off-face fonts, text sizes, bold or punctuated titles, title drift, bullets,
-  missing chrome, shrink-to-fit, native charts and speaker notes, and
-  `scripts/render_deck.py` renders every slide for a visual pass.
+- **An alignment pass**: `scripts/check_deck.py` measures every element of a
+  finished deck and reports near-miss edges and centres, uneven rows,
+  overlaps, dangling arrows and chrome that drifts between slides, each with
+  the exact value to set, plus a per-slide alignment score; it also checks the
+  house rules (face, sizes, titles, bullets, notes, leftover placeholders).
+- **Native math**: Unicode math in Latin Modern Math, and outline SVGs from
+  LaTeX for stacked equations (`scripts/latex_to_svg.py`).
 
 ## Acknowledgments and Sources
 

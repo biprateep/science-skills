@@ -3,11 +3,11 @@
   "skill": "slides-style",
   "cases": [
     {
-      "id": "review-deck-scenarios",
-      "description": "Starter coverage: rule review of three described decks, one compliant with every house exception, one breaking eight rules, one breaking three; not building, rendering or visual judgement.",
-      "prompt": "review-deck-scenarios/prompt.md",
-      "inputs": "review-deck-scenarios/input",
-      "reference": "review-deck-scenarios/reference",
+      "id": "review-decks",
+      "description": "Starter coverage: house-rule and alignment review of three Claude Slides decks given as files: one compliant with every house exception, one breaking six house rules, one breaking chrome, title and alignment rules; not building, publishing or visual judgement.",
+      "prompt": "review-decks/prompt.md",
+      "inputs": "review-decks/input",
+      "reference": "review-decks/reference",
       "capabilities": [
         "filesystem"
       ],
@@ -15,7 +15,7 @@
         "starter",
         "offline"
       ],
-      "timeout_s": 120,
+      "timeout_s": 180,
       "checks": [
         {
           "id": "a",
@@ -33,11 +33,9 @@
           "pointer": "/B",
           "expected": [
             "bullets",
-            "chrome",
             "font",
             "notes",
-            "shrink",
-            "sub-bullets",
+            "placeholder",
             "text-size",
             "title-bold"
           ]
@@ -49,8 +47,9 @@
           "critical": true,
           "pointer": "/C",
           "expected": [
-            "bullets",
-            "chart",
+            "chrome",
+            "drift",
+            "near-miss",
             "title-period"
           ]
         }

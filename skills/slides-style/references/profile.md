@@ -54,10 +54,12 @@ assets/
 }
 ```
 
-Keys are `logo/…`, `person/…` and `hero/…`. `slidestyle.asset(key)` returns
-the file, `slidestyle.person(key)` a `Person` for the acknowledgements
-slide. A missing logo is skipped with a warning, so a deck still builds on a
-machine without the folder; a missing person or hero raises.
+Keys are `logo/…`, `person/…` and `hero/…`. To use one, read its `file`
+from the manifest, upload that file to the deck as an asset, and place it by
+the `/_blob/` url the upload returns; a person's `name`, `role` and
+`institution` fill the headshot caption. A machine without the folder can
+still build a deck: the template already carries the logos, and missing
+headshots or heroes stay as named placeholders in the reply.
 
 The folder was first filled from the author's own decks (title and
 acknowledgement slides, 2022-2026). Roles go out of date: check a person's

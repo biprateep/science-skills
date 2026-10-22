@@ -98,7 +98,7 @@ Every content slide:
   <div style="position:absolute; left:156px; top:156px; width:154px;
       height:12px; background:#1973eb"></div>
   <!-- figure, labels, arrows, takeaway -->
-  <p style="position:absolute; left:130px; top:1000px; width:1200px;
+  <p style="position:absolute; left:144px; top:1000px; width:1200px;
       font-family:'Noto Sans', Arial, sans-serif; font-size:24px;
       color:#000000">Image courtesy: Sloan Digital Sky Survey</p>
   <p style="position:absolute; left:1702px; top:1000px; width:114px;
@@ -125,13 +125,15 @@ Every content slide:
 | Crowded label | 20 | 40 |
 | Smallest label | 18 | 36 |
 | Headshot caption | 16 | 32 |
-| Credit, citation, slide number | 12 | 24 (the type's floor; .pptx uses 10 pt) |
+| Credit, citation, slide number | 12 | 24 |
 
 ## Content
 
 - **Figures**: `<img>` of the uploaded PNG, `object-fit:contain`, pinned,
   covering a third to a half of the canvas, as close as 48 px to the edges.
-  `alt` says what the figure shows.
+  Give the box the image's aspect ratio (width ÷ height of the PNG), so the
+  picture fills it and its edges can be aligned. `alt` says what the
+  figure shows.
 - **Labels**: pinned `<p>`s with a `width` (so they wrap), 40-48 px,
   `<b>` for the key phrase, `<i>` for a defined term,
   `<span style="color:#c00000">` for the red warning.
@@ -169,20 +171,17 @@ The format has no math markup and runs no scripts, so:
 
 ## Builds
 
-Duplicated slides, as in .pptx: copy the slide, add or highlight one thing,
-keep the title. For one or two items arriving on a slide,
+Duplicated slides: copy the slide, add or highlight one thing, keep the
+title and every element already shown at its exact coordinates. For one or two items arriving on a slide,
 `data-build-in="fade 1"` on those pinned elements (the format has no
 Appear; fade is the nearest). No `data-transition`.
 
-## Slide Types in Brief
+## The Alignment Pass
 
-The recipes in `slide-types.md` translate directly. Inches to px:
+When the deck is written, run `scripts/check_deck.py` on the folder that
+holds its `project/` files, fix what it reports by editing the values it
+names, republish the changed slides, and run it again (SKILL.md,
+"Alignment"). It reads only those local files; if the deck was edited in its
+page meanwhile, read the changed slides from the deck first.
 
-| Slide | Geometry (px) |
-|---|---|
-| Title | title `h1` 88 px at left 144, top 115, width 994, bottom-aligned above the dash at (156, 698); name line 48 px at top 718; email 36 px at top 800; logos height 90 at top 936; hero image right of x 1088 |
-| Statement | one `<p>` 80 px, centred, left 180, top 216, width 1560, height 648 |
-| Figure + labels | figure left 86-1037, top 202-994; labels from x 1066 |
-| Two-panel | halves at left 58 and 976, width 886, top 202 |
-| Summary | `<ul>` 48 px at left 144, top 216, width 1632; closing block bold 40 px at top 785 |
-| Divider | dash at (156, 156); "EXTRA SLIDES" 64 px at left 144, top 194 |
+Slide-type recipes, with their geometry, are in `slide-types.md`.

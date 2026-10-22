@@ -289,3 +289,13 @@ style:
    name in Latin and Bengali, email, handle, current affiliation and the
    closing formula. Logos, headshots and hero images live in a local,
    uncommitted folder that the profile points to.
+
+**Revisions (the author, 2026-10-21 and 2026-10-22).** Decision 2 was
+narrowed twice. First, Claude Slides became the default target and every
+deck starts from a template deck carrying the profile. Then the PowerPoint
+path was dropped entirely: the skill builds only the host's native deck,
+and PowerPoint, PDF or Google Slides come from the host's export. With it
+went decision 3's OMML route and decision 1's Aptos half; the native math
+is the Unicode-plus-SVG route above, and the face is Noto Sans. The author
+also asked for an alignment pass on every finished deck (centring, left
+edges, alignment between slides), which became `scripts/check_deck.py`.
