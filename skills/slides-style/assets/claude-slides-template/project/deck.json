@@ -1,0 +1,19 @@
+{
+  "v": 4,
+  "createdOnFiles": {"v": 1, "at": "2026-10-22T03:20:00Z"},
+  "lists": "css",
+  "title": "Slides Style Template",
+  "cover": "cover",
+  "order": ["cover", "acks", "statement", "content", "summary", "extra"],
+  "sections": {
+    "s1": {"description": "Opening: the title slide and the acknowledgements", "start": "cover"},
+    "s2": {"description": "Body: a statement slide and the figure-and-annotation workhorse", "start": "statement"},
+    "s3": {"description": "Close: the summary with the closing formula, then the backup divider", "start": "summary"}
+  },
+  "faces": {
+    "noto-sans": {"family": "Noto Sans", "href": "https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap"},
+    "noto-sans-bengali": {"family": "Noto Sans Bengali", "href": "https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;700&display=swap"},
+    "latin-modern-math": {"family": "Latin Modern Math", "src": "/_blob/3ec5000ba3d5c6b88e5e7f37637ec20f"}
+  },
+  "designSystems": []
+}

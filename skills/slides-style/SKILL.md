@@ -5,20 +5,20 @@ description: >-
   the slide, text only annotates it. 16:9 white slides; title top-left in
   Title Case at 40 pt with a short blue dash under it and a small slide
   number; no bullets outside the summary; 18-28 pt labels with a bold key
-  phrase and thin black arrows into the figure; 8-11 pt image credits and
-  citations; native editable equations; builds as duplicated slides; no
-  speaker notes; a fixed title, acknowledgements and summary formula. Covers
-  Claude Slides artifacts (Noto Sans) and PowerPoint .pptx built with
-  python-pptx (Aptos). This is the DEFAULT for every deck, talk or slide
-  made for the user. Use whenever making, editing, restyling or reviewing
-  slides, and when the user mentions: slides, deck, talk, presentation,
-  conference talk, defense, PowerPoint, pptx, Claude
-  Slides, title slide, or "slides-style". NOT for posters, for figures
-  themselves (plot-style), or for decks that must follow a collaboration's
-  own template beyond its chrome.
+  phrase and thin black arrows into the figure; 8-11 pt credits;
+  native editable equations; builds as duplicated slides; no
+  speaker notes; a fixed title, acknowledgements and summary formula. Builds
+  a Claude Slides deck by default, starting from the author's template deck;
+  a PowerPoint .pptx (python-pptx, Aptos) only when asked. This is the
+  DEFAULT for every deck, talk or slide made for the user. Use whenever
+  making, editing, restyling or reviewing slides, and when the user
+  mentions: slides, deck, talk, presentation, defense, PowerPoint, pptx,
+  Claude Slides, title slide, or "slides-style". NOT for posters, for
+  figures themselves (plot-style), or for decks that must follow a
+  collaboration's own template beyond its chrome.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Slides Style: the Figure Is the Slide
@@ -38,8 +38,19 @@ This skill is **harness-agnostic**. It has two targets and one rule set:
 
 | Target | When | How | Face |
 |---|---|---|---|
-| **Claude Slides** artifact | The harness offers the Slides artifact type and the user did not ask for a file | the type's own HTML format, styled as in [references/claude-slides.md](references/claude-slides.md) | Noto Sans (+ Noto Sans Bengali, Latin Modern Math) |
-| **PowerPoint .pptx** | Everywhere else, or whenever the user asks for PowerPoint / a file | `assets/slidestyle.py` on `assets/template.pptx`, with python-pptx — [references/pptx.md](references/pptx.md) | Aptos Display / Aptos |
+| **Claude Slides** artifact — **the default** | Always, whenever this skill is triggered, unless the user asks for PowerPoint, a .pptx or another file | a new deck copied from the author's template deck, filled in the type's HTML format as in [references/claude-slides.md](references/claude-slides.md) | Noto Sans (+ Noto Sans Bengali, Latin Modern Math) |
+| **PowerPoint .pptx** | Only when the user asks for PowerPoint / a .pptx / a file to edit offline, when editing an existing .pptx, or where the harness has no Slides artifact type | `assets/slidestyle.py` on `assets/template.pptx`, with python-pptx — [references/pptx.md](references/pptx.md) | Aptos Display / Aptos |
+
+<HARD-RULE>
+Make a Claude Slides deck unless the user asks for PowerPoint or a file; do
+not ask which target. Every new Claude Slides deck starts as a copy of the
+author's template deck (its link is `claude_slides_template.url` in
+`assets/profile.json`): the title slide with the name line, email and
+affiliation logos, the acknowledgements with the funder, a statement slide,
+the figure-and-annotation slide, the summary with the closing formula, and
+the backup divider. Copy it, then replace its bracketed placeholders and
+duplicate its slides for the talk. Never start a deck from a blank canvas.
+</HARD-RULE>
 
 Sizes below are in points. In Claude Slides multiply by 2 for canvas pixels
 (1920 px across 13.333 in: 1 pt = 2 px).
@@ -275,11 +286,13 @@ meaning, apart from a build sequence.
 2. **Figures first.** Gather or make every figure before writing a slide.
    A slide that has no figure is a statement slide or does not exist.
 3. **Build** in the target:
-   - .pptx: copy `assets/slidestyle.py`, `assets/template.pptx` and
-     `assets/profile.json` next to the deck script and follow
-     [references/pptx.md](references/pptx.md).
-   - Claude Slides: follow the type's own procedure, styled by
-     [references/claude-slides.md](references/claude-slides.md).
+   - Claude Slides (the default): copy the template deck into a new deck
+     and fill it, as "Starting a Deck from the Template" in
+     [references/claude-slides.md](references/claude-slides.md) says; the
+     type's own procedure governs the calls.
+   - .pptx (only when asked): copy `assets/slidestyle.py`,
+     `assets/template.pptx` and `assets/profile.json` next to the deck
+     script and follow [references/pptx.md](references/pptx.md).
 4. **Check** (.pptx): `uv run scripts/check_slides.py talk.pptx` must exit
    0. Then render with `python scripts/render_deck.py talk.pptx` and look at
    every slide for overflow, overlap, titles off one line, labels away
@@ -357,7 +370,8 @@ Stop and fix if you catch any of these:
 |---|---|
 | `assets/slidestyle.py` | python-pptx builder: slide types, figures, labels, arrows, credits, OMML equations, Appear builds |
 | `assets/template.pptx` | the house template (theme, Title / Content / Blank layouts, dash, slide number) |
-| `assets/profile.json` | the committed text profile: name line, email, closing formula, logo keys |
+| `assets/profile.json` | the committed text profile: name line, email, closing formula, logo keys, and the Claude Slides template's link and asset ids |
+| `assets/claude-slides-template/` | a backup copy of the template deck's files (`project/deck.json`, `project/slides/*.html`) |
 | `scripts/check_slides.py` | checks a .pptx against the rules (`uv run`, PEP 723 dependencies) |
 | `scripts/render_deck.py` | renders a .pptx to PNGs with LibreOffice for visual QA |
 | `scripts/latex_to_svg.py` | outline SVG of display math for Claude Slides |

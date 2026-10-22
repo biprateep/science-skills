@@ -17,5 +17,17 @@
   "closing": [
     "Thanks for your attention!",
     "Have questions, comments or want to collaborate?"
-  ]
+  ],
+  "claude_slides_template": {
+    "url": "https://claude.ai/artifact/BvfWRMj3oeXMeoxN9msZ8j",
+    "backup": "assets/claude-slides-template/",
+    "assets": {
+      "logo/uoft-statistical-sciences": "e2fe9821ca3c358f0eee7ecb7c03a3f0",
+      "logo/cita": "36cfef18bbaf9e9e4b4bc9927f406160",
+      "logo/uoft-dunlap": "de0ab0eeb0bf526077c878c591057ee9",
+      "logo/vector": "ede42e1b93dbc7a4549f3881915bc52a",
+      "logo/schmidt-sciences": "fbf118536acd6257ee7cafbabb6c4fbe",
+      "font/latin-modern-math": "3ec5000ba3d5c6b88e5e7f37637ec20f"
+    }
+  }
 }

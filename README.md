@@ -407,9 +407,11 @@ features:
   author's own theme; a fixed title, acknowledgements and summary formula from
   a committed text profile, with logos and headshots kept in a local,
   uncommitted assets folder.
-- **Two targets, one rule set**: Claude Slides artifacts (Noto Sans) and
-  PowerPoint .pptx built with python-pptx (Aptos) from a regenerable template
-  (`assets/slidestyle.py`, `assets/template.pptx`).
+- **Claude Slides first**: every deck is a Claude Slides artifact copied
+  from the author's template deck (title slide with name and affiliation
+  logos, acknowledgements, statement, figure slide, summary with the closing
+  formula, backup divider); PowerPoint .pptx (python-pptx, Aptos, from a
+  regenerable template) only when asked.
 - **Native equations**: PowerPoint's own editable equations, converted from
   LaTeX by pandoc, with a rendered fallback picture; outline SVGs for stacked
   math in Claude Slides.

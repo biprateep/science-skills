@@ -9,6 +9,62 @@ typefaces, wide margins, icons and cards), this page wins.
 
 Conversion: 1 in = 144 px, 1 pt = 2 px.
 
+## Starting a Deck from the Template
+
+Every new deck is a copy of the author's template deck, never a blank one.
+`assets/profile.json` holds its link (`claude_slides_template.url`) and the
+ids of its six assets (`claude_slides_template.assets`: five logos and the
+Latin Modern Math font). Its slides, in order:
+
+| Id | Slide | Placeholders to fill |
+|---|---|---|
+| `cover` | title slide: title, dash, name line, email, four affiliation logos | `[Lead Phrase]`, `[Talk Title …]`, the "with …" line, the hero `<img>` (no `src`), its credit |
+| `acks` | acknowledgements: three headshot slots, Schmidt Sciences, fellowship credit | each `[Name]`, `[Role]`, `[Institution]` and headshot `<img>` |
+| `statement` | one centred sentence | the sentence |
+| `content` | the workhorse: title, dash, figure slot, a label with an arrow, a takeaway, credit, slide number | all of it |
+| `summary` | three takeaways, references, the closing formula | takeaways and references |
+| `extra` | the backup divider | none |
+
+1. **Create the deck** from the Slides type: the usual quickstart for a
+   slides intent first, with `design_systems: false` (the template is the
+   look), then `publish` with the type's `type_url`, the talk's `title`
+   and `auto_open: "after_first_write"`. The result's `url` is the new
+   deck; follow the type's instructions it returns for every later call.
+2. **Copy the template's assets** server-side, in one call:
+   `{action: "publish", url: <new deck>, asset: true, from_url: <template
+   url>, asset_ids: [the six ids]}`. The reply pairs each template id with
+   its copy's new `/_blob/<id>` url.
+3. **Read the template's files** in one call: `{action: "read", url:
+   <template url>, paths: ["project/deck.json", "project/slides/cover.html",
+   …]}`, one path per id in its `order`. If the template cannot be read,
+   use the copy in `assets/claude-slides-template/` (same files, same
+   asset ids).
+4. **Write the new deck's files** under one fresh folder in the scratchpad,
+   with the file-writing tool:
+   - `project/deck.json`: the template's, with the talk's `title`,
+     `createdOnFiles.at` set to now, the talk's `order` and `sections`, and
+     the `latin-modern-math` face's `src` set to the font copy's new url.
+   - Each slide file: the template slide with every template
+     `/_blob/<id>` replaced by its copy's url and its placeholders filled.
+     Duplicate `content` (and `statement`) for as many slides as the talk
+     needs, each with a new id (`photoz-results`, `why-distances`) that is
+     both its file name and its `section` id. Renumber the literal slide
+     numbers in deck order.
+   - Publish `project/deck.json` and the cover first, then the rest, as the
+     type's instructions say.
+5. **Leave nothing bracketed.** Every `[…]` is replaced, or its element
+   removed when the talk has no use for it (no hero image: remove the
+   `<img>` and its credit). An `<img>` with no `src` gets an uploaded
+   figure, headshot or hero image (`hero/…` and `person/…` files from the
+   local assets folder, `references/profile.md`). Name any placeholder you
+   could not fill in the reply.
+
+**Changing the template itself**: edit the template deck (in its page, or
+through the type's revising procedure on its link), then copy its files
+into `assets/claude-slides-template/` and update the asset ids in
+`assets/profile.json` if its assets changed, so the backup stays the same
+deck.
+
 ## Faces
 
 Three families, declared once in `project/deck.json` `faces` (or the

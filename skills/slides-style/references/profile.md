@@ -65,5 +65,16 @@ acknowledgement slides, 2022-2026). Roles go out of date: check a person's
 into the folder and adding its line to the manifest; never commit the folder
 or its contents to this repository.
 
-In Claude Slides, upload the files a deck uses as assets and place them by
-the `/_blob/` url the upload returns.
+## The Claude Slides template
+
+`claude_slides_template` in the profile points at the author's template
+deck: its `url`, the `backup` copy of its files in this skill, and the ids
+of the assets it holds (the four title-slide logos, the Schmidt Sciences
+logo and the Latin Modern Math font). A new deck copies those assets from
+the template server-side instead of uploading them again
+(`references/claude-slides.md`, "Starting a Deck from the Template"). Other
+files a deck needs (a hero image, headshots, figures) are uploaded to the
+new deck and placed by the `/_blob/` url the upload returns.
+
+When the profile's logos or affiliation change, change the template deck to
+match, then its backup and these ids.
