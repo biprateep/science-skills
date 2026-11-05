@@ -1,6 +1,6 @@
 # Voice profile — Biprateep Dey, papers
 
-**Version:** 0.3.1 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
+**Version:** 0.3.4 · **Built:** 2026-09-10 from five papers (extraction) · **Interview:** Part 1 ratified 2026-09-11; Part 2 batch 1 (claims, mechanics, structure) recorded 2026-09-11; remainder deferred to first use.
 Register covered: journal and conference papers in astrophysics, physics, ML
 and their intersections, written in LaTeX. Nothing else yet.
 
@@ -49,7 +49,8 @@ sparing with dashes, and unafraid of "very".
 - A rhetorical question. `HARD · L`
 - A one-sentence paragraph for emphasis, or a fragment opening a paragraph. `HARD · L`
 - "Note that", "It is worth noting", "It should be noted" — the form is "We note that". `HARD · F.4`
-- An em-dash aside where a parenthesis or comma would do; more than one dash per page. `HARD · H.1`
+- An em-dash where a parenthesis or comma would do; more than one dash per page. Em-dashes are used very rarely, and only for a genuine aside or tangent. `HARD · H.1 · attested 2026-11-05`
+- A colon in running prose that does not introduce a list or a displayed equation (never use a colon to join a setup clause to an explanation or payoff). `HARD · attested 2026-11-05`
 - A bulleted or numbered list in running prose; procedures are narrated. `HARD · B.4`
 - Sentence-initial "Interestingly,". `HARD · D.4`
 - "Firstly / Secondly", "Overall,", "In summary,". `HARD · L`
@@ -105,7 +106,7 @@ From the corpus:
 
 ## 2. Paragraphs and sentences
 
-- Paragraphs are long (100–125 words typical, up to 300) and single-topic. `STRONG · measured B.3`
+- Paragraphs are single-topic; break long blocks into two or three positions based on where the focus or topic shifts slightly (e.g., from problem motivation and use cases to prior literature), for increased readability. Avoid overly monolithic blocks. `STRONG · attested 2026-11-05 · B.3`
 - Sentence-initial bare "This" + verb is the primary link between sentences: "This yields…", "This shows that…", "This is because…", "This allows us to…". Use it freely but not in consecutive sentences more than twice. `STRONG · measured B.2`
 - Procedures are narrated "We first … We then … Next, … Finally," — never numbered. `HARD · measured B.4`
 - Purpose-infinitive openers for methods: "To ensure …, we …", "To quantify this, we …". `STRONG · measured C.1`
@@ -130,7 +131,9 @@ From the corpus:
 
 ## 4. Prior work
 
-- A cited work is a grammatical agent with a specific verb — "laid out", "described", "proposed", "modified", "combined", "produced" — followed by a "They …" sentence saying what it did. `STRONG · measured E.1`
+- When surveying literature or giving examples of applications/methods, state the application case or concept first and group the relevant citations parenthetically with `\citep[e.g.,][]{...}` or `\citep{...}`, rather than narrating papers one by one as grammatical subjects ("[Author A] did X, [Author B] did Y"). Reserve `\citet{...}` as a grammatical subject for when a specific single paper is being discussed or compared in detail. `HARD · attested 2026-11-05`
+- Frame application examples around broad task archetypes rather than single narrow subfield cases (e.g., predicting physical properties such as redshifts, stellar masses, or chemical abundances of individual objects from observed photometry or spectra; inferring intrinsic population distributions and occurrence rates from noisy and incomplete survey catalogs across exoplanets, Galactic stars, or gravitational-wave sources; fitting scaling relations in the presence of measurement uncertainties, intrinsic scatter, and outliers), so readers across domains recognize their problem. `STRONG · attested 2026-11-05`
+- Indicate that example lists are non-exhaustive ("Representative examples include … among many others."), and cite 2–4 representative works per group under `\citep[e.g.,][]{...}` to reflect the breadth of each task. `STRONG · attested 2026-11-05`
 - Credit before critique, in the same sentence or the one before: "While X is highly successful, it depends on …". `STRONG · measured E.2`
 - Comparisons are paired numbers in parentheses with "vs.", or "by 12 percentage points in precision and 28 in recall". `STRONG · measured E.3`
 - "For example," / "For instance," follows an abstract claim with a concrete case. `LIGHT · measured E.4`
@@ -145,7 +148,8 @@ From the corpus:
 - **American English, always**, whatever the venue. (The 2021 MNRAS paper is British because the journal copy-edited it; that is not the author's choice.) `HARD · attested 2026-09-11`
 - "dataset", one word, always, including in headings ("Datasets Used") and in specimens that spell it "data set", which predate this rule. `HARD · attested 2026-09-29, replacing "data set, two words" of 2026-09-11`
 - "use" is the default; "utilize" when a resource or capability is being put to work ("utilize the data to develop a model", "utilized a local sky subtraction"). `LIGHT · attested 2026-09-11 · G.1`
-- Dashes: at most one per page, for an "i.e."-style gloss or an appositive list; zero is the norm. `HARD · measured H.1`
+- Dashes: used very rarely, only for a genuine aside or tangent (at most one per page; zero is the norm). `HARD · measured H.1 · attested 2026-11-05`
+- Colons: used only when starting a list or leading into a display equation ("is given by:"), never to join a setup clause to an explanation or payoff in running prose. `HARD · attested 2026-11-05`
 - Semicolons: journal papers only, joining a clause to its qualification, often carrying "however" or "therefore". `LIGHT · measured H.2`
 - Double quotes around a coined or borrowed term at first use: “spectro-perfectionism”, “cocoon”. `STRONG · measured H.4`
 - Parentheses do six jobs — gloss, "(ACRONYM; citation)", "(see Sec. N)", "(17–308 min)", "(0.18% vs 0.20%)", "(top row)" — and the density is high. `STRONG · measured H.5`
@@ -188,7 +192,6 @@ Every pattern the author declines, and every candidate that fails its test, is r
 Failed the test of 2026-09-29 (digest 2026-09-29T1222). Each was a reading of the author's edits, not their words. A fresh-context rewrite with the rule added did not move the output toward the author's accepted text on most inputs, compared with the same inputs without it. One sample per input, so each is re-proposable when a later digest brings new evidence:
 - **C5, workshop vocabulary** ("say what a step does, not its machinery"): similarity rose on 1 of 5 inputs, mean 0.652 → 0.616; machinery phrases unchanged (4 → 4).
 - **C6, "training data size" over bare "context size", "data set" over "survey"**: rose on 0 of 3, mean 0.644 → 0.616, although the targeted phrasing went (2 → 0).
-- **C7, no colon joining a setup to its payoff**: rose on 1 of 3, mean 0.542 → 0.510; the baseline wrote no such colon either, so the rule had nothing to act on.
 - **C9, gloss every metric and data-release acronym at first use**: rose on 1 of 3, mean 0.725 → 0.677; glosses went 2 → 5, more than the author's own versions carry (4).
 
 ---
@@ -266,6 +269,9 @@ Verbatim, from the corpus, chosen by the extraction as *typical*. **The author's
 
 ## 13. Changelog
 
+- **0.3.4** (2026-11-05) — author attestation: break long paragraphs into two or three positions at natural topic shifts for readability; frame application examples around broad task archetypes rather than single subfield cases; make example lists explicitly non-exhaustive with 2–4 representative citations per group under `\citep[e.g.,][]{...}`.
+- **0.3.3** (2026-11-05) — author attestation: when surveying literature or giving application examples, describe the application case or method concept and attach citations parenthetically (`\citep[e.g.,][]{...}`) rather than listing `[Author A] did X, [Author B] did Y` one by one (superseding E.1 for literature surveys).
+- **0.3.2** (2026-11-05) — author attestation: colons are used only when starting a list or leading into a display equation (superseding and removing C7 from §10); em-dashes are used very rarely and only for a genuine aside or tangent.
 - **0.3.1** (2026-09-29) — "dataset", one word, replaces "data set" as the HARD rule (the author's ruling on C10 of digest 2026-09-29T1222, after their own edits wrote "dataset"); specimens keep their original spelling and the rule overrides it.
 - **0.3.0** (2026-09-29) — first review of a digest (proposal 2026-09-29T1222, 52 of the author's edits harvested from Claude Code and Antigravity sessions on FM4PZ). Adopted: four workshop specimens the author asked on 2026-09-19 to keep as examples (abstract; table, multi-panel line and matrix captions), their nouns quarantined in §9; the caption rule (§6, I.3) revised to open on what is plotted, bold panel labels, markers left to the legend, colours named for distributions, after it passed its test. Rejected after testing: C5, C6, C7, C9 (§10). Held: whether "dataset" in the author's own typing overrides the HARD "data set" rule.
 - **0.2.0** (2026-09-12) — mechanisms from the book-writing skills: specimens outrank rules (authority line); read the specimen immediately before writing and rewrite from it on a miss, never revise against the list; specimens renamed specimens with the author's verdict pending; counterexamples.md added; the mannered-prose entry restated as its definition with the fix; the litmus question moved to the cold read.
