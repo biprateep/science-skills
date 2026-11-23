@@ -1,7 +1,8 @@
 # Voice extraction — the deep read
 
 A prompt for an agent that reads the author's finished papers and reports what
-it observes. The output feeds [voice-profile.md](voice-profile.md); it is not
+it observes. The output feeds `voice-profile.md` in the active profile
+directory (`~/.co-writer/profile/`, or `$CO_WRITER_PROFILE_DIR`); it is not
 the profile. The extractor **describes**; the profile **decides**.
 
 ## Inputs
@@ -37,9 +38,10 @@ produces mechanisms.
    *Notably*, rule-of-three lists, em-dash asides, "delve", "crucial role",
    rhetorical questions, one-sentence paragraphs for emphasis). A voice is
    defined as much by what it refuses.
-6. **Quarantine content.** Topic-specific framings — photo-*z* calibration,
-   DESI, LSST — are subject matter, not voice. Flag any phrase whose reuse in
-   an unrelated paper would import content rather than style.
+6. **Quarantine content.** Topic-specific framings — survey names, instrument
+   acronyms, problem-specific jargon — are subject matter, not voice. Flag any
+   phrase whose reuse in an unrelated paper would import content rather than
+   style.
 7. **Do not prescribe.** No "should", no "always", no "never" in the report.
    Frequency labels are assigned later, in the profile, with the author.
 
@@ -62,7 +64,9 @@ produces mechanisms.
 
 ## Output format
 
-Write `extraction-report.md` with one entry per finding:
+Write `extraction-report.md` in the active profile directory
+(`~/.co-writer/profile/extraction-report.md`, or `$CO_WRITER_PROFILE_DIR`)
+with one entry per finding:
 
 ```
 ### <dimension letter>.<n> <short name>
@@ -89,18 +93,16 @@ Then four closing sections:
   a pattern is the author's or a co-author's, whether a construction is a
   choice or a habit, what the author would change on reread.
 
-## Corpus notes for this run
+## Corpus notes template
 
-Five papers, all first-author or corresponding-author with the prose written
-by the author:
+Before writing the report, record the corpus read in the header of
+`extraction-report.md`:
 
 | doc id | venue | length | notes |
 |---|---|---|---|
-| DESI | journal (AAS) | ~11.5k words | 2024, large collaboration author list |
-| encapzulate | journal | ~11k words | 2021, capsule networks for photo-*z* |
-| recalibrate | NeurIPS workshop | ~1.8k words | 2021, PDF re-calibration |
-| Peng | NeurIPS workshop | ~1.7k words | 2026, student first author; prose by the author |
-| Pratsos | NeurIPS workshop | ~1.5k words | 2026, student first author; prose by the author |
+| PAPER1 | journal | ~10k words | first-author, prose by the author |
+| PAPER2 | workshop / conference | ~2k words | short-format register |
 
-Two long journal papers carry 82% of the words. A pattern that holds on the
-long two and not the short three is `JOURNAL`, not `ALL`.
+Note any length imbalance across documents (for example, if long journal papers
+carry most of the word count, a pattern that holds only there is `JOURNAL`, not
+`ALL`).

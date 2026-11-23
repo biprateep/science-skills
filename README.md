@@ -287,12 +287,15 @@ bibliography actually fails:
 ### Co-Writer (`skills/co-writer`)
 Writes and rewrites paper prose in the author's own voice — from rough notes,
 an agent's draft or a collaborator's section — preserving the information and
-changing only how it is said. Key features:
-- **One profile, evidence-backed**: `references/voice-profile.md` holds graded
-  rules (HARD / STRONG / LIGHT), a Never list, the words a de-AI pass must leave
-  alone, and verbatim specimens indexed by section function (abstract, gap,
-  methods, equation, results, limitation, close, caption); every rule is traced
-  to excerpts in `references/extraction-report.md` and ratified in an interview.
+changing only how it is said. No personal writing samples ship in this
+repository; each user's voice profile lives privately outside the repo in
+`~/.co-writer/profile/` (or `$CO_WRITER_PROFILE_DIR`). Key features:
+- **Private profile, evidence-backed**: `~/.co-writer/profile/voice-profile.md`
+  holds graded rules (`HARD` / `STRONG` / `LIGHT`), a Never list, words a de-AI
+  pass must leave alone, and verbatim specimens indexed by section function
+  (abstract, gap, methods, equation, results, limitation, close, caption).
+  Curated profile files can live in your own private git repository and be
+  linked on any machine with `cowriter.py init --link /path/to/private-voice`.
 - **Preservation outranks voice**: numbers survive exactly, a claim never moves
   up the profile's ladder (`proves > demonstrates > shows > indicates > is
   consistent with > suggests`), the citation set never grows, LaTeX markup
@@ -300,31 +303,27 @@ changing only how it is said. Key features:
   `scripts/check_fixed.py` gates all of it, and a cold read by an agent that
   never saw the input answers the question the writer cannot — would the
   author have written this.
-- **Built from the papers, not from self-description**: `scripts/extract_prose.py`
-  turns `.tex` into readable prose, `references/extraction.md` is the deep-read
-  prompt, and `references/interview.md` asks only what the text cannot answer.
+- **Usable on day 1, grows from edits (or existing papers)**: running
+  `python3 skills/co-writer/scripts/cowriter.py init` installs a clean `0.0.0`
+  starter profile (preservation rules + generic anti-AI baseline) that learns
+  gradually as you edit outputs. To jumpstart from finished papers instead,
+  extract prose (`python3 skills/co-writer/scripts/extract_prose.py
+  paper/main.tex … --out-dir prose/`), run `references/extraction.md`, and
+  answer `references/interview.md`.
 - **Improves from use**: every agent logs every rewrite through one script,
   `scripts/cowriter.py`, into one store, `~/.co-writer/`. When the author
   says "co-writer update", `scripts/update.sh` harvests those logs, the
   paper's git history and the Claude Code, Codex and Antigravity transcripts
   into pairs of what an agent delivered and what the author kept, and has an
-  agent digest the new ones into a proposal. The
-  profile changes only when the author rules on it ("co-writer review"). A
-  fixed six-input `eval/` set scores each profile version by how much the
-  author still edits.
+  agent digest the new ones into a proposal. The profile changes only when the
+  author rules on it ("co-writer review"). A fixed six-input `eval/` set scores
+  each profile version by how much the author still edits.
 - **Citations go through cite-check**, never through co-writer's own
   reasoning: a rewrite that touches a citing sentence is re-judged against
   the cited paper, a citation gap is filled by `search_citation` → `bib_add`,
   and a draft is finished only when cite-check's `audit` is ok. co-writer
   keeps one check of its own — the citation set never grows or moves.
 - Papers only, for now — astrophysics, physics and ML manuscripts in LaTeX.
-
-The committed profile is the repository author's voice. To make it yours:
-extract prose from your own papers (`python skills/co-writer/scripts/extract_prose.py
-paper/main.tex … --out-dir prose/`), run the deep read in
-`references/extraction.md` over it, answer `references/interview.md`, and
-write `references/voice-profile.md` from the two — then let the capture loop
-correct it as you use it.
 
 ### Code Style (`skills/code-style`)
 Every line of Python an agent writes follows the

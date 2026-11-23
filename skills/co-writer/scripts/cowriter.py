@@ -8,6 +8,8 @@ repository, at ``$CO_WRITER_HOME`` (default ``~/.co-writer``), so the
 location never depends on the agent's working directory::
 
     ~/.co-writer/
+    ├── profile/                  personal voice-profile.md, counterexamples.md,
+    │                             lexicon.json (or symlink to a private repo)
     ├── papers.json               paper id -> repository root, .tex files
     ├── papers/<paper>/log/       YYYY-MM-DD-NN.md, one per rewrite or session
     ├── papers/<paper>/snapshots/ the .tex as found at each harvest
@@ -19,6 +21,8 @@ location never depends on the agent's working directory::
 
 Subcommands::
 
+    cowriter.py init     [--link DIR]
+    cowriter.py profile  [--json]
     cowriter.py log      --file TEX --agent A --slot S --register R
                          --input IN --output OUT [--note ..] [--unsure ..]
     cowriter.py session  --file TEX --agent A --asked .. --produced ..
@@ -62,7 +66,8 @@ import sys
 from typing import Any
 
 SKILL_DIR = pathlib.Path(__file__).resolve().parent.parent
-PROFILE = SKILL_DIR / "references" / "voice-profile.md"
+TEMPLATES_DIR = SKILL_DIR / "references" / "templates"
+PROFILE_FILES = ("voice-profile.md", "counterexamples.md", "lexicon.json")
 CLAUDE_PROJECTS = pathlib.Path.home() / ".claude" / "projects"
 CODEX_HOME = pathlib.Path(
     os.environ.get("CODEX_HOME", pathlib.Path.home() / ".codex")
@@ -162,7 +167,7 @@ def register_paper(tex: pathlib.Path, paper: str | None = None) -> str:
     """Records the paper a .tex file belongs to and returns its id.
 
     The id is the name of the git repository holding the file (for example
-    ``manuscript-fm4pz``), so it is the same from any working directory.
+    ``my-paper``), so it is the same from any working directory.
 
     Args:
         tex: Path of the .tex file, absolute or relative to the cwd.
@@ -194,11 +199,91 @@ def paper_dir(paper: str) -> pathlib.Path:
     return base
 
 
+def profile_dir(create: bool = False) -> pathlib.Path:
+    """Returns the active personal profile directory.
+
+    Resolution order: ``$CO_WRITER_PROFILE_DIR`` if set and non-empty, else
+    ``<store_home>/profile``.
+
+    Args:
+        create: Whether to create the directory if it does not yet exist.
+
+    Returns:
+        The profile directory path.
+    """
+    override = os.environ.get("CO_WRITER_PROFILE_DIR", "").strip()
+    target = (
+        pathlib.Path(override).expanduser()
+        if override
+        else store_home() / "profile"
+    )
+    if create:
+        target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def profile_path(name: str) -> pathlib.Path:
+    """Returns the path to ``name`` in the active profile or starter templates.
+
+    Args:
+        name: Filename such as ``voice-profile.md`` or ``counterexamples.md``.
+
+    Returns:
+        The file inside the active profile directory if it exists, otherwise
+        the bundled starter template when available.
+    """
+    active = profile_dir() / name
+    if active.exists():
+        return active
+    template = TEMPLATES_DIR / name
+    if template.exists():
+        return template
+    return active
+
+
+def init_profile(link: pathlib.Path | None = None) -> pathlib.Path:
+    """Initializes the active profile from starter templates or a symlink.
+
+    Args:
+        link: Optional directory (for example a private git repository) to
+            symlink at ``<store_home>/profile``.
+
+    Returns:
+        The active profile directory path.
+    """
+    if link is not None:
+        source = link.expanduser().resolve()
+        if not source.is_dir():
+            raise SystemExit(f"init: --link target is not a directory: {link}")
+        target = store_home() / "profile"
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            raise SystemExit(
+                f"init: {target} already exists as a directory; move or remove "
+                "it before using --link"
+            )
+        target.symlink_to(source)
+        return target
+    target = profile_dir(create=True)
+    for name in PROFILE_FILES:
+        dest = target / name
+        template = TEMPLATES_DIR / name
+        if not dest.exists() and template.exists():
+            dest.write_text(
+                template.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+    return target
+
+
 def profile_version() -> str:
-    """Returns the Version field at the top of voice-profile.md."""
+    """Returns the Version field at the top of the active voice-profile.md."""
+    path = profile_path("voice-profile.md")
+    if not path.is_file():
+        return "0.0.0"
     match = re.search(
         r"\*\*Version:\*\*\s*([0-9][^\s·]*)",
-        PROFILE.read_text(encoding="utf-8"),
+        path.read_text(encoding="utf-8"),
     )
     return match.group(1) if match else "unknown"
 
@@ -696,7 +781,11 @@ def events_from_git(root: pathlib.Path, relative: str) -> Iterator[Event]:
                 "observe",
                 shown.stdout,
                 f"git:{sha[:7]} {subject}",
-                flag="ai-touched" if _agent_fingerprints(root, sha) else "",
+                flag=(
+                    "ai-touched"
+                    if _agent_fingerprints(root, sha, relative)
+                    else ""
+                ),
             )
 
 
@@ -707,12 +796,41 @@ _FINGERPRINTS = re.compile(
     r"|^\+\+\+ b/\S*_diff\.tex$",
     re.M,
 )
+_AI_TRAILERS = re.compile(
+    r"^(?:Co-Authored-By:.*\b(?:Claude|Codex|Copilot|Gemini|Antigravity|"
+    r"Anthropic|OpenAI)\b|Claude-Session:)",
+    re.I | re.M,
+)
 
 
-def _agent_fingerprints(root: pathlib.Path, sha: str) -> bool:
-    """Whether a commit adds text only an agent writes (see _FINGERPRINTS)."""
+def _agent_fingerprints(
+    root: pathlib.Path, sha: str, relative: str = ""
+) -> bool:
+    """Whether a commit carries AI trailers or agent fingerprints in the file.
+
+    Args:
+        root: Repository root path.
+        sha: Git commit SHA.
+        relative: Optional repo-relative path to scope the patch check so
+            unrelated files (such as ``bibliography.bib``) do not taint prose.
+
+    Returns:
+        True if the commit message carries an AI co-author/session trailer or
+        the file's diff matches ``_FINGERPRINTS``.
+    """
+    message = subprocess.run(
+        ["git", "-C", str(root), "show", "-s", "--format=%B", sha],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    if _AI_TRAILERS.search(message):
+        return True
+    cmd = ["git", "-C", str(root), "show", "--format=", sha]
+    if relative:
+        cmd += ["--", relative]
     patch = subprocess.run(
-        ["git", "-C", str(root), "show", "--format=", sha],
+        cmd,
         capture_output=True,
         text=True,
         check=False,
@@ -1153,10 +1271,13 @@ def _step_time(data: bytes) -> str:
     return ""
 
 
+_AG_SCAN_VERSION = 2
 _AG_EDIT_TOOLS = (
     "replace_file_content",
     "multi_replace_file_content",
     "write_to_file",
+    "edit_file",
+    "write_file",
 )
 
 
@@ -1176,15 +1297,15 @@ def events_from_antigravity(
         cache: ``state.json``'s per-source cache, updated in place.
 
     Yields:
-        Deliveries (ReplacementContent / CodeContent of edits to a .tex
-        under ``root``), observations (TargetContent and view_file results),
-        pastes and messages (author turns).
+        Deliveries (Replacement/Content/ReplacementContent/CodeContent of edits
+        to a .tex under ``root``), observations (Target/TargetContent and
+        view_file results), pastes and messages (author turns).
     """
     if not ANTIGRAVITY_CONVERSATIONS.exists():
         return
     needle = str(root)
     for path in sorted(ANTIGRAVITY_CONVERSATIONS.glob("*.db")):
-        key = f"antigravity:{path}:{needle}"
+        key = f"antigravity:v{_AG_SCAN_VERSION}:{path}:{needle}"
         stat = path.stat()
         signature = [stat.st_size, int(stat.st_mtime)]
         cached = cache.get(key)
@@ -1267,20 +1388,26 @@ def _antigravity_edit(
         call = json.loads(arguments)
     except json.JSONDecodeError:
         return
-    target = call.get("TargetFile", "")
+    target = call.get("TargetFile") or call.get("Path") or ""
     if not (target.startswith(needle) and target.endswith(".tex")):
         return
     chunks = call.get("ReplacementChunks") or [call]
     for chunk in chunks:
-        new = chunk.get("ReplacementContent") or chunk.get("CodeContent")
+        new = (
+            chunk.get("ReplacementContent")
+            or chunk.get("CodeContent")
+            or chunk.get("Replacement")
+            or chunk.get("Content")
+        )
         if new:
+            before = chunk.get("TargetContent") or chunk.get("Target") or ""
             yield Event(
                 stamp,
                 "deliver",
                 new,
                 source,
                 "antigravity",
-                before=chunk.get("TargetContent", ""),
+                before=before,
             )
 
 
@@ -2356,6 +2483,53 @@ def _pending_proposals() -> list[pathlib.Path]:
     ]
 
 
+def command_init(args: argparse.Namespace) -> int:
+    """Implements ``cowriter.py init``: create starter profile or link repo."""
+    link = pathlib.Path(args.link) if args.link else None
+    target = init_profile(link=link)
+    resolved = target.resolve()
+    version = profile_version()
+    if link is not None:
+        print(f"linked {target} -> {resolved} (profile v{version})")
+    else:
+        print(f"initialized {target} (profile v{version})")
+    return 0
+
+
+def command_profile(args: argparse.Namespace) -> int:
+    """Implements ``cowriter.py profile``: print resolved profile paths."""
+    pdir = profile_dir()
+    voice = profile_path("voice-profile.md")
+    counter = profile_path("counterexamples.md")
+    lexicon = profile_path("lexicon.json")
+    version = profile_version()
+    initialized = (pdir / "voice-profile.md").exists()
+    info = {
+        "profile_dir": str(pdir),
+        "resolved_dir": str(pdir.resolve()) if pdir.exists() else "",
+        "linked": pdir.is_symlink(),
+        "initialized": initialized,
+        "starter": version == "0.0.0",
+        "version": version,
+        "voice_profile": str(voice),
+        "counterexamples": str(counter),
+        "lexicon": str(lexicon),
+    }
+    if args.json:
+        print(json.dumps(info, indent=2))
+        return 0
+    mode = "starter" if info["starter"] else "personalized"
+    state_note = "" if initialized else " (not initialized; using template)"
+    print(f"profile dir:     {pdir}{state_note}")
+    if info["linked"]:
+        print(f"linked to:       {info['resolved_dir']}")
+    print(f"version:         {version} ({mode})")
+    print(f"voice-profile:   {voice}")
+    print(f"counterexamples: {counter}")
+    print(f"lexicon:         {lexicon}")
+    return 0
+
+
 def command_status(args: argparse.Namespace) -> int:
     """Implements ``cowriter.py status``."""
     records = _load_records()
@@ -2370,6 +2544,13 @@ def command_status(args: argparse.Namespace) -> int:
         return 0
     state = _read_json(store_home() / "state.json", {})
     print(f"store: {store_home()}")
+    pdir = profile_dir()
+    pnote = (
+        f" -> {pdir.resolve()}"
+        if pdir.is_symlink()
+        else ("" if (pdir / "voice-profile.md").exists() else " (starter)")
+    )
+    print(f"profile: {pdir}{pnote} (v{profile_version()})")
     print(f"last harvest: {state.get('last_harvest', 'never')}")
     print(f"last packet: {state.get('last_packet', 'never')}")
     print(f"last proposal: {state.get('last_proposal', 'never')}")
@@ -2420,11 +2601,14 @@ def command_packet(args: argparse.Namespace) -> int:
     (directory / "notes.md").write_text(
         "\n\n".join(_notes_since(last or "")), encoding="utf-8"
     )
-    references = SKILL_DIR / "references"
-    for name in ("voice-profile.md", "counterexamples.md", "digest.md"):
+    for name in ("voice-profile.md", "counterexamples.md"):
         (directory / name).write_text(
-            (references / name).read_text(encoding="utf-8"), encoding="utf-8"
+            profile_path(name).read_text(encoding="utf-8"), encoding="utf-8"
         )
+    digest_brief = SKILL_DIR / "references" / "digest.md"
+    (directory / "digest.md").write_text(
+        digest_brief.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     state["last_packet"] = _now()
     _write_json(home / "state.json", state)
     print(directory)
@@ -2483,6 +2667,22 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    init = commands.add_parser(
+        "init", help="initialize starter profile or link a private voice dir"
+    )
+    init.add_argument(
+        "--link",
+        metavar="DIR",
+        help="symlink ~/.co-writer/profile to an existing voice repo directory",
+    )
+    init.set_defaults(handler=command_init)
+
+    prof = commands.add_parser(
+        "profile", help="show active voice profile paths and version"
+    )
+    prof.add_argument("--json", action="store_true", help="emit JSON output")
+    prof.set_defaults(handler=command_profile)
 
     log = commands.add_parser("log", help="record one delivered rewrite")
     log.add_argument("--file", help="the .tex the text belongs to")

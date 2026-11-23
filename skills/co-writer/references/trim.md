@@ -11,13 +11,13 @@ cut, measure again. Nothing is written shorter to begin with.
    looked at, because the gap decides how deep the cuts go and which kind
    they are. A gap that removing a whole section would not close is a fault
    in the paper's design, not a cutting problem: say so and stop.
-2. **Never cut scaffolding**, whatever else is over: the plain-language
-   explanation of a technique at first use, the sentence after an equation
-   saying what it means, the mechanism offered for a result, the concessive
-   sentence binding a caveat to its claim. These are the author's voice
-   (profile A.5, I.1, D.2, A.7); a trim that removes them has cut him, not
-   the excess. The test for a cut is what the reader loses, never whether
-   words recur.
+2. **Never cut scaffolding**, whatever else is over: any explanatory move the
+   active profile marks as part of the author's voice (for example,
+   plain-language explanations of techniques at first use, post-equation
+   restatements, mechanism clauses, or concessive sentences binding a caveat to
+   its claim). A trim that removes those cuts the author's voice, not the
+   excess. The test for a cut is what the reader loses, never whether words
+   recur.
 3. **The proposer** — a cold agent that did not write the text, given the
    file, the counts and the gap — proposes and cuts nothing. Two classes,
    every candidate with the passage quoted, its class, the words it recovers
@@ -39,11 +39,11 @@ cut, measure again. Nothing is written shorter to begin with.
    what the reader loses, mechanical first, and sum the list against the gap
    so the author can see how far down it the target sits.
 5. **Take the author through them.** Mechanical cuts as one question with the
-   list in front of him. Judgment cuts one at a time, each with its case in
+   list in front of them. Judgment cuts one at a time, each with its case in
    prose before the question: the passage, what it teaches, what the paper
    loses without it, what it recovers, your lean. Stop when the gap is closed
-   or when he says the paper stays where it is. Nothing is cut before he has
-   ruled.
+   or when the author says the paper stays where it is. Nothing is cut before
+   they have ruled.
 6. **Make the ruled cuts**, with at most the words that join two standing
    sentences. A cut that needs prose — a condensed passage, a derivation moved
    to an appendix — is written from the specimen like any other unit. Then
@@ -51,8 +51,8 @@ cut, measure again. Nothing is written shorter to begin with.
    citation or reference that left with a ruled cut and goes in the list after
    the text; a FAIL is something added, and is a bug.
 7. **Measure again** and read the whole once, because a dozen small cuts read
-   differently together. Report what came out, what he kept, and what remains
-   over the target.
+   differently together. Report what came out, what the author kept, and what
+   remains over the target.
 
 The proposer's brief:
 
