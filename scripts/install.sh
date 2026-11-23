@@ -45,7 +45,10 @@
 # installed): links a local voice repo or clones a private git repo into
 # ~/.co-writer/profile/ (with --voice-profile / --voice-branch or an
 # interactive prompt), or initializes a clean v0.0.0 starter profile that
-# grows from edits. Existing profiles are left untouched on refresh/uninstall.
+# grows from edits. On reinstall, a git-backed voice profile (cloned or
+# symlinked) is automatically fast-forwarded to the latest upstream commit
+# when the working tree is clean. Existing profiles are never deleted on
+# uninstall.
 #
 # Step 4 checks the command-line tools the skills run: uv (code-style formats,
 # lints and type-checks through it, and the toolboxes build faster with it)
@@ -58,7 +61,8 @@
 #
 # To update a machine: `git pull`, then rerun this script. It links skills
 # that are new since the last run, removes links to skills renamed or deleted
-# upstream, reinstalls each toolbox's requirements and repeats the tool check.
+# upstream, reinstalls each toolbox's requirements, fast-forwards a git-backed
+# co-writer voice profile and repeats the tool check.
 #
 # Overrides: CLAUDE_CONFIG_DIR (default ~/.claude), GEMINI_CONFIG_DIR
 # (default ~/.gemini/config), CODEX_HOME (default ~/.codex),
@@ -288,6 +292,11 @@ is_git_url() {
     esac
 }
 
+normalize_git_url() {
+    local u="${1%/}"
+    printf '%s' "${u%.git}"
+}
+
 expand_tilde() {
     case "$1" in
         "~")   printf '%s' "$HOME" ;;
@@ -298,6 +307,102 @@ expand_tilde() {
 
 ask_tty() {
     if { : </dev/tty; } 2>/dev/null; then read "$@" </dev/tty; else read "$@"; fi
+}
+
+sync_git_voice_profile() {
+    local dir="$1"
+    local branch="${2:-}"
+    # Only sync when the profile directory itself is a git repository root.
+    if [ ! -e "$dir/.git" ] \
+            || ! git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local current_branch=""
+    current_branch="$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    local upstream=""
+    upstream="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+    local has_origin=0
+    if git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+        has_origin=1
+    fi
+
+    if [ -z "$upstream" ] && [ "$has_origin" = 0 ] && [ -z "$branch" ]; then
+        echo "    sync: local git repo with no remote — skipped"
+        return 0
+    fi
+
+    if [ "$DRY_RUN" = 1 ]; then
+        if [ -n "$branch" ] && [ "$branch" != "$current_branch" ]; then
+            echo "    [dry-run] would switch $dir to branch $branch and sync via git pull --ff-only"
+        else
+            echo "    [dry-run] would sync $dir via git pull --ff-only"
+        fi
+        return 0
+    fi
+
+    if ! git -C "$dir" diff --quiet || ! git -C "$dir" diff --cached --quiet; then
+        echo "    warning: uncommitted local changes in $dir — skipped voice profile sync" >&2
+        echo "    (commit or stash local edits, then run: git -C \"$dir\" pull --ff-only)" >&2
+        return 0
+    fi
+
+    if [ -n "$branch" ] && [ "$branch" != "$current_branch" ]; then
+        local fetch_out=""
+        if [ "$has_origin" = 1 ]; then
+            if ! fetch_out="$(git -C "$dir" fetch origin "$branch" 2>&1)"; then
+                echo "    warning: could not fetch branch '$branch' from origin — keeping current profile" >&2
+                printf '%s\n' "$fetch_out" | sed 's/^/      /' >&2
+                return 0
+            fi
+        fi
+        local co_out=""
+        if git -C "$dir" show-ref --verify --quiet "refs/heads/$branch"; then
+            if ! co_out="$(git -C "$dir" checkout "$branch" 2>&1)"; then
+                echo "    warning: could not switch to branch '$branch' — keeping current profile" >&2
+                printf '%s\n' "$co_out" | sed 's/^/      /' >&2
+                return 0
+            fi
+        elif [ "$has_origin" = 1 ] \
+                && git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+            if ! co_out="$(git -C "$dir" checkout -b "$branch" --track "origin/$branch" 2>&1)"; then
+                echo "    warning: could not check out origin/$branch — keeping current profile" >&2
+                printf '%s\n' "$co_out" | sed 's/^/      /' >&2
+                return 0
+            fi
+        else
+            echo "    warning: branch '$branch' not found in $dir — keeping current profile" >&2
+            return 0
+        fi
+        current_branch="$branch"
+        upstream="$(git -C "$dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+    fi
+
+    local pull_args=()
+    if [ -n "$upstream" ]; then
+        pull_args=(pull --ff-only)
+    elif [ "$has_origin" = 1 ] && [ -n "$current_branch" ]; then
+        pull_args=(pull --ff-only origin "$current_branch")
+    else
+        echo "    sync: detached HEAD in $dir — skipped (pass --voice-branch <branch> to track a branch)"
+        return 0
+    fi
+
+    local before=""
+    before="$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || true)"
+    local pull_out=""
+    if pull_out="$(git -C "$dir" "${pull_args[@]}" 2>&1)"; then
+        local after=""
+        after="$(git -C "$dir" rev-parse --short HEAD 2>/dev/null || true)"
+        if [ "$before" != "$after" ]; then
+            echo "    synced: $before -> $after (${current_branch:-HEAD})"
+        else
+            echo "    synced: already up to date (${current_branch:-HEAD} @ $after)"
+        fi
+    else
+        echo "    warning: could not fast-forward voice profile in $dir (offline or diverged); keeping current profile" >&2
+        printf '%s\n' "$pull_out" | sed 's/^/      /' >&2
+    fi
 }
 
 configure_voice_profile() {
@@ -319,6 +424,7 @@ configure_voice_profile() {
         else
             echo "    configured: $target"
         fi
+        sync_git_voice_profile "$target" "$branch"
         python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
         echo "    (to switch repos: bash scripts/install.sh --voice-profile <dir|git-url>)"
         return
@@ -327,7 +433,17 @@ configure_voice_profile() {
     if [ "$DRY_RUN" = 1 ]; then
         if [ -n "$source" ]; then
             if is_git_url "$source"; then
-                echo "    [dry-run] would clone $source${branch:+ (branch $branch)} to $target"
+                local existing_origin=""
+                if [ -e "$target/.git" ] \
+                        && git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                    existing_origin="$(git -C "$target" remote get-url origin 2>/dev/null || true)"
+                fi
+                if [ -n "$existing_origin" ] \
+                        && [ "$(normalize_git_url "$existing_origin")" = "$(normalize_git_url "$source")" ]; then
+                    sync_git_voice_profile "$target" "$branch"
+                else
+                    echo "    [dry-run] would clone $source${branch:+ (branch $branch)} to $target"
+                fi
             else
                 echo "    [dry-run] would link $target -> $(expand_tilde "$source")"
             fi
@@ -363,6 +479,18 @@ configure_voice_profile() {
 
     if is_git_url "$source"; then
         if [ -e "$target" ] || [ -L "$target" ]; then
+            local existing_origin=""
+            if [ -e "$target/.git" ] \
+                    && git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                existing_origin="$(git -C "$target" remote get-url origin 2>/dev/null || true)"
+            fi
+            if [ -n "$existing_origin" ] \
+                    && [ "$(normalize_git_url "$existing_origin")" = "$(normalize_git_url "$source")" ]; then
+                echo "    configured: $target ($existing_origin)"
+                sync_git_voice_profile "$target" "$branch"
+                python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
+                return
+            fi
             echo "    error: $target already exists; move or remove it before cloning $source" >&2
             VOICE_FAILED=1
             return
@@ -383,6 +511,7 @@ configure_voice_profile() {
             echo "    CO_WRITER_PROFILE_DIR is set to $CO_WRITER_PROFILE_DIR; linking default $store/profile"
         fi
         if python3 "$COWRITER_SCRIPT" init --link "$source" | sed 's/^/    /'; then
+            sync_git_voice_profile "$target" "$branch"
             python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
         else
             VOICE_FAILED=1

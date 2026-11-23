@@ -93,8 +93,10 @@ The script does five things, and skips whatever this machine does not have:
    `v0.0.0` starter profile that learns from your edits, or enter a local path
    or private git repo URL (and optional branch) to connect an existing voice
    repository. Pass `--voice-profile <dir|git-url>` (and optionally
-   `--voice-branch <branch>`) to configure it non-interactively; existing
-   profiles are preserved across refreshes and uninstalls.
+   `--voice-branch <branch>`) to configure it non-interactively. On reinstall,
+   a git-backed voice profile (cloned or symlinked) is automatically
+   fast-forwarded to the latest upstream commit when the working tree is clean;
+   existing profiles are never deleted on uninstall.
 
 5. **Checks the tools the skills run** — [uv](https://docs.astral.sh/uv/)
    (`code-style` formats, lints and type-checks through it; the toolboxes also

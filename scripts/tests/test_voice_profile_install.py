@@ -140,3 +140,120 @@ def test_install_clones_git_voice_profile_and_branch(
         check=True,
     )
     assert "2.0.0 (personalized)" in check.stdout
+
+
+def _init_git_voice_repo(
+    repo: pathlib.Path, version: str = "1.0.0", branch: str = "main"
+) -> None:
+    """Initializes a local git repository containing a voice profile."""
+    repo.mkdir(parents=True, exist_ok=True)
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-b", branch], check=True)
+    subprocess.run([*git, "config", "user.name", "Author"], check=True)
+    subprocess.run(
+        [*git, "config", "user.email", "author@example.com"], check=True
+    )
+    (repo / "voice-profile.md").write_text(
+        f"# Voice\n**Version:** {version}\n", encoding="utf-8"
+    )
+    subprocess.run([*git, "add", "voice-profile.md"], check=True)
+    subprocess.run([*git, "commit", "-m", f"voice {version}"], check=True)
+
+
+def test_reinstall_auto_syncs_cloned_git_voice_profile(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Rerunning install.sh fast-forwards a cloned voice repo to upstream."""
+    env = _isolated_env(tmp_path)
+    origin = tmp_path / "voice-origin"
+    _init_git_voice_repo(origin, version="1.0.0", branch="main")
+
+    first = _run_install(["--voice-profile", f"file://{origin}"], env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    cloned = pathlib.Path(env["CO_WRITER_HOME"]) / "profile"
+    assert "1.0.0" in (cloned / "voice-profile.md").read_text(encoding="utf-8")
+
+    # Advance upstream to v1.1.0.
+    (origin / "voice-profile.md").write_text(
+        "# Voice\n**Version:** 1.1.0\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-am", "voice 1.1.0"], check=True
+    )
+
+    # Dry-run reports sync without modifying the clone.
+    dry = _run_install(["--dry-run"], env)
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert "would sync" in dry.stdout
+    assert "1.0.0" in (cloned / "voice-profile.md").read_text(encoding="utf-8")
+
+    # Plain reinstall fast-forwards automatically and prints the new version.
+    second = _run_install([], env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "synced:" in second.stdout
+    assert "1.1.0" in second.stdout
+    assert "1.1.0" in (cloned / "voice-profile.md").read_text(encoding="utf-8")
+
+    # Re-running with the same --voice-profile URL also syncs instead of
+    # failing on an existing directory, and honors --voice-branch switches.
+    subprocess.run(
+        ["git", "-C", str(origin), "checkout", "-b", "alt"], check=True
+    )
+    (origin / "voice-profile.md").write_text(
+        "# Voice\n**Version:** 2.0.0\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-am", "voice 2.0.0"], check=True
+    )
+    third = _run_install(
+        ["--voice-profile", f"file://{origin}", "--voice-branch", "alt"], env
+    )
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert "2.0.0" in third.stdout
+    assert "2.0.0" in (cloned / "voice-profile.md").read_text(encoding="utf-8")
+
+
+def test_reinstall_auto_syncs_symlinked_git_repo_and_respects_dirty_tree(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Reinstall syncs symlinked git voice repos unless locally modified."""
+    env = _isolated_env(tmp_path)
+    origin = tmp_path / "voice-origin"
+    _init_git_voice_repo(origin, version="1.0.0", branch="main")
+    local_clone = tmp_path / "local-voice"
+    subprocess.run(
+        ["git", "clone", f"file://{origin}", str(local_clone)], check=True
+    )
+
+    first = _run_install(["--voice-profile", str(local_clone)], env)
+    assert first.returncode == 0, first.stdout + first.stderr
+
+    # Advance upstream to 1.2.0 and verify plain reinstall syncs via symlink.
+    (origin / "voice-profile.md").write_text(
+        "# Voice\n**Version:** 1.2.0\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-am", "voice 1.2.0"], check=True
+    )
+    second = _run_install([], env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "1.2.0" in (local_clone / "voice-profile.md").read_text(
+        encoding="utf-8"
+    )
+
+    # Dirty local edit must not be clobbered on reinstall.
+    (local_clone / "voice-profile.md").write_text(
+        "# Voice\n**Version:** 1.2.0-local\n", encoding="utf-8"
+    )
+    (origin / "voice-profile.md").write_text(
+        "# Voice\n**Version:** 1.3.0\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-am", "voice 1.3.0"], check=True
+    )
+    third = _run_install([], env)
+    assert third.returncode == 0, third.stdout + third.stderr
+    assert "uncommitted local changes" in third.stderr
+    assert "1.2.0-local" in (local_clone / "voice-profile.md").read_text(
+        encoding="utf-8"
+    )
