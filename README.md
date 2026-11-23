@@ -55,7 +55,7 @@ not remove previously installed siblings or automatically install skills named
 as collaborators in a skill's instructions. Select those collaborators too
 when their capabilities are needed. Unknown names are rejected before changes.
 
-The script does four things, and skips whatever this machine does not have:
+The script does five things, and skips whatever this machine does not have:
 
 1. **Registers the selected skills** (all by default) in `skills/` with each harness it finds:
 
@@ -87,7 +87,16 @@ The script does four things, and skips whatever this machine does not have:
    `--skip-keys` skips them explicitly. Enter or change keys later with
    `bash skills/cite-check/mcp/setup_mcp.sh --keys`.
 
-4. **Checks the tools the skills run** — [uv](https://docs.astral.sh/uv/)
+4. **Sets up the `co-writer` voice profile** (when `co-writer` is installed)
+   outside this repository at `~/.co-writer/profile/` (or
+   `$CO_WRITER_PROFILE_DIR`). Interactively, press Enter to start with a blank
+   `v0.0.0` starter profile that learns from your edits, or enter a local path
+   or private git repo URL (and optional branch) to connect an existing voice
+   repository. Pass `--voice-profile <dir|git-url>` (and optionally
+   `--voice-branch <branch>`) to configure it non-interactively; existing
+   profiles are preserved across refreshes and uninstalls.
+
+5. **Checks the tools the skills run** — [uv](https://docs.astral.sh/uv/)
    (`code-style` formats, lints and type-checks through it; the toolboxes also
    build faster with it) and Python 3.10+ — and prints the install command for
    any that is missing. It installs neither itself; without them the skills
@@ -96,9 +105,10 @@ The script does four things, and skips whatever this machine does not have:
 No skill file is copied — every harness reads this working tree, so a `git pull`
 publishes skill edits immediately, with no reinstall. The script is idempotent,
 never touches unrelated skills, MCP servers or config entries, and understands
-`--skill NAME`, `--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR`,
-`GEMINI_CONFIG_DIR`, `CODEX_HOME` or `AGENTS_SKILLS_DIR` to target a non-default
-install location.
+`--skill NAME`, `--voice-profile PATH|URL`, `--voice-branch BRANCH`,
+`--dry-run`, `--skip-mcp`, `--skip-keys` and `--help`. Set `CLAUDE_CONFIG_DIR`,
+`GEMINI_CONFIG_DIR`, `CODEX_HOME`, `AGENTS_SKILLS_DIR`, `CO_WRITER_HOME` or
+`CO_WRITER_PROFILE_DIR` to target a non-default install location.
 
 To undo all of it — symlinks, config entries, MCP registrations and the
 toolbox venvs — run the matching uninstaller, which takes the same flags

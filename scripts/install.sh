@@ -5,6 +5,8 @@
 #   bash scripts/install.sh              # install / refresh everything
 #   bash scripts/install.sh --skill cite-check  # one skill and its MCP
 #   bash scripts/install.sh --skill cite-check --skill co-writer  # selected skills
+#   bash scripts/install.sh --voice-profile /path/or/git-url [--voice-branch BR]
+#                                        # link or clone a private co-writer voice repo
 #   bash scripts/install.sh --uninstall --skill cite-check  # remove one skill
 #   bash scripts/install.sh --uninstall  # remove what this script created
 #   bash scripts/install.sh --dry-run    # show what would change, touch nothing
@@ -39,7 +41,13 @@
 # questions are skipped; --skip-keys skips them explicitly. Enter or change
 # keys later with:  bash skills/cite-check/mcp/setup_mcp.sh --keys
 #
-# Step 3 checks the command-line tools the skills run: uv (code-style formats,
+# Step 3 configures co-writer's private voice profile (when co-writer is
+# installed): links a local voice repo or clones a private git repo into
+# ~/.co-writer/profile/ (with --voice-profile / --voice-branch or an
+# interactive prompt), or initializes a clean v0.0.0 starter profile that
+# grows from edits. Existing profiles are left untouched on refresh/uninstall.
+#
+# Step 4 checks the command-line tools the skills run: uv (code-style formats,
 # lints and type-checks through it, and the toolboxes build faster with it)
 # and python3. A missing one is reported with how to install it; this script
 # installs neither.
@@ -53,8 +61,9 @@
 # upstream, reinstalls each toolbox's requirements and repeats the tool check.
 #
 # Overrides: CLAUDE_CONFIG_DIR (default ~/.claude), GEMINI_CONFIG_DIR
-# (default ~/.gemini/config), CODEX_HOME (default ~/.codex) and
-# AGENTS_SKILLS_DIR (default ~/.agents/skills, where Codex finds user skills).
+# (default ~/.gemini/config), CODEX_HOME (default ~/.codex),
+# AGENTS_SKILLS_DIR (default ~/.agents/skills, where Codex finds user skills),
+# CO_WRITER_HOME (default ~/.co-writer) and CO_WRITER_PROFILE_DIR.
 # Set any of them to a path to target a custom install.
 # ==============================================================================
 set -euo pipefail
@@ -73,6 +82,8 @@ DRY_RUN=0
 SKIP_MCP=0
 SKIP_KEYS=0
 PURGE_KEYS=0
+VOICE_PROFILE=""
+VOICE_BRANCH=""
 SELECTED_SKILLS=()
 while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -83,6 +94,32 @@ while [ "$#" -gt 0 ]; do
         --skip-mcp)   SKIP_MCP=1 ;;
         --skip-keys)  SKIP_KEYS=1 ;;
         --purge-keys) PURGE_KEYS=1 ;;
+        --voice-profile)
+            if [ "$#" -eq 0 ] || [ -z "$1" ] || [[ "$1" == --* ]]; then
+                echo "--voice-profile requires a local directory or git URL" >&2
+                exit 1
+            fi
+            VOICE_PROFILE="$1"
+            shift ;;
+        --voice-profile=*)
+            VOICE_PROFILE="${arg#--voice-profile=}"
+            if [ -z "$VOICE_PROFILE" ]; then
+                echo "--voice-profile requires a local directory or git URL" >&2
+                exit 1
+            fi ;;
+        --voice-branch)
+            if [ "$#" -eq 0 ] || [ -z "$1" ] || [[ "$1" == --* ]]; then
+                echo "--voice-branch requires a branch name" >&2
+                exit 1
+            fi
+            VOICE_BRANCH="$1"
+            shift ;;
+        --voice-branch=*)
+            VOICE_BRANCH="${arg#--voice-branch=}"
+            if [ -z "$VOICE_BRANCH" ]; then
+                echo "--voice-branch requires a branch name" >&2
+                exit 1
+            fi ;;
         --skill)
             if [ "$#" -eq 0 ] || [ -z "$1" ] || [[ "$1" == --* ]]; then
                 echo "--skill requires a skill name" >&2
@@ -235,6 +272,133 @@ elif [ "${#MCP_SCRIPTS[@]}" -gt 0 ]; then
 fi
 
 # ==============================================================================
+# Co-Writer voice profile — lives outside science-skills in ~/.co-writer/profile
+# ==============================================================================
+COWRITER_SELECTED=0
+for name in "${SKILLS[@]}"; do
+    [ "$name" = "co-writer" ] && COWRITER_SELECTED=1
+done
+COWRITER_SCRIPT="$SKILLS_DIR/co-writer/scripts/cowriter.py"
+VOICE_FAILED=0
+
+is_git_url() {
+    case "$1" in
+        git@*:*|http://*|https://*|ssh://*|git://*|file://*|*.git) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+expand_tilde() {
+    case "$1" in
+        "~")   printf '%s' "$HOME" ;;
+        "~/"*) printf '%s/%s' "$HOME" "${1#~/}" ;;
+        *)     printf '%s' "$1" ;;
+    esac
+}
+
+ask_tty() {
+    if { : </dev/tty; } 2>/dev/null; then read "$@" </dev/tty; else read "$@"; fi
+}
+
+configure_voice_profile() {
+    local store="${CO_WRITER_HOME:-$HOME/.co-writer}"
+    local target="${CO_WRITER_PROFILE_DIR:-$store/profile}"
+    local source="$VOICE_PROFILE"
+    local branch="$VOICE_BRANCH"
+
+    echo ""
+    echo "-- Co-Writer voice profile"
+    if [ "$MODE" = uninstall ]; then
+        echo "    kept at $target (personal voice data is never deleted on uninstall)"
+        return
+    fi
+
+    if [ -z "$source" ] && [ -f "$target/voice-profile.md" ]; then
+        if [ -L "$target" ]; then
+            echo "    configured: $target -> $(readlink "$target")"
+        else
+            echo "    configured: $target"
+        fi
+        python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
+        echo "    (to switch repos: bash scripts/install.sh --voice-profile <dir|git-url>)"
+        return
+    fi
+
+    if [ "$DRY_RUN" = 1 ]; then
+        if [ -n "$source" ]; then
+            if is_git_url "$source"; then
+                echo "    [dry-run] would clone $source${branch:+ (branch $branch)} to $target"
+            else
+                echo "    [dry-run] would link $target -> $(expand_tilde "$source")"
+            fi
+        else
+            echo "    [dry-run] would initialize starter voice profile (v0.0.0) at $target"
+            echo "    [dry-run] (or prompt interactively for a local path / private git repo URL)"
+        fi
+        return
+    fi
+
+    if [ -z "$source" ] && [ -t 0 ]; then
+        echo "    Personal voice profiles live outside this repo at: $target"
+        echo "    Press Enter to start with a blank v0.0.0 starter profile (learns from your edits),"
+        printf '    or enter a local path / private git repo URL: '
+        ask_tty -r source || source=""
+        if [ -n "$source" ] && is_git_url "$source" && [ -z "$branch" ]; then
+            printf '    branch (Enter for repo default): '
+            ask_tty -r branch || branch=""
+        fi
+    fi
+
+    if [ -z "$source" ]; then
+        if python3 "$COWRITER_SCRIPT" init | sed 's/^/    /'; then
+            echo "    location: $target"
+            echo "    Connect a private voice repo later with:"
+            echo "      bash scripts/install.sh --voice-profile <path-or-git-url>"
+            echo "    or: python3 $COWRITER_SCRIPT init --link <local-voice-repo>"
+        else
+            VOICE_FAILED=1
+        fi
+        return
+    fi
+
+    if is_git_url "$source"; then
+        if [ -e "$target" ] || [ -L "$target" ]; then
+            echo "    error: $target already exists; move or remove it before cloning $source" >&2
+            VOICE_FAILED=1
+            return
+        fi
+        mkdir -p "$(dirname "$target")"
+        local clone_args=(clone)
+        [ -n "$branch" ] && clone_args+=(--branch "$branch")
+        clone_args+=("$source" "$target")
+        if git "${clone_args[@]}"; then
+            echo "    cloned: $source -> $target"
+            python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
+        else
+            VOICE_FAILED=1
+        fi
+    else
+        source="$(expand_tilde "$source")"
+        if [ -n "${CO_WRITER_PROFILE_DIR:-}" ]; then
+            echo "    CO_WRITER_PROFILE_DIR is set to $CO_WRITER_PROFILE_DIR; linking default $store/profile"
+        fi
+        if python3 "$COWRITER_SCRIPT" init --link "$source" | sed 's/^/    /'; then
+            python3 "$COWRITER_SCRIPT" profile | grep -E '^(version|voice-profile):' | sed 's/^/    /' || true
+        else
+            VOICE_FAILED=1
+        fi
+    fi
+}
+
+if [ "$COWRITER_SELECTED" = 1 ] && [ -f "$COWRITER_SCRIPT" ]; then
+    configure_voice_profile
+elif [ -n "$VOICE_PROFILE" ] && [ "$MODE" = install ]; then
+    echo ""
+    echo "-- Co-Writer voice profile"
+    echo "    skipped: co-writer is not among the selected skills (${SKILLS[*]})"
+fi
+
+# ==============================================================================
 # Tools the skills run — checked, never installed
 # ==============================================================================
 # code-style formats, lints and type-checks through uv (uvx ruff, uv run mypy),
@@ -298,6 +462,10 @@ else
     fi
     echo "Registry API keys (cite-check) can be entered or changed any time with:"
     echo "  bash skills/cite-check/mcp/setup_mcp.sh --keys"
+    if [ "$COWRITER_SELECTED" = 1 ] && [ -f "$COWRITER_SCRIPT" ]; then
+        echo "Co-Writer voice profile lives at ${CO_WRITER_PROFILE_DIR:-${CO_WRITER_HOME:-$HOME/.co-writer}/profile}:"
+        echo "  python3 skills/co-writer/scripts/cowriter.py profile"
+    fi
 fi
 if [ "${#MISSING_TOOLS[@]}" -gt 0 ]; then
     echo ""
@@ -308,6 +476,11 @@ if [ "${#MCP_FAILED[@]}" -gt 0 ]; then
     echo "But these MCP toolboxes did not finish:" >&2
     for f in "${MCP_FAILED[@]}"; do echo "  bash $f" >&2; done
     echo "Fix the error above and rerun that script (or this one)." >&2
+    exit 1
+fi
+
+if [ "$VOICE_FAILED" = 1 ]; then
+    echo "Co-Writer voice profile setup did not finish; see above." >&2
     exit 1
 fi
 
