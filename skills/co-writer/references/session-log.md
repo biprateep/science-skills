@@ -62,7 +62,7 @@ id: 2026-09-29-03
 date: 2026-09-29T14:05
 agent: claude-code
 profile_version: 0.4.0
-paper: manuscript-fm4pz
+paper: my-paper
 file: main.tex
 slot: results
 register: workshop

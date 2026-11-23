@@ -17,7 +17,7 @@ description: >-
   emails, letters, proposals or referee reports.
 license: MIT
 metadata:
-  version: "0.6.0"
+  version: "0.7.0"
 ---
 
 # Co-Writer: Papers in the Author's Voice
@@ -30,13 +30,28 @@ own style is discarded, not modelled — an agent artefact, a collaborator's
 draft and the author's own rough notes are all treated identically, as a bag
 of facts to be re-expressed.
 
-The voice lives in one file, [references/voice-profile.md](references/voice-profile.md):
-graded rules, a Never list, the words a de-AI pass must leave alone, and
-verbatim specimens indexed by section function. Read all of it, every time.
-Its specimens outrank its rules: where a rule and a specimen disagree, imitate
-the specimen and say what you departed from.
+The author's personal voice data lives **outside this repository**, in the
+active profile directory (`$CO_WRITER_PROFILE_DIR`, or
+`$CO_WRITER_HOME/profile/`, default `~/.co-writer/profile/`). Run
+`python3 <skill>/scripts/cowriter.py profile` to locate it. If no profile
+exists yet, run `python3 <skill>/scripts/cowriter.py init` once to create a
+clean `0.0.0` starter profile from `references/templates/` (or
+`cowriter.py init --link <private-repo>` to attach an existing private voice
+repository).
+
+The voice lives in one file, `<profile>/voice-profile.md`: graded rules, a
+Never list, the words a de-AI pass must leave alone, and verbatim specimens
+indexed by section function. Read all of it, every time. Its specimens outrank
+its rules: where a rule and a specimen disagree, imitate the specimen and say
+what you departed from. On a `0.0.0` starter profile with no specimens yet,
+follow the starter baseline and preservation rules; the author's subsequent
+edits build the profile incrementally through `"co-writer update"` and
+`"co-writer review"` (or they can jumpstart it from finished papers via
+`scripts/extract_prose.py`, `references/extraction.md`, and
+`references/interview.md`).
+
 Its provenance — the extraction prompt, the evidence report and the interview
-— is in `references/` for maintenance and is not needed at write time.
+— is for maintenance and is not needed at write time.
 
 ## When to Apply
 
@@ -52,57 +67,61 @@ claims and the citations already exist in the input.
 
 ## Process
 
-1. **Read the input for information, and write the content list.** Before
+1. **Locate the active profile.** Run `python3 <skill>/scripts/cowriter.py
+   profile` (if uninitialized, run `cowriter.py init` first). Read
+   `<profile>/voice-profile.md` whole.
+2. **Read the input for information, and write the content list.** Before
    writing anything, list what must survive: every number with its precision,
    every claim with its hedge level, every citation and where it attaches,
    every defined symbol, every equation, every figure and table reference. For
    a paragraph this is a glance; for a section, and always for "de-AI this",
-   write the list down — it is what step 4 composes from.
-2. **Identify the slot and the register.** Slot: abstract, introduction
+   write the list down — it is what step 5 composes from.
+3. **Identify the slot and the register.** Slot: abstract, introduction
    opener, gap-and-contribution, methods, definition, equation, results,
    interpretation, limitation, close, caption. Register: journal (AAS, MNRAS)
    or workshop (four-page NeurIPS-style). Infer from the input and the
    surrounding document; if the user has said, that wins.
-3. **Load the profile, then read the specimen for the slot immediately before
-   writing.** The register is transferred from the specimen, not assembled
-   from the rule list: read it at length and write while it is fresh.
-   Spelling is American whatever the venue.
-4. **Write, in one sitting, from the content list.** When the input reads as
+4. **Read the specimen for the slot immediately before writing.** When
+   `<profile>/voice-profile.md` contains a specimen for the slot, transfer the
+   register from the specimen rather than assembling it from the rule list:
+   read it at length and write while it is fresh. Follow the profile's spelling
+   rule (defaulting to the surrounding document if unspecified).
+5. **Write, in one sitting, from the content list.** When the input reads as
    model prose — "de-AI this", or `check_mannered.py` lights up on it — close
    the input and compose from the list alone, because a writer with the old
    prose open keeps its sentences and its hooks. Otherwise the input may stay
    open, for information only. Apply every `HARD` rule, most `STRONG` rules,
    `LIGHT` rules where they fit. Carry the specimen's construction, never its
-   nouns.
-5. **Check what is fixed.** `python <skill>/scripts/check_fixed.py INPUT
+   nouns. Read `<profile>/counterexamples.md` once after drafting (never revise
+   against it as a checklist; rewrite from the specimen on a miss).
+6. **Check what is fixed.** `python3 <skill>/scripts/check_fixed.py INPUT
    OUTPUT` (write both to scratch files if they are not files already; step
-   9 logs the same two). It must print
-   "fixed items identical", or only WARN lines after a ruled hard-limit cut.
-   The checker covers signed numbers, common scientific units, explicit
-   unit macros, standard citation commands, and starred math environments.
-   Custom macros, arbitrary prose units, claim strength, and citation
-   attachment still need the self-check below.
-6. **The cold read** ([references/cold-read.md](references/cold-read.md)):
+   10 logs the same two). It must print "fixed items identical", or only WARN
+   lines after a ruled hard-limit cut. The checker covers signed numbers,
+   common scientific units, explicit unit macros, standard citation commands,
+   and starred math environments. Custom macros, arbitrary prose units, claim
+   strength, and citation attachment still need the self-check below.
+7. **The cold read** ([references/cold-read.md](references/cold-read.md)):
    always for a section or a draft; for a single paragraph, whenever an agent
-   is available.
-7. **Citations, when the text is file-backed and a citing sentence changed**
+   is available. Pass the resolved `<profile>/voice-profile.md` path.
+8. **Citations, when the text is file-backed and a citing sentence changed**
    — hand the changed instances to cite-check (see "Citations" below). A
    section or draft is not done until cite-check's `audit` is `ok`.
-8. **Return the text only.** No preamble, no "Here is the rewritten version",
+9. **Return the text only.** No preamble, no "Here is the rewritten version",
    no summary of changes, no closing offer. If the user asked for a diff or a
    rationale, give the text first and the rationale after a rule. Never
    certify the voice; the passages you are least sure of go into the session
    log, not into the reply.
-9. **Log it** with the script, never by hand:
-   `python3 <skill>/scripts/cowriter.py log --file <the .tex> --agent <you>
-   --slot <slot> --register <register> --input INPUT --output OUTPUT`, with
-   the author's words about the output as `--note`, verbatim, when they give
-   any ([references/session-log.md](references/session-log.md)). Every
-   agent writes the same format to the same place, `~/.co-writer/`, whatever
-   its working directory. At the end of the session, `cowriter.py session`;
-   then `cowriter.py status --brief`, and if it prints a line, pass that one
-   line on to the author after the text. A rewrite that is not logged
-   teaches nothing.
+10. **Log it** with the script, never by hand:
+    `python3 <skill>/scripts/cowriter.py log --file <the .tex> --agent <you>
+    --slot <slot> --register <register> --input INPUT --output OUTPUT`, with
+    the author's words about the output as `--note`, verbatim, when they give
+    any ([references/session-log.md](references/session-log.md)). Every
+    agent writes the same format to the same place, `~/.co-writer/`, whatever
+    its working directory. At the end of the session, `cowriter.py session`;
+    then `cowriter.py status --brief`, and if it prints a line, pass that one
+    line on to the author after the text. A rewrite that is not logged
+    teaches nothing.
 
 ## Hard Rules — Preservation
 
@@ -112,22 +131,21 @@ reads exactly like the author and breaks one of these is a failure.
 - **Numbers survive exactly.** Value, precision, unit, sign, uncertainty.
   `0.00898` does not become "about 0.009". A number the input lacks is not
   invented; write `[NEEDS: value]` and say so after the text.
-- **Modality is never strengthened.** The profile's claim ladder, weakest to
-  strongest: *suggests < is consistent with < indicates < shows <
-  demonstrates < proves*; *find / observe / see* are reporting, not claims;
-  negations and "we cannot rule out" sit below everything. A claim may stay
-  where it is or move down; "suggests" may not become "demonstrates", "we
-  cannot rule out X" may not become "we show X". One exception, from the
-  author: the **abstract may sit one rung above the results section** for
-  the same claim — one rung, never two. Weakening elsewhere is allowed only
-  if the user asked.
+- **Modality is never strengthened.** Follow the active profile's claim ladder
+  (default weakest to strongest: *suggests < is consistent with < indicates <
+  shows < demonstrates < proves*; *find / observe / see* are reporting, not
+  claims; negations and "we cannot rule out" sit below everything). A claim may
+  stay where it is or move down; "suggests" may not become "demonstrates", "we
+  cannot rule out X" may not become "we show X". Any section exception (such as
+  abstract vs. results) applies only when explicitly attested in the active
+  profile. Weakening elsewhere is allowed only if the user asked.
 - **Flourish is not information.** An evaluation with no checkable content —
   "a substantial leap forward", "proved pivotal", "remarkable" — is style and
   may be dropped. A comparison with a referent — "outperforms the CNN
   baseline", "important for this performance" — is a claim and survives.
-- **No reference is invented.** The profile's results pattern opens with
-  "Figure N shows"; if the input has no figure, do not add one. Never
-  introduce a `\ref`, `\cite`, equation number or table to satisfy a slot.
+- **No reference is invented.** Never introduce a `\ref`, `\cite`, equation
+  number, figure, or table that the input does not have just to satisfy a
+  slot pattern.
 - **The citation set never grows or moves.** `keys_out ⊆ keys_in`, and
   every `\cite` key in the output is attached to the claim it was attached
   to in the input; a key drops out only under a reported hard-limit cut.
@@ -139,9 +157,9 @@ reads exactly like the author and breaks one of these is a failure.
   math (inline and display), `\begin{figure}` … `\end{figure}` bodies,
   macros. Rewrite the prose around them. If the input is LaTeX, the output
   is LaTeX.
-- **Specimen content does not leak.** The profile's quarantine list names
-  the nouns; if any phrase of eight or more words from an specimen appears
-  in the output and was not in the input, remove it.
+- **Specimen content does not leak.** Check the profile's quarantine list; if
+  any phrase of eight or more words from a specimen appears in the output and
+  was not in the input, remove it.
 - **Hard limits are met by the trim** ([references/trim.md](references/trim.md)),
   never by writing shorter or by compressing a claim away. What leaves under a
   ruled cut is listed after the text.
@@ -187,40 +205,28 @@ cite-check check with your own reasoning; edit anything under
 | Input | What changes |
 |---|---|
 | A sentence or paragraph pasted inline | Rewrite in place; return the paragraph. |
-| A section (`\section` to `\section`) | Keep the paragraph count and order unless a `HARD` rule forbids it (no one-sentence paragraphs). Keep every heading. |
-| A whole draft | Section by section, re-reading the profile's register table between sections. Keep the document's structure; do not add or remove sections. |
+| A section (`\section` to `\section`) | Keep the paragraph count and order unless a `HARD` rule in the profile forbids it. Keep every heading. |
+| A whole draft | Section by section, re-reading the profile's register rules between sections. Keep the document's structure; do not add or remove sections. |
 | A word or page limit | The trim (`references/trim.md`): measure, propose in two classes, the author rules, cut, measure again. |
-| "de-AI this" | Compose from the content list with the input closed. The Never list and the "words that are his" list carry the weight: do not scrub *leverage*, *utilize*, *robust*, *crucial*, *very*, *significantly* — they are the author's. |
+| "de-AI this" | Compose from the content list with the input closed. Respect both the profile's Never list and its "Words that stay" list so the author's own vocabulary is never scrubbed as an AI-ism. |
 | Any file-backed input with citations | After the rewrite, the cite-check pass in "Citations"; a section or draft is not done until `audit` is `ok`. |
 
 ## Anti-Patterns
 
 What a model reaching for "good academic prose" will do, and must not:
 
-- **Stack signatures.** Every paragraph ending "Therefore,", every methods
-  sentence opening "To …", "(also called …)" three times on a page. One or two
-  per paragraph is the author; five is a parody.
-- **Scrub the author's words as AI-isms.** The profile's "words that are his
-  and stay" list exists because a generic de-AI pass removes them.
-- **Add dashes.** The corpus has at most one per page. A rewrite with an em-dash
-  aside in every paragraph is the single loudest tell.
-- **Add "Notably," / "Importantly," / "Interestingly,".** Surprise is marked
-  with *remarkably* / *unsurprisingly* / *as expected*, once.
-- **Shorten paragraphs into punchy ones**, or add a one-sentence paragraph
-  for emphasis. His paragraphs are long and even.
-- **Convert narrated procedure into a list.** "We first … We then …" stays
-  prose.
-- **Smooth away the concessive sentence.** "While X, Y" is how caveats are
-  bound to claims; splitting it into two sentences loses the voice.
+- **Stack signatures.** Overusing any construction from the profile turns a
+  voice into parody; keep signature constructions restrained (at most once or
+  twice per paragraph).
+- **Scrub the author's words as AI-isms.** Check the profile's "Words that
+  stay" list before cutting any word a generic de-AI pass would flag.
+- **Violate the profile's punctuation or paragraph cadence.** Respect any dash
+  budget, list preference, paragraph-length preference, or caveat placement
+  attested in the profile.
 - **Strengthen a claim** to make the paragraph land. See Preservation.
-- **Move a limitation** into its own section. It lives beside the result.
-- **Import a framing from the specimens.** The DESI/photo-*z* nouns are
-  content.
-- **Conjure a figure.** "Figure N shows …" is how *he* opens a results
-  paragraph when there is a figure; it is not a licence to reference one the
-  input does not have.
-- **Add a summary sentence** at the end of a section that the input did not
-  have.
+- **Import a framing from the specimens.** Topic nouns in specimens are
+  content, not voice.
+- **Conjure a figure, table, or summary sentence** the input did not have.
 - **Verify a citation by reasoning.** "This DOI looks right", "I recall that
   paper shows this" — not a check. cite-check's tools are the check.
 - **Revise against the list.** When a stretch misses, re-read the specimen
@@ -234,20 +240,20 @@ What a model reaching for "good academic prose" will do, and must not:
 
 1. `check_fixed.py INPUT OUTPUT` prints "fixed items identical", or only WARN
    lines after a ruled cut. ☐
-2. No claim is stronger than it was; the abstract at most one rung above the
-   results. ☐
+2. No claim is stronger than it was (honoring only exceptions explicitly
+   attested in the active profile). ☐
 3. Each `\cite` key is attached to the claim it was attached to (the script
    checks the set; you check the attachment). ☐
 4. File-backed and a citing sentence changed → cite-check's support pass run;
    a section or draft is called done only with `audit` ok. ☐
 5. No phrase of eight-plus words from a specimen that was not in the input. ☐
-6. `check_mannered.py OUTPUT` read: every hit looked at, the dash tally at or
-   under one per page. A hit is a place to look, not a fault. ☐
-7. Nothing from the Never list. ☐
-8. No signature stacked more than twice in a paragraph. ☐
-9. American spelling throughout. ☐
+6. `check_mannered.py OUTPUT` read: every hit looked at, tallies within the
+   profile's limits. A hit is a place to look, not a fault. ☐
+7. Nothing from the active profile's Never list. ☐
+8. No profile signature stacked more than twice in a paragraph. ☐
+9. Spelling matches the profile (or surrounding document). ☐
 10. The cold read has run where the mode requires it, and each surviving item
-    was answered by rewriting from the specimen. ☐
+    was answered by rewriting from the specimen (if present). ☐
 
 ## Maintenance
 
@@ -259,11 +265,14 @@ Antigravity transcripts into pairs of what an agent delivered and what the
 author kept, and an agent digests the new ones into a proposal, following
 [references/digest.md](references/digest.md). The profile changes only when
 the author rules on the proposal ("co-writer review"): adopt, test, hold or
-reject, one candidate at a time. Nothing there is read at write time.
+reject, one candidate at a time, updating `<profile>/voice-profile.md` (and
+`<profile>/counterexamples.md` / `<profile>/lexicon.json`). Nothing there is
+read at write time.
 
 ## Interaction With Other Skills
 
-co-writer reads its own `references/` and, for citation work, cite-check's
+co-writer reads its own `references/`, the active profile under
+`~/.co-writer/profile/`, and for citation work cite-check's
 `references/integration.md`; it does not load or defer to any other skill's
 writing guidance.
 
@@ -281,24 +290,25 @@ writing guidance.
 ## Files — and when each is read
 
 ```
-skills/co-writer/
+skills/co-writer/                    # public skill engine (no personal data)
 ├── SKILL.md                         # read whole when the skill is invoked
 ├── references/
-│   ├── voice-profile.md             # every rewrite — THE artefact; specimens outrank rules
+│   ├── templates/                   # blank starter files copied by `cowriter.py init`
+│   │   ├── voice-profile.md         # v0.0.0 starter profile
+│   │   ├── counterexamples.md       # blank counterexamples template
+│   │   └── lexicon.json             # empty personal lexicon overrides
 │   ├── session-log.md               # every rewrite, at the end — the form of the log entry
 │   ├── cold-read.md                 # section and draft mode — who reads, what it gets, the brief
-│   ├── counterexamples.md           # once after drafting — sentences the author rejected
 │   ├── trim.md                      # only with a page or word limit — protocol and proposer's brief
-│   ├── maintenance.md               # never at write time — log, update, review, eval, new paper
+│   ├── maintenance.md               # never at write time — init, log, update, review, eval, new paper
 │   ├── digest.md                    # never at write time — the brief for the agent that digests a packet
 │   ├── extraction.md                # never at write time — the deep-read prompt
-│   ├── extraction-report.md         # never at write time — evidence for every rule
-│   └── interview.md                 # never at write time — the questions the text cannot answer
+│   └── interview.md                 # never at write time — generic interview template
 ├── scripts/
 │   ├── check_fixed.py               # INPUT vs OUTPUT: cites, refs, labels, math, numbers — the preservation gate
-│   ├── check_mannered.py            # stock phrases and Never-list hits, with lines — calibration, not a verdict
+│   ├── check_mannered.py            # stock phrases + active profile Never/allow lexicon — calibration, not a verdict
 │   ├── extract_prose.py             # .tex → readable prose; --counts gives words per section for the trim
-│   ├── cowriter.py                  # the store: log, session, harvest, status, packet, file, migrate
+│   ├── cowriter.py                  # the store & profile CLI: init, profile, log, session, harvest, status, packet, file, migrate
 │   └── update.sh                    # "co-writer update": harvest; packet → digest agent → proposal
 └── eval/
     ├── README.md                    # the per-version protocol
@@ -306,7 +316,13 @@ skills/co-writer/
 
 skills/cite-check/references/integration.md   # before any citation action — the contract this skill follows
 
-~/.co-writer/                        # the store, outside every repo ($CO_WRITER_HOME)
+~/.co-writer/                        # local store, outside every repo ($CO_WRITER_HOME)
+├── profile/                         # active personal profile ($CO_WRITER_PROFILE_DIR, or symlink to private repo)
+│   ├── voice-profile.md             # every rewrite — THE artefact; specimens outrank rules
+│   ├── counterexamples.md           # once after drafting — sentences the author rejected
+│   ├── lexicon.json                 # optional personal Never/allow overrides for check_mannered.py
+│   ├── extraction-report.md         # optional corpus evidence from extraction.md
+│   └── interview.md                 # optional author interview status and answers
 ├── papers.json                      # paper id → repository root and .tex files
 ├── papers/<paper>/log/              # one file per rewrite + one session note, via cowriter.py only
 ├── papers/<paper>/snapshots/        # the .tex at each harvest
