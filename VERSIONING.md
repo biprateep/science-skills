@@ -17,7 +17,7 @@ v0.4") are informal working labels; the repo tag is the version of record.
 
 ## How to cut a release
 
-From an up-to-date `master` with a clean tree:
+From an up-to-date `main` with a clean tree:
 
 ```sh
 scripts/release.sh v0.5.0

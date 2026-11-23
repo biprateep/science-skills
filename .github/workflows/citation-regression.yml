@@ -3,7 +3,7 @@ name: Citation regression
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
 
 concurrency:
   group: citation-regression-${{ github.event.pull_request.number || github.ref }}

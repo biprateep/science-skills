@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cut a release: validate the version, tag master, push the tag.
+# Cut a release: validate the version, tag main, push the tag.
 # The GitHub release itself is created by .github/workflows/release.yml.
 #
 # Usage: scripts/release.sh v0.5.0
@@ -17,8 +17,8 @@ if git rev-parse "$version" >/dev/null 2>&1; then
 fi
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$branch" != "master" ]]; then
-  echo "error: releases are cut from master (currently on $branch)" >&2
+if [[ "$branch" != "main" ]]; then
+  echo "error: releases are cut from main (currently on $branch)" >&2
   exit 1
 fi
 
@@ -27,9 +27,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-git fetch origin master
-if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]]; then
-  echo "error: local master is not in sync with origin/master" >&2
+git fetch origin main
+if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+  echo "error: local main is not in sync with origin/main" >&2
   exit 1
 fi
 
