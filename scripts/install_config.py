@@ -59,17 +59,21 @@ def locked(path: pathlib.Path, dry_run: bool) -> Iterator[None]:
 
 
 def read_json(path: pathlib.Path) -> dict[str, Any]:
-    """Reads an object or an absent file; refuses malformed configurations.
+    """Reads an object, an absent or empty file; refuses malformed configs.
 
     Args:
       path: JSON object file.
 
     Returns:
-      The parsed object, or an empty object for an absent file.
+      The parsed object, or an empty object for an absent or empty file.
     """
     if not path.exists():
         return {}
-    value = json.loads(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    # Clients such as Antigravity create a zero-byte config before first use.
+    if not text.strip():
+        return {}
+    value = json.loads(text)
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value

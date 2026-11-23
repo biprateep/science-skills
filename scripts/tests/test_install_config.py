@@ -255,6 +255,22 @@ def test_antigravity_registry_migrates_only_owned_entry(
     assert (pathlib.Path(args.target) / "cite-check/SKILL.md").is_file()
 
 
+@pytest.mark.parametrize("contents", ["", "\n  \n"])
+def test_empty_config_is_treated_as_absent(
+    tmp_path: pathlib.Path, contents: str
+) -> None:
+    """Zero-byte client configs (Antigravity's default) gain the entry."""
+    args = mcp_args(tmp_path)
+    path = pathlib.Path(args.config)
+    path.write_text(contents)
+    INSTALL.update_mcp(args)
+    assert json.loads(path.read_text()) == {
+        "mcpServers": {
+            "cite-check": {"command": args.python, "args": [args.server]}
+        }
+    }
+
+
 @pytest.mark.parametrize("contents", ["{broken", "[]", '{"mcpServers": []}'])
 def test_malformed_config_is_not_overwritten(
     tmp_path: pathlib.Path, contents: str

@@ -13,8 +13,8 @@ A packet directory, `~/.co-writer/packets/<stamp>/`, holding:
 |---|---|
 | `pairs.jsonl` | one record per paragraph an agent delivered and the author later changed: `delivered`, `accepted` (the author's version), `draft` (the author's text the delivery rewrote, when found), `feedback` (the author's chat turns in between, verbatim), `agent_spans` (added runs of six or more words that an agent wrote earlier: a merge or a pasted suggestion), `slot`, `distance`, and where each came from |
 | `notes.md` | log entries since the last proposal that carry a Note or an Unsure — the author's words about outputs, verbatim |
-| `voice-profile.md` | the profile as it stands |
-| `counterexamples.md` | the sentences already recorded as rejected |
+| `voice-profile.md` | copy of the active profile as it stands (`0.0.0` if starter) |
+| `counterexamples.md` | copy of the active counterexamples file |
 | `digest.md` | this brief |
 
 A file named `extra-*.md`, if present, was added by hand for this digest;
@@ -49,7 +49,10 @@ evidence at best).
    across two or more records is a pattern. A single edit is a pattern only
    when the author stated it as a rule in `feedback` or `notes.md`.
 3. **Turn each pattern into a candidate**: the smallest change to
-   `voice-profile.md` that would have produced what the author accepted.
+   `voice-profile.md` (in the active profile directory, `~/.co-writer/profile/`)
+   that would have produced what the author accepted. On a `0.0.0` starter
+   profile, early digests seed the first rules, Never/keep words, and verbatim
+   specimens directly from the author's edits.
    One of:
    - a **Never** entry, or a **words that stay** entry;
    - a rule **regraded** (LIGHT → STRONG, or down), or a new rule with its

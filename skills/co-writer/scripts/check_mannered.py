@@ -6,37 +6,35 @@ for direct statement; the fix is the literal phrase or the field's term, never
 a coinage. This script prints every occurrence of a stock phrase so a writer
 can see it; a hit is a place to look, and the writer decides.
 
-Two lexicons. MANNERED is figurative stock phrasing. NEVER is the profile's
-hard bans -- sentence-initial evaluative adverbs, "Note that", "In summary",
-the reveal construction, field-impact claims -- which are mechanical and are
-not the author's. Dashes and sentences ending in "?" are tallied separately.
-
-Every entry was checked against the author's five corpus papers and none
-occurs there ("unlock" was in the first draft of this list and came out because
-a 2026 paper of his uses it). The NEVER list does hit three sentences in his
-corpus -- one "Importantly," one "Notably," one "Crucially," -- which he has
-since banned. That is the admission rule: a phrase the author's own published
-prose uses is not mannered for him, whatever a style guide says, and an entry
-that turns out to hit his corpus is removed, not the corpus.
+Two lexicons. MANNERED is figurative stock phrasing. NEVER combines universal
+boilerplate bans with optional author-specific bans loaded from
+``lexicon.json`` in the active co-writer profile directory
+(``$CO_WRITER_PROFILE_DIR``, or ``$CO_WRITER_HOME/profile``, default
+``~/.co-writer/profile``). An author's ``lexicon.json`` may also list
+``"allow"`` patterns for phrases their own prose legitimately uses; any hit
+matching an allowed pattern is skipped. Dashes and sentences ending in "?" are
+tallied separately.
 
     python check_mannered.py FILE [FILE ...]    every hit, with context
     python check_mannered.py --count FILE ...   one line per file
     python check_mannered.py --quiet FILE ...   exit 1 if any hit, print nothing
+    python check_mannered.py --profile-dir DIR FILE ...
 
 Lines beginning ">" (quoted text) and "%" (LaTeX comments) are skipped.
-Ported from the book project's scripts/check_mannered.py with a lexicon for
-papers. Standard library only.
+Standard library only.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
+import os
 import pathlib
 import re
 import sys
 
 # (pattern, the plain phrase to reach for instead)
-MANNERED = [
+MANNERED: list[tuple[str, str]] = [
     (r"\bpave(s|d)? the way\b", "enables; makes possible"),
     (r"\bshed(s|ding)? (new )?light on\b", "explains; shows"),
     (r"\bopen(s|ed|ing)? the door\b", "allows; makes possible"),
@@ -82,19 +80,13 @@ MANNERED = [
     (r"\bbeautiful(ly)?\b", "(delete, or say what is good about it)"),
 ]
 
-# The profile's HARD bans. Mechanical; not the author's constructions.
-NEVER = [
-    (
-        r"(?:^|[.!?]\s+)(Notably|Interestingly|Importantly|Crucially),",
-        "remarkably / unsurprisingly / as expected, once -- or nothing",
-    ),
-    (r"(?:^|[.!?]\s+)Note that\b", "We note that"),
-    (r"\bIt is worth noting\b", "We note that"),
-    (r"\bIt should be noted\b", "We note that"),
-    (r"(?:^|[.!?]\s+)(Firstly|Secondly|Thirdly),", "We first ... We then ..."),
+# Universal starter bans; author-specific bans come from <profile>/lexicon.json.
+DEFAULT_NEVER: list[tuple[str, str]] = [
+    (r"\bIt is worth noting\b", "state the point directly"),
+    (r"\bIt should be noted\b", "state the point directly"),
     (
         r"(?:^|[.!?]\s+)(Overall|In summary),",
-        "(delete; the Summary section does this)",
+        "(delete; let the concluding section do this)",
     ),
     (r"\bIt is not [^.,]{2,60}, it is\b", "state the claim directly"),
     (r"\bIt is not [^.]{2,60}\. It is\b", "state the claim directly"),
@@ -105,6 +97,9 @@ NEVER = [
     (r"\bchange how science is done\b", "(delete)"),
 ]
 
+# Retained as an alias for callers importing NEVER directly.
+NEVER = DEFAULT_NEVER
+
 TALLY = [
     ("dash", r"—|---|(?<!-)\s--\s(?!-)"),
     ("question", r"\?(?=\s|$)"),
@@ -114,47 +109,141 @@ TALLY = [
 _Hit = tuple[int, str, str, str, str]
 
 
-def hits(path: pathlib.Path) -> tuple[list[_Hit], dict[str, int]]:
+def resolve_profile_dir(
+    profile_dir: pathlib.Path | None = None,
+) -> pathlib.Path:
+    """Returns the active co-writer profile directory.
+
+    Args:
+      profile_dir: Explicit override directory, if provided.
+
+    Returns:
+      The resolved profile directory path (which may not yet exist).
+    """
+    if profile_dir is not None:
+        return profile_dir.expanduser()
+    override = os.environ.get("CO_WRITER_PROFILE_DIR", "").strip()
+    if override:
+        return pathlib.Path(override).expanduser()
+    store = os.environ.get("CO_WRITER_HOME", "").strip()
+    base = (
+        pathlib.Path(store).expanduser()
+        if store
+        else pathlib.Path.home() / ".co-writer"
+    )
+    return base / "profile"
+
+
+def load_lexicon(
+    profile_dir: pathlib.Path | None = None,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Loads Never entries and allow patterns from the active profile.
+
+    Args:
+      profile_dir: Optional profile directory containing ``lexicon.json``.
+
+    Returns:
+      A tuple ``(never, allow)`` where ``never`` merges ``DEFAULT_NEVER`` with
+      any profile overrides (profile entries win on identical patterns) and
+      ``allow`` is a list of regex strings exempted from hits.
+    """
+    merged: dict[str, str] = dict(DEFAULT_NEVER)
+    allow: list[str] = []
+    lexicon_path = resolve_profile_dir(profile_dir) / "lexicon.json"
+    if lexicon_path.is_file():
+        try:
+            with lexicon_path.open(encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            for entry in data.get("never") or []:
+                if (
+                    isinstance(entry, list)
+                    and len(entry) == 2
+                    and all(isinstance(part, str) for part in entry)
+                ):
+                    merged[entry[0]] = entry[1]
+            for pattern in data.get("allow") or []:
+                if isinstance(pattern, str) and pattern:
+                    allow.append(pattern)
+    return list(merged.items()), allow
+
+
+def _is_allowed(phrase: str, allow: Sequence[str]) -> bool:
+    """Returns whether ``phrase`` matches any profile allow-list regex."""
+    return any(re.search(pattern, phrase, re.IGNORECASE) for pattern in allow)
+
+
+def hits(
+    path: pathlib.Path,
+    profile_dir: pathlib.Path | None = None,
+) -> tuple[list[_Hit], dict[str, int]]:
     """Finds every lexicon hit in one file and tallies its dashes and questions.
 
     Lines that begin with ">" (quoted text) or "%" (LaTeX comments) are
     skipped.
 
     Args:
-      path: The file.
+      path: The file to scan.
+      profile_dir: Optional profile directory for ``lexicon.json`` overrides.
 
     Returns:
-      A tuple (found, tallies): each hit as (line number, "mannered" or
-      "never", the matched phrase, the plain phrase to use instead, the
-      stripped line), and the count of each TALLY pattern. Both are empty
-      when the file cannot be read.
+      A tuple ``(found, tallies)``: each hit as ``(line number, "mannered" or
+      "never", matched phrase, plain phrase to use instead, stripped line)``,
+      and the count of each ``TALLY`` pattern. Both are empty when the file
+      cannot be read.
     """
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return [], {}
+    never, allow = load_lexicon(profile_dir)
     found: list[_Hit] = []
     tallies = {name: 0 for name, _ in TALLY}
     for lineno, line in enumerate(text.splitlines(), 1):
         stripped = line.lstrip()
         if stripped.startswith(">") or stripped.startswith("%"):
             continue
-        for kind, lexicon in (("mannered", MANNERED), ("never", NEVER)):
+        for kind, lexicon in (("mannered", MANNERED), ("never", never)):
             flags = re.IGNORECASE if kind == "mannered" else 0
             for pattern, plain in lexicon:
                 for match in re.finditer(pattern, line, flags=flags):
-                    found.append(
-                        (
-                            lineno,
-                            kind,
-                            match.group(0).strip(),
-                            plain,
-                            line.strip(),
-                        )
-                    )
+                    phrase = match.group(0).strip()
+                    if _is_allowed(phrase, allow):
+                        continue
+                    found.append((lineno, kind, phrase, plain, line.strip()))
         for name, pattern in TALLY:
             tallies[name] += len(re.findall(pattern, line))
     return found, tallies
+
+
+def _parse_args(
+    argv: Sequence[str],
+) -> tuple[bool, bool, pathlib.Path | None, list[pathlib.Path]]:
+    """Parses CLI flags and file paths without mutating argv."""
+    count = False
+    quiet = False
+    profile_dir: pathlib.Path | None = None
+    files: list[pathlib.Path] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--count":
+            count = True
+        elif arg == "--quiet":
+            quiet = True
+        elif arg == "--profile-dir" and index + 1 < len(argv):
+            profile_dir = pathlib.Path(argv[index + 1])
+            index += 1
+        elif arg.startswith("--profile-dir="):
+            profile_dir = pathlib.Path(arg.split("=", 1)[1])
+        elif arg.startswith("--"):
+            raise ValueError(f"unknown option: {arg}")
+        else:
+            files.append(pathlib.Path(arg))
+        index += 1
+    return count, quiet, profile_dir, files
 
 
 def main(argv: Sequence[str]) -> int:
@@ -164,18 +253,20 @@ def main(argv: Sequence[str]) -> int:
       argv: The command-line arguments after the program name.
 
     Returns:
-      The exit status: under --quiet, 1 if any file has a hit; 2 on bad
+      The exit status: under ``--quiet``, 1 if any file has a hit; 2 on bad
       usage; 0 otherwise.
     """
-    count = "--count" in argv
-    quiet = "--quiet" in argv
-    files = [pathlib.Path(a) for a in argv if not a.startswith("--")]
+    try:
+        count, quiet, profile_dir, files = _parse_args(argv)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
     if not files:
         print(__doc__)
         return 2
     total = 0
     for path in files:
-        found, tallies = hits(path)
+        found, tallies = hits(path, profile_dir=profile_dir)
         total += len(found)
         text = path.read_text(encoding="utf-8", errors="replace")
         words = max(1, len(re.findall(r"[A-Za-z]+", text)))
